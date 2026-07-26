@@ -1,0 +1,631 @@
+{
+ "Print": [
+  {
+   "keys": [
+    "skirt_type",
+    "skirt_loops",
+    "skirt_speed",
+    "skirt_height",
+    "min_skirt_length",
+    "single_loop_draft_shield",
+    "draft_shield",
+    "skirt_distance",
+    "skirt_start_angle",
+    "ooze_prevention",
+    "wipe_tower_x",
+    "wipe_tower_y",
+    "wipe_tower_rotation_angle"
+   ],
+   "steps": [
+    "psSkirtBrim"
+   ],
+   "special": [],
+   "line": 270
+  },
+  {
+   "keys": [
+    "slicing_pipeline_plugin",
+    "initial_layer_print_height",
+    "nozzle_diameter",
+    "filament_shrink",
+    "filament_shrinkage_compensation_z",
+    "resolution",
+    "precise_z_height",
+    "spiral_mode"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 285
+  },
+  {
+   "keys": [
+    "print_sequence",
+    "filament_type",
+    "chamber_temperature",
+    "nozzle_temperature_initial_layer",
+    "filament_minimal_purge_on_wipe_tower",
+    "filament_max_volumetric_speed",
+    "filament_adaptive_volumetric_speed",
+    "filament_loading_speed",
+    "filament_loading_speed_start",
+    "filament_unloading_speed",
+    "filament_unloading_speed_start",
+    "filament_toolchange_delay",
+    "filament_cooling_moves",
+    "filament_stamping_loading_speed",
+    "filament_stamping_distance",
+    "filament_cooling_initial_speed",
+    "filament_cooling_final_speed",
+    "filament_ramming_parameters",
+    "filament_multitool_ramming",
+    "filament_multitool_ramming_volume",
+    "filament_multitool_ramming_flow",
+    "filament_max_volumetric_speed",
+    "gcode_flavor",
+    "single_extruder_multi_material",
+    "nozzle_temperature",
+    "supertack_plate_temp",
+    "cool_plate_temp",
+    "textured_cool_plate_temp",
+    "eng_plate_temp",
+    "hot_plate_temp",
+    "textured_plate_temp",
+    "enable_prime_tower",
+    "enable_wrapping_detection",
+    "prime_tower_enable_framework",
+    "prime_tower_width",
+    "prime_tower_brim_width",
+    "wipe_tower_type",
+    "prime_tower_skip_points",
+    "prime_tower_flat_ironing",
+    "enable_tower_interface_features",
+    "first_layer_print_sequence",
+    "other_layers_print_sequence",
+    "other_layers_print_sequence_nums",
+    "toolchange_ordering",
+    "extruder_ams_count",
+    "extruder_nozzle_stats",
+    "filament_map_mode",
+    "filament_map",
+    "filament_nozzle_map",
+    "filament_volume_map",
+    "filament_adhesiveness_category",
+    "filament_tower_interface_pre_extrusion_dist",
+    "filament_tower_interface_pre_extrusion_length",
+    "filament_tower_ironing_area",
+    "filament_tower_interface_purge_volume",
+    "filament_tower_interface_print_temp",
+    "wipe_tower_bridging",
+    "wipe_tower_extra_flow",
+    "wipe_tower_no_sparse_layers",
+    "flush_volumes_matrix",
+    "prime_volume",
+    "flush_into_infill",
+    "flush_into_support",
+    "initial_layer_infill_speed",
+    "travel_speed",
+    "travel_speed_z",
+    "initial_layer_speed",
+    "initial_layer_travel_speed",
+    "initial_layer_travel_acceleration",
+    "initial_layer_travel_jerk",
+    "slow_down_layers",
+    "idle_temperature",
+    "wipe_tower_cone_angle",
+    "wipe_tower_extra_spacing",
+    "wipe_tower_max_purge_speed",
+    "wipe_tower_wall_type",
+    "wipe_tower_extra_rib_length",
+    "wipe_tower_rib_width",
+    "wipe_tower_fillet_wall",
+    "wipe_tower_filament",
+    "wiping_volumes_extruders",
+    "enable_filament_ramming",
+    "tool_change_on_wipe_tower",
+    "purge_in_prime_tower",
+    "z_offset",
+    "support_multi_bed_types"
+   ],
+   "steps": [
+    "psSkirtBrim",
+    "psWipeTower"
+   ],
+   "special": [],
+   "line": 298
+  },
+  {
+   "keys": [
+    "filament_soluble",
+    "filament_is_support",
+    "filament_printable",
+    "filament_change_length",
+    "independent_support_layer_height"
+   ],
+   "steps": [
+    "posSimplifySupportPath",
+    "posSupportMaterial",
+    "psWipeTower"
+   ],
+   "special": [],
+   "line": 389
+  },
+  {
+   "keys": [
+    "initial_layer_line_width",
+    "min_layer_height",
+    "max_layer_height",
+    "resolution",
+    "enable_arc_fitting",
+    "print_order",
+    "wall_sequence"
+   ],
+   "steps": [
+    "posEstimateCurledExtrusions",
+    "posInfill",
+    "posPerimeters",
+    "posSimplifyInfill",
+    "posSimplifyPath",
+    "posSimplifySupportPath",
+    "posSupportMaterial",
+    "psSkirtBrim"
+   ],
+   "special": [],
+   "line": 400
+  },
+  {
+   "keys": [
+    "z_hop_types"
+   ],
+   "steps": [
+    "posDetectOverhangsForLift"
+   ],
+   "special": [],
+   "line": 418
+  }
+ ],
+ "PrintObject": [
+  {
+   "keys": [
+    "brim_width",
+    "brim_object_gap",
+    "brim_use_efc_outline",
+    "brim_type",
+    "brim_ears_max_angle",
+    "brim_ears_detection_length",
+    "outer_wall_speed",
+    "small_perimeter_speed",
+    "small_perimeter_threshold",
+    "small_support_perimeter_speed",
+    "small_support_perimeter_threshold",
+    "sparse_infill_speed",
+    "inner_wall_speed",
+    "support_speed",
+    "internal_solid_infill_speed",
+    "top_surface_speed"
+   ],
+   "steps": [
+    "posPerimeters",
+    "posSupportMaterial"
+   ],
+   "special": [],
+   "line": 1170
+  },
+  {
+   "keys": [
+    "wall_loops",
+    "alternate_extra_wall",
+    "top_one_wall_type",
+    "min_width_top_surface",
+    "only_one_wall_first_layer",
+    "extra_perimeters_on_overhangs",
+    "detect_overhang_wall",
+    "initial_layer_line_width",
+    "inner_wall_line_width",
+    "infill_wall_overlap",
+    "top_bottom_infill_wall_overlap",
+    "seam_gap",
+    "role_based_wipe_speed",
+    "wipe_on_loops",
+    "wipe_speed"
+   ],
+   "steps": [
+    "posPerimeters"
+   ],
+   "special": [],
+   "line": 1197
+  },
+  {
+   "keys": [
+    "small_area_infill_flow_compensation_model"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 1214
+  },
+  {
+   "keys": [
+    "gap_infill_speed"
+   ],
+   "steps": [],
+   "special": [],
+   "line": 1222
+  },
+  {
+   "keys": [
+    "layer_height",
+    "mmu_segmented_region_max_width",
+    "mmu_segmented_region_interlocking_depth",
+    "raft_layers",
+    "raft_contact_distance",
+    "slice_closing_radius",
+    "slicing_mode",
+    "slowdown_for_curled_perimeters",
+    "make_overhang_printable",
+    "make_overhang_printable_angle",
+    "make_overhang_printable_hole_size",
+    "interlocking_beam",
+    "interlocking_orientation",
+    "interlocking_beam_layer_count",
+    "interlocking_depth",
+    "interlocking_boundary_avoidance",
+    "interlocking_beam_width"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 1238
+  },
+  {
+   "keys": [
+    "elefant_foot_compensation",
+    "elefant_foot_compensation_layers",
+    "elefant_foot_layers_density",
+    "support_top_z_distance",
+    "support_bottom_z_distance",
+    "xy_hole_compensation",
+    "xy_contour_compensation",
+    "support_type",
+    "bridge_no_support",
+    "max_bridge_length",
+    "support_interface_top_layers",
+    "support_critical_regions_only",
+    "hole_to_polyhole",
+    "hole_to_polyhole_threshold",
+    "hole_to_polyhole_twisted",
+    "hole_to_polyhole_max_edges"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 1257
+  },
+  {
+   "keys": [
+    "enable_support"
+   ],
+   "steps": [
+    "posSlice",
+    "posSupportMaterial"
+   ],
+   "special": [],
+   "line": 1277
+  },
+  {
+   "keys": [
+    "support_type",
+    "support_angle",
+    "support_on_build_plate_only",
+    "support_critical_regions_only",
+    "support_remove_small_overhang",
+    "enforce_support_layers",
+    "support_filament",
+    "support_line_width",
+    "support_interface_top_layers",
+    "support_interface_bottom_layers",
+    "support_interface_pattern",
+    "support_interface_loop_pattern",
+    "support_interface_filament",
+    "support_interface_not_for_body",
+    "support_interface_spacing",
+    "support_bottom_interface_spacing",
+    "support_base_pattern",
+    "support_style",
+    "support_object_xy_distance",
+    "support_object_first_layer_gap",
+    "support_base_pattern_spacing",
+    "support_expansion",
+    "independent_support_layer_height",
+    "support_threshold_angle",
+    "support_threshold_overlap",
+    "support_ironing",
+    "support_ironing_pattern",
+    "support_ironing_flow",
+    "support_ironing_spacing",
+    "raft_expansion",
+    "raft_first_layer_density",
+    "raft_first_layer_expansion",
+    "bridge_no_support",
+    "max_bridge_length",
+    "initial_layer_line_width",
+    "tree_support_auto_brim",
+    "tree_support_brim_width",
+    "tree_support_top_rate",
+    "tree_support_branch_distance",
+    "tree_support_branch_distance_organic",
+    "tree_support_tip_diameter",
+    "tree_support_branch_diameter",
+    "tree_support_branch_diameter_organic",
+    "tree_support_branch_diameter_angle",
+    "tree_support_branch_angle",
+    "tree_support_branch_angle_organic",
+    "tree_support_angle_slow",
+    "tree_support_wall_count"
+   ],
+   "steps": [
+    "posSupportMaterial"
+   ],
+   "special": [],
+   "line": 1286
+  },
+  {
+   "keys": [
+    "bottom_shell_layers",
+    "top_shell_layers"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 1336
+  },
+  {
+   "keys": [
+    "interface_shells",
+    "infill_multiline",
+    "infill_combination",
+    "infill_combination_max_layer_height",
+    "bottom_shell_thickness",
+    "top_shell_thickness",
+    "top_surface_expansion",
+    "top_surface_expansion_margin",
+    "top_surface_expansion_direction",
+    "minimum_sparse_infill_area",
+    "sparse_infill_filament_id",
+    "internal_solid_filament_id",
+    "top_surface_filament_id",
+    "bottom_surface_filament_id",
+    "sparse_infill_line_width",
+    "skin_infill_line_width",
+    "skeleton_infill_line_width",
+    "infill_direction",
+    "solid_infill_direction",
+    "top_layer_direction",
+    "bottom_layer_direction",
+    "align_infill_direction_to_model",
+    "extra_solid_infills",
+    "ensure_vertical_shell_thickness",
+    "bridge_angle",
+    "internal_bridge_angle",
+    "relative_bridge_angle",
+    "bridge_line_width",
+    "bridge_density",
+    "internal_bridge_density"
+   ],
+   "steps": [
+    "posPrepareInfill"
+   ],
+   "special": [],
+   "line": 1358
+  },
+  {
+   "keys": [
+    "top_surface_pattern",
+    "bottom_surface_pattern",
+    "top_surface_fill_order",
+    "bottom_surface_fill_order",
+    "internal_solid_infill_pattern",
+    "external_fill_link_max_length",
+    "infill_anchor",
+    "infill_anchor_max",
+    "top_surface_line_width",
+    "top_surface_density",
+    "bottom_surface_density",
+    "center_of_surface_pattern",
+    "separated_infills",
+    "initial_layer_line_width",
+    "small_area_infill_flow_compensation",
+    "lateral_lattice_angle_1",
+    "lateral_lattice_angle_2",
+    "infill_overhang_angle"
+   ],
+   "steps": [
+    "posInfill"
+   ],
+   "special": [],
+   "line": 1391
+  },
+  {
+   "keys": [
+    "sparse_infill_pattern",
+    "symmetric_infill_y_axis",
+    "infill_shift_step",
+    "sparse_infill_rotate_template",
+    "solid_infill_rotate_template",
+    "lightning_overhang_angle",
+    "lightning_prune_angle",
+    "lightning_straightening_angle",
+    "skeleton_infill_density",
+    "skin_infill_density",
+    "infill_lock_depth",
+    "skin_infill_depth"
+   ],
+   "steps": [
+    "posPrepareInfill"
+   ],
+   "special": [],
+   "line": 1411
+  },
+  {
+   "keys": [
+    "sparse_infill_density"
+   ],
+   "steps": [
+    "posPerimeters",
+    "posPrepareInfill"
+   ],
+   "special": [],
+   "line": 1424
+  },
+  {
+   "keys": [
+    "internal_solid_infill_line_width"
+   ],
+   "steps": [
+    "posPerimeters",
+    "posPrepareInfill"
+   ],
+   "special": [],
+   "line": 1435
+  },
+  {
+   "keys": [
+    "outer_wall_line_width",
+    "outer_wall_filament_id",
+    "inner_wall_filament_id",
+    "fuzzy_skin",
+    "fuzzy_skin_thickness",
+    "fuzzy_skin_point_distance",
+    "fuzzy_skin_first_layer",
+    "fuzzy_skin_mode",
+    "fuzzy_skin_noise_type",
+    "fuzzy_skin_scale",
+    "fuzzy_skin_octaves",
+    "fuzzy_skin_persistence",
+    "detect_overhang_wall",
+    "overhang_reverse",
+    "overhang_reverse_internal_only",
+    "overhang_reverse_threshold",
+    "wall_direction",
+    "enable_overhang_speed",
+    "detect_thin_wall",
+    "precise_outer_wall"
+   ],
+   "steps": [
+    "posPerimeters",
+    "posSupportMaterial"
+   ],
+   "special": [],
+   "line": 1439
+  },
+  {
+   "keys": [
+    "bridge_flow",
+    "internal_bridge_flow"
+   ],
+   "steps": [
+    "posInfill",
+    "posPerimeters",
+    "posSupportMaterial"
+   ],
+   "special": [],
+   "line": 1462
+  },
+  {
+   "keys": [
+    "wall_generator",
+    "wall_transition_length",
+    "wall_transition_filter_deviation",
+    "wall_transition_angle",
+    "wall_distribution_count",
+    "wall_maximum_resolution",
+    "wall_maximum_deviation",
+    "min_feature_size",
+    "min_length_factor",
+    "min_bead_width"
+   ],
+   "steps": [
+    "posSlice"
+   ],
+   "special": [],
+   "line": 1470
+  },
+  {
+   "keys": [
+    "seam_position",
+    "seam_slope_type",
+    "seam_slope_conditional",
+    "scarf_angle_threshold",
+    "scarf_overhang_threshold",
+    "scarf_joint_speed",
+    "seam_slope_start_height",
+    "seam_slope_entire_loop",
+    "seam_slope_min_length",
+    "seam_slope_steps",
+    "seam_slope_inner_walls",
+    "support_speed",
+    "support_interface_speed",
+    "overhang_1_4_speed",
+    "overhang_2_4_speed",
+    "overhang_3_4_speed",
+    "overhang_4_4_speed",
+    "bridge_speed",
+    "internal_bridge_speed",
+    "outer_wall_speed",
+    "small_perimeter_speed",
+    "small_perimeter_threshold",
+    "small_support_perimeter_speed",
+    "small_support_perimeter_threshold",
+    "sparse_infill_speed",
+    "inner_wall_speed",
+    "internal_solid_infill_speed",
+    "top_surface_speed",
+    "bed_mesh_min",
+    "bed_mesh_max",
+    "adaptive_bed_mesh_margin",
+    "bed_mesh_probe_distance",
+    "print_flow_ratio",
+    "first_layer_flow_ratio",
+    "top_solid_infill_flow_ratio",
+    "bottom_solid_infill_flow_ratio",
+    "outer_wall_flow_ratio",
+    "inner_wall_flow_ratio",
+    "overhang_flow_ratio",
+    "sparse_infill_flow_ratio",
+    "internal_solid_infill_flow_ratio",
+    "gap_fill_flow_ratio",
+    "support_flow_ratio",
+    "support_interface_flow_ratio",
+    "brim_flow_ratio",
+    "filament_flow_ratio",
+    "scarf_joint_flow_ratio",
+    "spiral_starting_flow_ratio",
+    "spiral_finishing_flow_ratio"
+   ],
+   "steps": [
+    "psGCodeExport"
+   ],
+   "special": [],
+   "line": 1482
+  },
+  {
+   "keys": [
+    "flush_into_infill",
+    "flush_into_objects",
+    "flush_into_support"
+   ],
+   "steps": [
+    "psGCodeExport",
+    "psWipeTower"
+   ],
+   "special": [],
+   "line": 1533
+  }
+ ],
+ "note": "조건에 없는 opt_key(기본 분기)는 전체 무효화. steps는 분기 블록에서 참조된 단계 토큰."
+}

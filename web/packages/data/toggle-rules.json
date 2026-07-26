@@ -1,0 +1,2277 @@
+{
+ "check_chamber_temperature": {
+  "locals": {
+   "support_chamber_temp_control": "GUI::wxGetApp().preset_bundle->printers.get_selected_preset().config.opt_bool(\"support_chamber_temp_control\")"
+  },
+  "rules": [],
+  "stats": {
+   "toggle_calls_in_source": 0,
+   "rules_extracted": 0
+  }
+ },
+ "update_print_fff_config": {
+  "locals": {
+   "is_object_config": "(!is_global_config && !is_plate_config)",
+   "layer_height": "config->opt_float(\"layer_height\")",
+   "max_lh": "gpreset.config.opt_float(\"max_layer_height\",0)",
+   "timelapse_type": "config->opt_enum<TimelapseType>(\"timelapse_type\")",
+   "answer": "show_spiral_mode_settings_dialog(is_object_config)",
+   "has_wipe_tower": "filament_cnt > 1 && config->opt_bool(\"enable_prime_tower\")",
+   "wipe_tower_wall_type": "config->opt_enum<WipeTowerWallType>(\"wipe_tower_wall_type\")",
+   "support_type": "config->opt_enum<SupportType>(\"support_type\")",
+   "support_style": "config->opt_enum<SupportMaterialStyle>(\"support_style\")",
+   "have_arachne": "config->opt_enum<PerimeterGeneratorType>(\"wall_generator\") == PerimeterGeneratorType::Arachne"
+  },
+  "rules": [],
+  "stats": {
+   "toggle_calls_in_source": 0,
+   "rules_extracted": 0
+  }
+ },
+ "toggle_print_fff_options": {
+  "locals": {
+   "gcf_is_marlin_firmware": "gcflavor == GCodeFlavor::gcfMarlinFirmware",
+   "gcf_is_klipper": "gcflavor == GCodeFlavor::gcfKlipper",
+   "have_volumetric_extrusion_rate_slope": "config->option<ConfigOptionFloat>(\"max_volumetric_extrusion_rate_slope\")->value > 0",
+   "have_perimeters": "config->opt_int(\"wall_loops\") > 0",
+   "have_infill": "config->option<ConfigOptionPercent>(\"sparse_infill_density\")->value > 0",
+   "have_combined_infill": "config->opt_bool(\"infill_combination\") && have_infill",
+   "have_multiline_infill_pattern": "pattern == ipGyroid || pattern == ipGrid || pattern == ipRectilinear || pattern == ipTpmsD || pattern == ipTpmsFK || pattern == ipCrossHatch || pattern == ipHoneycomb || pattern == ipLateralLattice || pattern == ipLateralHoneycomb || pattern == ipConcentric || pattern == ipCubic || pattern == ipStars || pattern == ipAlignedRectilinear || pattern == ipLightning || pattern == ip3DHoneycomb || pattern == ipAdaptiveCubic || pattern == ipSupportCubic|| pattern == ipTriangles || pattern == ipQuarterCubic|| pattern == ipArchimedeanChords || pattern == ipHilbertCurve || pattern == ipOctagramSpiral",
+   "infill_anchor": "config->opt_enum<InfillPattern>(\"sparse_infill_pattern\") != ipLine",
+   "has_infill_anchors": "infill_anchor && config->option<ConfigOptionFloatOrPercent>(\"infill_anchor_max\")->value > 0",
+   "is_cross_zag": "config->option<ConfigOptionEnum<InfillPattern>>(\"sparse_infill_pattern\")->value == InfillPattern::ipCrossZag",
+   "is_locked_zig": "config->option<ConfigOptionEnum<InfillPattern>>(\"sparse_infill_pattern\")->value == InfillPattern::ipLockedZag",
+   "is_zig_zag": "config->option<ConfigOptionEnum<InfillPattern>>(\"sparse_infill_pattern\")->value == InfillPattern::ipZigZag",
+   "has_spiral_vase": "config->opt_bool(\"spiral_mode\")",
+   "has_top_shell": "config->opt_int(\"top_shell_layers\") > 0 || (has_spiral_vase && config->opt_int(\"bottom_shell_layers\") > 1)",
+   "has_bottom_shell": "config->opt_int(\"bottom_shell_layers\") > 0",
+   "has_solid_infill": "has_top_shell || has_bottom_shell",
+   "has_top_surface_expansion": "config->opt_float(\"top_surface_expansion\") > 0",
+   "is_centered_pattern": "[](InfillPattern p) { return p == InfillPattern::ipArchimedeanChords || p == InfillPattern::ipOctagramSpiral; }",
+   "is_top_centered": "is_centered_pattern(config->option<ConfigOptionEnum<InfillPattern>>(\"top_surface_pattern\")->value)",
+   "is_bottom_centered": "is_centered_pattern(config->option<ConfigOptionEnum<InfillPattern>>(\"bottom_surface_pattern\")->value)",
+   "has_centered_surface": "(has_top_shell && is_top_centered) || (has_bottom_shell && is_bottom_centered)",
+   "is_internal_infill_separable": "is_separable_infill_pattern(config->option<ConfigOptionEnum<InfillPattern>>(\"sparse_infill_pattern\")->value) || config->opt_string(\"sparse_infill_rotate_template\") != \"\" || config->opt_string(\"solid_infill_rotate_template\") != \"\"",
+   "is_centered_fill": "[](InfillPattern p) { return p == ipConcentric || p == ipArchimedeanChords || p == ipOctagramSpiral; }",
+   "have_default_acceleration": "config->opt_float_nullable(\"default_acceleration\", variant_index) > 0",
+   "have_default_jerk": "config->has(\"default_jerk\") && config->opt_float_nullable(\"default_jerk\", variant_index) > 0",
+   "have_skirt": "config->opt_int(\"skirt_loops\") > 0",
+   "have_brim": "(config->opt_enum<BrimType>(\"brim_type\") != btNoBrim)",
+   "have_brim_width": "(config->opt_enum<BrimType>(\"brim_type\") != btNoBrim) && config->opt_enum<BrimType>(\"brim_type\") != btAutoBrim && config->opt_enum<BrimType>(\"brim_type\") != btPainted",
+   "have_brim_ear": "(config->opt_enum<BrimType>(\"brim_type\") == btEar)",
+   "brim_width": "config->opt_float(\"brim_width\")",
+   "have_raft": "config->opt_int(\"raft_layers\") > 0",
+   "have_support_material": "config->opt_bool(\"enable_support\") || have_raft",
+   "have_support_interface": "config->opt_int(\"support_interface_top_layers\") > 0 || config->opt_int(\"support_interface_bottom_layers\") > 0",
+   "have_support_soluble": "have_support_material && config->opt_float(\"support_top_z_distance\") == 0",
+   "support_style": "config->opt_enum<SupportMaterialStyle>(\"support_style\")",
+   "support_is_tree": "config->opt_bool(\"enable_support\") && is_tree(support_type)",
+   "support_is_organic": "support_is_tree && (support_style == smsTreeOrganic || support_style == smsDefault)",
+   "support_is_normal_tree": "support_is_tree && !support_is_organic",
+   "can_ironing_support": "have_raft || (have_support_material && config->opt_int(\"support_interface_top_layers\") > 0)",
+   "has_support_ironing": "can_ironing_support && config->opt_bool(\"support_ironing\")",
+   "have_skirt_height": "have_skirt && // (config->opt_int(\"skirt_height\") > 1 || config->opt_enum<DraftShield>(\"draft_shield\") != dsEnabled)",
+   "has_ironing": "(config->opt_enum<IroningType>(\"ironing_type\") != IroningType::NoIroning)",
+   "has_rectilinear_ironing": "(config->opt_enum<InfillPattern>(\"ironing_pattern\") == InfillPattern::ipRectilinear)",
+   "has_zaa": "config->opt_bool(\"zaa_enabled\")",
+   "have_sequential_printing": "(config->opt_enum<PrintSequence>(\"print_sequence\") == PrintSequence::ByObject)",
+   "bSEMM": "preset_bundle->printers.get_edited_preset().config.opt_bool(\"single_extruder_multi_material\")",
+   "supports_wipe_tower_2": "!is_BBL_Printer && preset_bundle->printers.get_edited_preset().config.opt_enum<WipeTowerType>(\"wipe_tower_type\") == WipeTowerType::Type2",
+   "have_ooze_prevention": "config->opt_bool(\"ooze_prevention\")",
+   "have_prime_tower": "config->opt_bool(\"enable_prime_tower\")",
+   "purge_in_primetower": "preset_bundle->printers.get_edited_preset().config.opt_bool(\"purge_in_prime_tower\")",
+   "have_rib_wall": "(wipe_tower_wall_type == WipeTowerWallType::wtwRib)&&have_prime_tower",
+   "have_avoid_crossing_perimeters": "config->opt_bool(\"reduce_crossing_wall\")",
+   "has_set_other_flow_ratios": "config->opt_bool(\"set_other_flow_ratios\")",
+   "has_overhang_speed": "config->opt_bool_nullable(\"enable_overhang_speed\", variant_index)",
+   "has_fuzzy_skin": "config->opt_enum<FuzzySkinType>(\"fuzzy_skin\") != FuzzySkinType::Disabled_fuzzy",
+   "is_ripple": "fuzzy_skin_noise_type == NoiseType::Ripple",
+   "have_arachne": "config->opt_enum<PerimeterGeneratorType>(\"wall_generator\") == PerimeterGeneratorType::Arachne",
+   "is_role_based_wipe_speed": "config->opt_bool(\"role_based_wipe_speed\")",
+   "have_make_overhang_printable": "config->opt_bool(\"make_overhang_printable\")",
+   "has_detect_overhang_wall": "config->opt_bool(\"detect_overhang_wall\")",
+   "has_overhang_reverse": "config->opt_bool(\"overhang_reverse\")",
+   "has_overhang_reverse_internal_only": "config->opt_bool(\"overhang_reverse_internal_only\")",
+   "have_small_area_infill_flow_compensation": "config->opt_bool(\"small_area_infill_flow_compensation\")",
+   "has_seam_slope": "!has_spiral_vase && config->opt_enum<SeamScarfType>(\"seam_slope_type\") != SeamScarfType::None",
+   "use_beam_interlocking": "config->opt_bool(\"interlocking_beam\")",
+   "lattice_options": "config->opt_enum<InfillPattern>(\"sparse_infill_pattern\") == InfillPattern::ipLateralLattice",
+   "lightning_options": "config->opt_enum<InfillPattern>(\"sparse_infill_pattern\") == InfillPattern::ipLightning",
+   "FillAdaptive": "(pattern == InfillPattern::ipAdaptiveCubic || pattern == InfillPattern::ipSupportCubic)"
+  },
+  "rules": [
+   {
+    "fields": [
+     "extra_perimeters_on_overhangs",
+     "ensure_vertical_shell_thickness",
+     "detect_thin_wall",
+     "detect_overhang_wall",
+     "seam_position",
+     "staggered_inner_seams",
+     "wall_sequence",
+     "outer_wall_line_width"
+    ],
+    "enable_if": "have_perimeters",
+    "kind": "field",
+    "line": 645
+   },
+   {
+    "fields": [
+     "inner_wall_speed",
+     "outer_wall_speed",
+     "small_perimeter_speed",
+     "small_perimeter_threshold"
+    ],
+    "enable_if": "have_perimeters, variant_index",
+    "kind": "field",
+    "line": 648
+   },
+   {
+    "fields": [
+     "sparse_infill_pattern",
+     "infill_combination",
+     "fill_multiline",
+     "infill_direction",
+     "minimum_sparse_infill_area",
+     "sparse_infill_filament_id",
+     "infill_anchor",
+     "infill_anchor_max",
+     "infill_shift_step",
+     "sparse_infill_rotate_template",
+     "symmetric_infill_y_axis"
+    ],
+    "enable_if": "have_infill",
+    "kind": "line",
+    "line": 653
+   },
+   {
+    "fields": [
+     "skeleton_infill_density",
+     "skin_infill_density",
+     "infill_lock_depth",
+     "skin_infill_depth",
+     "skin_infill_line_width",
+     "skeleton_infill_line_width"
+    ],
+    "enable_if": "is_locked_zig",
+    "kind": "line",
+    "line": 694
+   },
+   {
+    "fields": [
+     "infill_direction",
+     "sparse_infill_line_width",
+     "gap_fill_target",
+     "filter_out_gap_fill",
+     "infill_wall_overlap",
+     "bridge_angle",
+     "internal_bridge_angle",
+     "relative_bridge_angle",
+     "solid_infill_direction",
+     "solid_infill_rotate_template",
+     "internal_solid_infill_pattern",
+     "internal_solid_filament_id",
+     "top_surface_filament_id",
+     "bottom_surface_filament_id"
+    ],
+    "enable_if": "have_infill || has_solid_infill",
+    "kind": "field",
+    "line": 746
+   },
+   {
+    "fields": [
+     "sparse_infill_speed",
+     "bridge_speed",
+     "internal_bridge_speed"
+    ],
+    "enable_if": "have_infill || has_solid_infill, variant_index",
+    "kind": "field",
+    "line": 751
+   },
+   {
+    "fields": [
+     "outer_wall_acceleration",
+     "inner_wall_acceleration",
+     "initial_layer_acceleration",
+     "initial_layer_travel_acceleration",
+     "top_surface_acceleration",
+     "travel_acceleration",
+     "bridge_acceleration",
+     "sparse_infill_acceleration",
+     "internal_solid_infill_acceleration"
+    ],
+    "enable_if": "have_default_acceleration, variant_index",
+    "kind": "field",
+    "line": 765
+   },
+   {
+    "fields": [
+     "outer_wall_jerk",
+     "inner_wall_jerk",
+     "initial_layer_jerk",
+     "initial_layer_travel_jerk",
+     "top_surface_jerk",
+     "travel_jerk",
+     "infill_jerk"
+    ],
+    "enable_if": "false, variant_index",
+    "kind": "line",
+    "line": 779
+   },
+   {
+    "fields": [
+     "outer_wall_jerk",
+     "inner_wall_jerk",
+     "initial_layer_jerk",
+     "initial_layer_travel_jerk",
+     "top_surface_jerk",
+     "travel_jerk",
+     "infill_jerk"
+    ],
+    "enable_if": "true, variant_index",
+    "kind": "line",
+    "line": 785
+   },
+   {
+    "fields": [
+     "skirt_type",
+     "min_skirt_length",
+     "skirt_distance",
+     "skirt_start_angle",
+     "skirt_speed",
+     "draft_shield"
+    ],
+    "enable_if": "have_skirt",
+    "kind": "field",
+    "line": 794
+   },
+   {
+    "fields": [
+     "support_style",
+     "support_base_pattern",
+     "support_base_pattern_spacing",
+     "support_expansion",
+     "support_angle",
+     "support_interface_pattern",
+     "support_interface_top_layers",
+     "support_interface_bottom_layers",
+     "bridge_no_support",
+     "max_bridge_length",
+     "support_top_z_distance",
+     "support_bottom_z_distance",
+     "support_type",
+     "support_on_build_plate_only",
+     "support_critical_regions_only",
+     "support_interface_not_for_body",
+     "support_object_xy_distance",
+     "support_object_first_layer_gap",
+     "independent_support_layer_height"
+    ],
+    "enable_if": "have_support_material",
+    "kind": "field",
+    "line": 828
+   },
+   {
+    "fields": [
+     "tree_support_branch_angle",
+     "tree_support_branch_distance",
+     "tree_support_branch_diameter",
+     "tree_support_auto_brim",
+     "tree_support_brim_width"
+    ],
+    "enable_if": "support_is_normal_tree",
+    "kind": "line",
+    "line": 846
+   },
+   {
+    "fields": [
+     "tree_support_branch_angle_organic",
+     "tree_support_branch_distance_organic",
+     "tree_support_branch_diameter_organic",
+     "tree_support_angle_slow",
+     "tree_support_tip_diameter",
+     "tree_support_top_rate",
+     "tree_support_branch_diameter_angle"
+    ],
+    "enable_if": "support_is_organic",
+    "kind": "line",
+    "line": 849
+   },
+   {
+    "fields": [
+     "support_interface_filament",
+     "support_interface_loop_pattern",
+     "support_bottom_interface_spacing"
+    ],
+    "enable_if": "have_support_material && have_support_interface",
+    "kind": "field",
+    "line": 861
+   },
+   {
+    "fields": [
+     "support_ironing_pattern",
+     "support_ironing_flow",
+     "support_ironing_spacing"
+    ],
+    "enable_if": "has_support_ironing",
+    "kind": "line",
+    "line": 868
+   },
+   {
+    "fields": [
+     "small_support_perimeter_speed",
+     "small_support_perimeter_threshold"
+    ],
+    "enable_if": "config->opt_bool(\"enable_support\")",
+    "kind": "field",
+    "line": 880
+   },
+   {
+    "fields": [
+     "ironing_pattern",
+     "ironing_flow",
+     "ironing_spacing",
+     "ironing_angle",
+     "ironing_inset",
+     "ironing_angle_fixed"
+    ],
+    "enable_if": "has_ironing",
+    "kind": "line",
+    "line": 899
+   },
+   {
+    "fields": [
+     "ironing_angle",
+     "ironing_angle_fixed"
+    ],
+    "enable_if": "has_ironing && has_rectilinear_ironing",
+    "kind": "field",
+    "line": 902
+   },
+   {
+    "fields": [
+     "zaa_minimize_perimeter_height",
+     "zaa_min_z",
+     "zaa_dont_alternate_fill_direction",
+     "ironing_expansion"
+    ],
+    "enable_if": "has_zaa",
+    "kind": "line",
+    "line": 908
+   },
+   {
+    "fields": [
+     "prime_tower_width",
+     "prime_tower_brim_width",
+     "prime_tower_skip_points",
+     "wipe_tower_wall_type",
+     "prime_tower_infill_gap",
+     "prime_tower_enable_framework",
+     "enable_tower_interface_features"
+    ],
+    "enable_if": "have_prime_tower",
+    "kind": "line",
+    "line": 929
+   },
+   {
+    "fields": [
+     "wipe_tower_rotation_angle",
+     "wipe_tower_cone_angle",
+     "wipe_tower_extra_spacing",
+     "wipe_tower_max_purge_speed",
+     "wipe_tower_bridging",
+     "wipe_tower_extra_flow",
+     "wipe_tower_no_sparse_layers"
+    ],
+    "enable_if": "have_prime_tower && supports_wipe_tower_2",
+    "kind": "line",
+    "line": 937
+   },
+   {
+    "fields": [
+     "flush_into_infill",
+     "flush_into_support",
+     "flush_into_objects"
+    ],
+    "enable_if": "have_prime_tower",
+    "kind": "field",
+    "line": 955
+   },
+   {
+    "fields": [
+     "first_layer_flow_ratio",
+     "outer_wall_flow_ratio",
+     "inner_wall_flow_ratio",
+     "overhang_flow_ratio",
+     "sparse_infill_flow_ratio",
+     "internal_solid_infill_flow_ratio",
+     "gap_fill_flow_ratio",
+     "support_flow_ratio",
+     "support_interface_flow_ratio"
+    ],
+    "enable_if": "has_set_other_flow_ratios",
+    "kind": "line",
+    "line": 962
+   },
+   {
+    "fields": [
+     "overhang_1_4_speed",
+     "overhang_2_4_speed",
+     "overhang_3_4_speed",
+     "overhang_4_4_speed"
+    ],
+    "enable_if": "has_overhang_speed, variant_index",
+    "kind": "line",
+    "line": 966
+   },
+   {
+    "fields": [
+     "fuzzy_skin_mode",
+     "fuzzy_skin_noise_type",
+     "fuzzy_skin_point_distance",
+     "fuzzy_skin_thickness",
+     "fuzzy_skin_first_layer"
+    ],
+    "enable_if": "has_fuzzy_skin",
+    "kind": "line",
+    "line": 979
+   },
+   {
+    "fields": [
+     "wall_transition_length",
+     "wall_transition_filter_deviation",
+     "wall_transition_angle",
+     "min_feature_size",
+     "min_length_factor",
+     "min_bead_width",
+     "wall_distribution_count",
+     "initial_layer_min_bead_width",
+     "wall_maximum_resolution",
+     "wall_maximum_deviation"
+    ],
+    "enable_if": "have_arachne",
+    "kind": "line",
+    "line": 993
+   },
+   {
+    "fields": [
+     "accel_to_decel_enable",
+     "accel_to_decel_factor"
+    ],
+    "enable_if": "gcf_is_klipper",
+    "kind": "line",
+    "line": 1002
+   },
+   {
+    "fields": [
+     "hole_to_polyhole_threshold",
+     "hole_to_polyhole_twisted",
+     "hole_to_polyhole_max_edges"
+    ],
+    "enable_if": "config->opt_bool(\"hole_to_polyhole\")",
+    "kind": "line",
+    "line": 1013
+   },
+   {
+    "fields": [
+     "lateral_lattice_angle_1",
+     "lateral_lattice_angle_2"
+    ],
+    "enable_if": "lattice_options",
+    "kind": "line",
+    "line": 1058
+   },
+   {
+    "fields": [
+     "lightning_overhang_angle",
+     "lightning_prune_angle",
+     "lightning_straightening_angle"
+    ],
+    "enable_if": "lightning_options",
+    "kind": "line",
+    "line": 1062
+   },
+   {
+    "fields": [
+     "enable_arc_fitting"
+    ],
+    "enable_if": "!have_volumetric_extrusion_rate_slope",
+    "kind": "field",
+    "line": 634
+   },
+   {
+    "fields": [
+     "max_volumetric_extrusion_rate_slope_segment_length"
+    ],
+    "enable_if": "have_volumetric_extrusion_rate_slope",
+    "kind": "line",
+    "line": 635
+   },
+   {
+    "fields": [
+     "extrusion_rate_smoothing_external_perimeter_only"
+    ],
+    "enable_if": "have_volumetric_extrusion_rate_slope",
+    "kind": "line",
+    "line": 636
+   },
+   {
+    "fields": [
+     "infill_combination_max_layer_height"
+    ],
+    "enable_if": "have_combined_infill",
+    "kind": "line",
+    "line": 658
+   },
+   {
+    "fields": [
+     "gyroid_optimized"
+    ],
+    "enable_if": "have_infill && pattern == ipGyroid",
+    "kind": "line",
+    "line": 667
+   },
+   {
+    "fields": [
+     "fill_multiline"
+    ],
+    "enable_if": "have_multiline_infill_pattern",
+    "kind": "field",
+    "line": 671
+   },
+   {
+    "fields": [
+     "infill_anchor_max"
+    ],
+    "enable_if": "infill_anchor",
+    "kind": "field",
+    "line": 681
+   },
+   {
+    "fields": [
+     "infill_anchor"
+    ],
+    "enable_if": "has_infill_anchors",
+    "kind": "field",
+    "line": 685
+   },
+   {
+    "fields": [
+     "infill_shift_step"
+    ],
+    "enable_if": "is_cross_zag || is_locked_zig",
+    "kind": "line",
+    "line": 692
+   },
+   {
+    "fields": [
+     "symmetric_infill_y_axis"
+    ],
+    "enable_if": "is_zig_zag || is_cross_zag || is_locked_zig",
+    "kind": "line",
+    "line": 699
+   },
+   {
+    "fields": [
+     "spiral_mode_smooth"
+    ],
+    "enable_if": "has_spiral_vase",
+    "kind": "line",
+    "line": 702
+   },
+   {
+    "fields": [
+     "spiral_mode_max_xy_smoothing"
+    ],
+    "enable_if": "has_spiral_vase && config->opt_bool(\"spiral_mode_smooth\")",
+    "kind": "line",
+    "line": 703
+   },
+   {
+    "fields": [
+     "spiral_starting_flow_ratio"
+    ],
+    "enable_if": "has_spiral_vase",
+    "kind": "line",
+    "line": 704
+   },
+   {
+    "fields": [
+     "spiral_finishing_flow_ratio"
+    ],
+    "enable_if": "has_spiral_vase",
+    "kind": "line",
+    "line": 705
+   },
+   {
+    "fields": [
+     "top_surface_pattern"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "field",
+    "line": 709
+   },
+   {
+    "fields": [
+     "bottom_surface_pattern"
+    ],
+    "enable_if": "has_bottom_shell",
+    "kind": "field",
+    "line": 710
+   },
+   {
+    "fields": [
+     "top_surface_density"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "field",
+    "line": 711
+   },
+   {
+    "fields": [
+     "bottom_surface_density"
+    ],
+    "enable_if": "has_bottom_shell",
+    "kind": "field",
+    "line": 712
+   },
+   {
+    "fields": [
+     "top_layer_direction"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "field",
+    "line": 713
+   },
+   {
+    "fields": [
+     "bottom_layer_direction"
+    ],
+    "enable_if": "has_bottom_shell",
+    "kind": "field",
+    "line": 714
+   },
+   {
+    "fields": [
+     "top_surface_expansion"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "line",
+    "line": 716
+   },
+   {
+    "fields": [
+     "top_surface_expansion_margin"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "line",
+    "line": 717
+   },
+   {
+    "fields": [
+     "top_surface_expansion_margin"
+    ],
+    "enable_if": "has_top_surface_expansion",
+    "kind": "field",
+    "line": 719
+   },
+   {
+    "fields": [
+     "top_surface_expansion_direction"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "line",
+    "line": 720
+   },
+   {
+    "fields": [
+     "top_surface_expansion_direction"
+    ],
+    "enable_if": "has_top_surface_expansion",
+    "kind": "field",
+    "line": 721
+   },
+   {
+    "fields": [
+     "center_of_surface_pattern"
+    ],
+    "enable_if": "has_centered_surface",
+    "kind": "line",
+    "line": 733
+   },
+   {
+    "fields": [
+     "separated_infills"
+    ],
+    "enable_if": "is_internal_infill_separable",
+    "kind": "line",
+    "line": 739
+   },
+   {
+    "fields": [
+     "top_shell_thickness"
+    ],
+    "enable_if": "! has_spiral_vase && has_top_shell",
+    "kind": "field",
+    "line": 754
+   },
+   {
+    "fields": [
+     "bottom_shell_thickness"
+    ],
+    "enable_if": "! has_spiral_vase && has_bottom_shell",
+    "kind": "field",
+    "line": 755
+   },
+   {
+    "fields": [
+     "gap_infill_speed"
+    ],
+    "enable_if": "have_perimeters, variant_index",
+    "kind": "field",
+    "line": 758
+   },
+   {
+    "fields": [
+     "top_surface_line_width"
+    ],
+    "enable_if": "has_top_shell",
+    "kind": "field",
+    "line": 760
+   },
+   {
+    "fields": [
+     "top_surface_speed"
+    ],
+    "enable_if": "has_top_shell, variant_index",
+    "kind": "field",
+    "line": 761
+   },
+   {
+    "fields": [
+     "default_junction_deviation"
+    ],
+    "enable_if": "gcf_is_marlin_firmware, variant_index",
+    "kind": "line",
+    "line": 775
+   },
+   {
+    "fields": [
+     "default_junction_deviation"
+    ],
+    "enable_if": "true, variant_index",
+    "kind": "field",
+    "line": 777
+   },
+   {
+    "fields": [
+     "default_jerk"
+    ],
+    "enable_if": "false, variant_index",
+    "kind": "field",
+    "line": 778
+   },
+   {
+    "fields": [
+     "default_junction_deviation"
+    ],
+    "enable_if": "false, variant_index",
+    "kind": "field",
+    "line": 782
+   },
+   {
+    "fields": [
+     "default_jerk"
+    ],
+    "enable_if": "true, variant_index",
+    "kind": "field",
+    "line": 783
+   },
+   {
+    "fields": [
+     "skirt_height"
+    ],
+    "enable_if": "have_skirt && config->opt_enum<DraftShield>(\"draft_shield\") != dsEnabled",
+    "kind": "field",
+    "line": 792
+   },
+   {
+    "fields": [
+     "single_loop_draft_shield"
+    ],
+    "enable_if": "have_skirt",
+    "kind": "line",
+    "line": 793
+   },
+   {
+    "fields": [
+     "brim_object_gap"
+    ],
+    "enable_if": "have_brim",
+    "kind": "field",
+    "line": 798
+   },
+   {
+    "fields": [
+     "brim_use_efc_outline"
+    ],
+    "enable_if": "have_brim",
+    "kind": "field",
+    "line": 799
+   },
+   {
+    "fields": [
+     "combine_brims"
+    ],
+    "enable_if": "have_brim",
+    "kind": "field",
+    "line": 800
+   },
+   {
+    "fields": [
+     "brim_width"
+    ],
+    "enable_if": "have_brim_width",
+    "kind": "field",
+    "line": 803
+   },
+   {
+    "fields": [
+     "brim_flow_ratio"
+    ],
+    "enable_if": "have_brim",
+    "kind": "field",
+    "line": 804
+   },
+   {
+    "fields": [
+     "outer_wall_filament_id"
+    ],
+    "enable_if": "have_perimeters || have_brim",
+    "kind": "field",
+    "line": 806
+   },
+   {
+    "fields": [
+     "inner_wall_filament_id"
+    ],
+    "enable_if": "have_perimeters || have_brim",
+    "kind": "field",
+    "line": 807
+   },
+   {
+    "fields": [
+     "brim_ears_max_angle"
+    ],
+    "enable_if": "brim_width > 0.0f",
+    "kind": "field",
+    "line": 812
+   },
+   {
+    "fields": [
+     "brim_ears_detection_length"
+    ],
+    "enable_if": "brim_width > 0.0f",
+    "kind": "field",
+    "line": 813
+   },
+   {
+    "fields": [
+     "brim_ears_max_angle"
+    ],
+    "enable_if": "have_brim_ear",
+    "kind": "line",
+    "line": 815
+   },
+   {
+    "fields": [
+     "brim_ears_detection_length"
+    ],
+    "enable_if": "have_brim_ear",
+    "kind": "line",
+    "line": 816
+   },
+   {
+    "fields": [
+     "elefant_foot_compensation_layers"
+    ],
+    "enable_if": "config->opt_float(\"elefant_foot_compensation\") > 0 || config->option<ConfigOptionPercent>(\"elefant_foot_layers_density\")->get_abs_value(1.0f) < 1.0f",
+    "kind": "line",
+    "line": 819
+   },
+   {
+    "fields": [
+     "support_threshold_angle"
+    ],
+    "enable_if": "have_support_material && is_auto(support_type)",
+    "kind": "field",
+    "line": 835
+   },
+   {
+    "fields": [
+     "support_threshold_overlap"
+    ],
+    "enable_if": "config->opt_int(\"support_threshold_angle\") == 0 && have_support_material && is_auto(support_type)",
+    "kind": "field",
+    "line": 836
+   },
+   {
+    "fields": [
+     "support_closing_radius"
+    ],
+    "enable_if": "have_support_material && support_style == smsSnug",
+    "kind": "field",
+    "line": 837
+   },
+   {
+    "fields": [
+     "support_threshold_overlap"
+    ],
+    "enable_if": "!support_is_tree",
+    "kind": "line",
+    "line": 844
+   },
+   {
+    "fields": [
+     "independent_support_layer_height"
+    ],
+    "enable_if": "have_support_material && !support_is_organic",
+    "kind": "line",
+    "line": 853
+   },
+   {
+    "fields": [
+     "tree_support_brim_width"
+    ],
+    "enable_if": "support_is_tree && !config->opt_bool(\"tree_support_auto_brim\")",
+    "kind": "field",
+    "line": 855
+   },
+   {
+    "fields": [
+     "max_bridge_length"
+    ],
+    "enable_if": "support_is_tree",
+    "kind": "line",
+    "line": 857
+   },
+   {
+    "fields": [
+     "bridge_no_support"
+    ],
+    "enable_if": "!support_is_tree",
+    "kind": "line",
+    "line": 858
+   },
+   {
+    "fields": [
+     "support_critical_regions_only"
+    ],
+    "enable_if": "is_auto(support_type) && support_is_tree",
+    "kind": "line",
+    "line": 859
+   },
+   {
+    "fields": [
+     "support_ironing"
+    ],
+    "enable_if": "can_ironing_support",
+    "kind": "field",
+    "line": 866
+   },
+   {
+    "fields": [
+     "support_interface_spacing"
+    ],
+    "enable_if": "have_support_material && have_support_interface && !has_support_ironing",
+    "kind": "field",
+    "line": 871
+   },
+   {
+    "fields": [
+     "support_speed"
+    ],
+    "enable_if": "have_support_material || have_skirt_height",
+    "kind": "line",
+    "line": 876
+   },
+   {
+    "fields": [
+     "support_interface_speed"
+    ],
+    "enable_if": "have_support_material && have_support_interface",
+    "kind": "line",
+    "line": 877
+   },
+   {
+    "fields": [
+     "support_material_synchronize_layers"
+    ],
+    "enable_if": "have_support_soluble",
+    "kind": "field",
+    "line": 884
+   },
+   {
+    "fields": [
+     "inner_wall_line_width"
+    ],
+    "enable_if": "have_perimeters || have_skirt || have_brim",
+    "kind": "field",
+    "line": 886
+   },
+   {
+    "fields": [
+     "support_filament"
+    ],
+    "enable_if": "have_support_material || have_skirt",
+    "kind": "field",
+    "line": 887
+   },
+   {
+    "fields": [
+     "raft_contact_distance"
+    ],
+    "enable_if": "have_raft && !have_support_soluble",
+    "kind": "line",
+    "line": 889
+   },
+   {
+    "fields": [
+     "raft_first_layer_density"
+    ],
+    "enable_if": "have_support_material",
+    "kind": "field",
+    "line": 892
+   },
+   {
+    "fields": [
+     "ironing_speed"
+    ],
+    "enable_if": "has_ironing || has_support_ironing",
+    "kind": "line",
+    "line": 905
+   },
+   {
+    "fields": [
+     "print_order"
+    ],
+    "enable_if": "!have_sequential_printing",
+    "kind": "field",
+    "line": 914
+   },
+   {
+    "fields": [
+     "single_extruder_multi_material"
+    ],
+    "enable_if": "!is_BBL_Printer",
+    "kind": "field",
+    "line": 916
+   },
+   {
+    "fields": [
+     "ooze_prevention"
+    ],
+    "enable_if": "!bSEMM",
+    "kind": "field",
+    "line": 921
+   },
+   {
+    "fields": [
+     "standby_temperature_delta"
+    ],
+    "enable_if": "have_ooze_prevention",
+    "kind": "line",
+    "line": 923
+   },
+   {
+    "fields": [
+     "preheat_time"
+    ],
+    "enable_if": "have_ooze_prevention",
+    "kind": "line",
+    "line": 924
+   },
+   {
+    "fields": [
+     "preheat_steps"
+    ],
+    "enable_if": "have_ooze_prevention && (preheat_steps > 0)",
+    "kind": "line",
+    "line": 926
+   },
+   {
+    "fields": [
+     "enable_tower_interface_cooldown_during_tower"
+    ],
+    "enable_if": "have_prime_tower && config->opt_bool(\"enable_tower_interface_features\")",
+    "kind": "line",
+    "line": 932
+   },
+   {
+    "fields": [
+     "wipe_tower_cone_angle"
+    ],
+    "enable_if": "have_prime_tower && supports_wipe_tower_2 && wipe_tower_wall_type == WipeTowerWallType::wtwCone",
+    "kind": "line",
+    "line": 945
+   },
+   {
+    "fields": [
+     "wipe_tower_extra_rib_length"
+    ],
+    "enable_if": "have_rib_wall",
+    "kind": "line",
+    "line": 946
+   },
+   {
+    "fields": [
+     "wipe_tower_rib_width"
+    ],
+    "enable_if": "have_rib_wall",
+    "kind": "line",
+    "line": 947
+   },
+   {
+    "fields": [
+     "wipe_tower_fillet_wall"
+    ],
+    "enable_if": "have_rib_wall",
+    "kind": "line",
+    "line": 948
+   },
+   {
+    "fields": [
+     "prime_tower_width"
+    ],
+    "enable_if": "have_prime_tower && !have_rib_wall",
+    "kind": "field",
+    "line": 949
+   },
+   {
+    "fields": [
+     "single_extruder_multi_material_priming"
+    ],
+    "enable_if": "!bSEMM && have_prime_tower && supports_wipe_tower_2",
+    "kind": "line",
+    "line": 951
+   },
+   {
+    "fields": [
+     "prime_volume"
+    ],
+    "enable_if": "have_prime_tower && (!purge_in_primetower || !bSEMM)",
+    "kind": "line",
+    "line": 953
+   },
+   {
+    "fields": [
+     "max_travel_detour_distance"
+    ],
+    "enable_if": "have_avoid_crossing_perimeters",
+    "kind": "line",
+    "line": 959
+   },
+   {
+    "fields": [
+     "slowdown_for_curled_perimeters"
+    ],
+    "enable_if": "has_overhang_speed, variant_index",
+    "kind": "line",
+    "line": 969
+   },
+   {
+    "fields": [
+     "flush_into_objects"
+    ],
+    "enable_if": "!is_global_config",
+    "kind": "line",
+    "line": 971
+   },
+   {
+    "fields": [
+     "support_interface_not_for_body"
+    ],
+    "enable_if": "config->opt_int(\"support_interface_filament\")&&!config->opt_int(\"support_filament\")",
+    "kind": "line",
+    "line": 973
+   },
+   {
+    "fields": [
+     "fuzzy_skin_scale"
+    ],
+    "enable_if": "fuzzy_skin_noise_type != NoiseType::Classic && has_fuzzy_skin && !is_ripple",
+    "kind": "line",
+    "line": 985
+   },
+   {
+    "fields": [
+     "fuzzy_skin_octaves"
+    ],
+    "enable_if": "fuzzy_skin_noise_type != NoiseType::Classic && fuzzy_skin_noise_type != NoiseType::Voronoi && has_fuzzy_skin && !is_ripple",
+    "kind": "line",
+    "line": 986
+   },
+   {
+    "fields": [
+     "fuzzy_skin_persistence"
+    ],
+    "enable_if": "(fuzzy_skin_noise_type == NoiseType::Perlin || fuzzy_skin_noise_type == NoiseType::Billow) && has_fuzzy_skin && !is_ripple",
+    "kind": "line",
+    "line": 987
+   },
+   {
+    "fields": [
+     "fuzzy_skin_ripples_per_layer"
+    ],
+    "enable_if": "is_ripple && has_fuzzy_skin",
+    "kind": "line",
+    "line": 988
+   },
+   {
+    "fields": [
+     "fuzzy_skin_ripple_offset"
+    ],
+    "enable_if": "is_ripple && has_fuzzy_skin",
+    "kind": "line",
+    "line": 989
+   },
+   {
+    "fields": [
+     "fuzzy_skin_layers_between_ripple_offset"
+    ],
+    "enable_if": "is_ripple && has_fuzzy_skin",
+    "kind": "line",
+    "line": 990
+   },
+   {
+    "fields": [
+     "detect_thin_wall"
+    ],
+    "enable_if": "!have_arachne",
+    "kind": "field",
+    "line": 996
+   },
+   {
+    "fields": [
+     "wipe_speed"
+    ],
+    "enable_if": "!is_role_based_wipe_speed",
+    "kind": "field",
+    "line": 1000
+   },
+   {
+    "fields": [
+     "accel_to_decel_factor"
+    ],
+    "enable_if": "config->opt_bool(\"accel_to_decel_enable\")",
+    "kind": "field",
+    "line": 1005
+   },
+   {
+    "fields": [
+     "make_overhang_printable_angle"
+    ],
+    "enable_if": "have_make_overhang_printable",
+    "kind": "line",
+    "line": 1008
+   },
+   {
+    "fields": [
+     "make_overhang_printable_hole_size"
+    ],
+    "enable_if": "have_make_overhang_printable",
+    "kind": "line",
+    "line": 1009
+   },
+   {
+    "fields": [
+     "overhang_reverse"
+    ],
+    "enable_if": "allow_overhang_reverse",
+    "kind": "line",
+    "line": 1019
+   },
+   {
+    "fields": [
+     "overhang_reverse_internal_only"
+    ],
+    "enable_if": "allow_overhang_reverse && has_overhang_reverse",
+    "kind": "line",
+    "line": 1020
+   },
+   {
+    "fields": [
+     "overhang_reverse_threshold"
+    ],
+    "enable_if": "has_detect_overhang_wall && allow_overhang_reverse && has_overhang_reverse && !has_overhang_reverse_internal_only",
+    "kind": "line",
+    "line": 1027
+   },
+   {
+    "fields": [
+     "timelapse_type"
+    ],
+    "enable_if": "is_BBL_Printer",
+    "kind": "line",
+    "line": 1028
+   },
+   {
+    "fields": [
+     "small_area_infill_flow_compensation_model"
+    ],
+    "enable_if": "have_small_area_infill_flow_compensation",
+    "kind": "line",
+    "line": 1032
+   },
+   {
+    "fields": [
+     "seam_slope_type"
+    ],
+    "enable_if": "!has_spiral_vase",
+    "kind": "field",
+    "line": 1035
+   },
+   {
+    "fields": [
+     "seam_slope_conditional"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1037
+   },
+   {
+    "fields": [
+     "seam_slope_start_height"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1038
+   },
+   {
+    "fields": [
+     "seam_slope_entire_loop"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1039
+   },
+   {
+    "fields": [
+     "seam_slope_min_length"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1040
+   },
+   {
+    "fields": [
+     "seam_slope_steps"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1041
+   },
+   {
+    "fields": [
+     "seam_slope_inner_walls"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1042
+   },
+   {
+    "fields": [
+     "scarf_joint_speed"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1043
+   },
+   {
+    "fields": [
+     "scarf_joint_flow_ratio"
+    ],
+    "enable_if": "has_seam_slope",
+    "kind": "line",
+    "line": 1044
+   },
+   {
+    "fields": [
+     "seam_slope_min_length"
+    ],
+    "enable_if": "!config->opt_bool(\"seam_slope_entire_loop\")",
+    "kind": "field",
+    "line": 1045
+   },
+   {
+    "fields": [
+     "scarf_angle_threshold"
+    ],
+    "enable_if": "has_seam_slope && config->opt_bool(\"seam_slope_conditional\")",
+    "kind": "line",
+    "line": 1046
+   },
+   {
+    "fields": [
+     "scarf_overhang_threshold"
+    ],
+    "enable_if": "has_seam_slope && config->opt_bool(\"seam_slope_conditional\")",
+    "kind": "line",
+    "line": 1047
+   },
+   {
+    "fields": [
+     "mmu_segmented_region_interlocking_depth"
+    ],
+    "enable_if": "!use_beam_interlocking",
+    "kind": "line",
+    "line": 1050
+   },
+   {
+    "fields": [
+     "interlocking_beam_width"
+    ],
+    "enable_if": "use_beam_interlocking",
+    "kind": "line",
+    "line": 1051
+   },
+   {
+    "fields": [
+     "interlocking_orientation"
+    ],
+    "enable_if": "use_beam_interlocking",
+    "kind": "line",
+    "line": 1052
+   },
+   {
+    "fields": [
+     "interlocking_beam_layer_count"
+    ],
+    "enable_if": "use_beam_interlocking",
+    "kind": "line",
+    "line": 1053
+   },
+   {
+    "fields": [
+     "interlocking_depth"
+    ],
+    "enable_if": "use_beam_interlocking",
+    "kind": "line",
+    "line": 1054
+   },
+   {
+    "fields": [
+     "interlocking_boundary_avoidance"
+    ],
+    "enable_if": "use_beam_interlocking",
+    "kind": "line",
+    "line": 1055
+   },
+   {
+    "fields": [
+     "sparse_infill_rotate_template"
+    ],
+    "enable_if": "!FillAdaptive",
+    "kind": "field",
+    "line": 1069
+   },
+   {
+    "fields": [
+     "infill_direction"
+    ],
+    "enable_if": "config->opt_string(\"sparse_infill_rotate_template\") == \"\" && !FillAdaptive",
+    "kind": "field",
+    "line": 1070
+   },
+   {
+    "fields": [
+     "solid_infill_direction"
+    ],
+    "enable_if": "config->opt_string(\"solid_infill_rotate_template\") == \"\"",
+    "kind": "field",
+    "line": 1071
+   },
+   {
+    "fields": [
+     "infill_overhang_angle"
+    ],
+    "enable_if": "config->opt_enum<InfillPattern>(\"sparse_infill_pattern\") == InfillPattern::ipLateralHoneycomb",
+    "kind": "line",
+    "line": 1073
+   },
+   {
+    "fields": [
+     "enable_wrapping_detection"
+    ],
+    "enable_if": "DevPrinterConfigUtil::support_wrapping_detection(printer_type)",
+    "kind": "line",
+    "line": 1076
+   }
+  ],
+  "stats": {
+   "toggle_calls_in_source": 163,
+   "rules_extracted": 157
+  }
+ },
+ "toggle_print_sla_options": {
+  "locals": {
+   "supports_en": "config->opt_bool(\"supports_enable\")",
+   "pad_en": "config->opt_bool(\"pad_enable\")",
+   "zero_elev": "config->opt_bool(\"pad_around_object\") && pad_en"
+  },
+  "rules": [
+   {
+    "fields": [
+     "support_head_front_diameter"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1117
+   },
+   {
+    "fields": [
+     "support_head_penetration"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1118
+   },
+   {
+    "fields": [
+     "support_head_width"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1119
+   },
+   {
+    "fields": [
+     "support_pillar_diameter"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1120
+   },
+   {
+    "fields": [
+     "support_small_pillar_diameter_percent"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1121
+   },
+   {
+    "fields": [
+     "support_max_bridges_on_pillar"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1122
+   },
+   {
+    "fields": [
+     "support_pillar_connection_mode"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1123
+   },
+   {
+    "fields": [
+     "support_buildplate_only"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1124
+   },
+   {
+    "fields": [
+     "support_base_diameter"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1125
+   },
+   {
+    "fields": [
+     "support_base_height"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1126
+   },
+   {
+    "fields": [
+     "support_base_safety_distance"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1127
+   },
+   {
+    "fields": [
+     "support_critical_angle"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1128
+   },
+   {
+    "fields": [
+     "support_max_bridge_length"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1129
+   },
+   {
+    "fields": [
+     "support_max_pillar_link_distance"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1130
+   },
+   {
+    "fields": [
+     "support_points_density_relative"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1131
+   },
+   {
+    "fields": [
+     "support_points_minimal_distance"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1132
+   },
+   {
+    "fields": [
+     "pad_wall_thickness"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1136
+   },
+   {
+    "fields": [
+     "pad_wall_height"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1137
+   },
+   {
+    "fields": [
+     "pad_brim_size"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1138
+   },
+   {
+    "fields": [
+     "pad_max_merge_distance"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1139
+   },
+   {
+    "fields": [
+     "pad_edge_radius"
+    ],
+    "enable_if": "supports_en",
+    "kind": "field",
+    "line": 1140
+   },
+   {
+    "fields": [
+     "pad_wall_slope"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1141
+   },
+   {
+    "fields": [
+     "pad_around_object"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1142
+   },
+   {
+    "fields": [
+     "pad_around_object_everywhere"
+    ],
+    "enable_if": "pad_en",
+    "kind": "field",
+    "line": 1143
+   },
+   {
+    "fields": [
+     "support_object_elevation"
+    ],
+    "enable_if": "supports_en && !zero_elev",
+    "kind": "field",
+    "line": 1147
+   },
+   {
+    "fields": [
+     "pad_object_gap"
+    ],
+    "enable_if": "zero_elev",
+    "kind": "field",
+    "line": 1148
+   },
+   {
+    "fields": [
+     "pad_around_object_everywhere"
+    ],
+    "enable_if": "zero_elev",
+    "kind": "field",
+    "line": 1149
+   },
+   {
+    "fields": [
+     "pad_object_connector_stride"
+    ],
+    "enable_if": "zero_elev",
+    "kind": "field",
+    "line": 1150
+   },
+   {
+    "fields": [
+     "pad_object_connector_width"
+    ],
+    "enable_if": "zero_elev",
+    "kind": "field",
+    "line": 1151
+   },
+   {
+    "fields": [
+     "pad_object_connector_penetration"
+    ],
+    "enable_if": "zero_elev",
+    "kind": "field",
+    "line": 1152
+   }
+  ],
+  "stats": {
+   "toggle_calls_in_source": 30,
+   "rules_extracted": 30
+  }
+ },
+ "TabPrint::toggle_options": {
+  "locals": {
+   "is_BBL_printer": "wxGetApp().preset_bundle->is_bbl_vendor()",
+   "support_type": "m_config->opt_enum<SupportType>(\"support_type\")",
+   "is_user_and_saved_preset": "!selected_preset.is_system && !selected_preset.is_dirty",
+   "support_material_overhangs_queried": "m_config->opt_bool(\"enable_support\") && !m_config->opt_bool(\"detect_overhang_wall\")",
+   "l_is_sorted": "std::is_sorted(l.begin(), l.end())",
+   "r_is_sorted": "std::is_sorted(r.begin(), r.end())",
+   "opt": "dynamic_cast<ConfigOptionVectorBase *>(m_config->option(\"filament_retraction_length\"))",
+   "iter": "m_active_page->m_opt_id_map.lower_bound(opt_key)",
+   "vec": "dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key))",
+   "opt_key": "opt_id",
+   "opt_id2": "opt_id",
+   "n": "opt_key.find('#')",
+   "inull": "std::find(m_null_keys.begin(), m_null_keys.end(), opt_id2)",
+   "tab_opt": "dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key))",
+   "set": "*m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end()",
+   "k": "opt_key",
+   "append_retraction_option": "[this, retraction_optgroup](const std::string& opt_key, int opt_index) { Line line {\"\",\"\"}",
+   "append_ironing_option": "[this, ironing_optgroup](const std::string& opt_key, int opt_index) { Line line {\"\",\"\"}",
+   "has_process_value": "process_option != nullptr",
+   "filament_vector": "dynamic_cast<ConfigOptionVectorBase*>(filament_option)) { std::unique_ptr<ConfigOption> process_clone(process_option->clone()); size_t source_index = 0; if (process_vector != nullptr) source_index = target_index; filament_vector->set_at(process_clone.get(), target_index, source_index); const boost::any filament_config_value = optgroup_sh->get_config_value(*m_config, opt_key, opt_index); field->set_value(filament_config_value, false); field->update_na_value(_(L(\"N/A\"))); applied_value = true; } } } if (applied_value) field->set_last_meaningful_value()",
+   "og_it": "std::find_if(page->m_optgroups.begin(), page->m_optgroups.end(), [](const ConfigOptionsGroupShp og) { return og->title == \"Retraction\"; })",
+   "have_retract_length": "dynamic_cast<ConfigOptionVectorBase *>(m_config->option(\"filament_retraction_length\"))->is_nil(extruder_idx) || m_config->opt_float(\"filament_retraction_length\", extruder_idx) > 0",
+   "is_checked": "!dynamic_cast<ConfigOptionVectorBase*>(m_config->option(opt_key))->is_nil(extruder_idx)",
+   "machine_enabled": "machine_enabled_level == LongRectrationLevel::EnableFilament",
+   "filament_enabled": "m_config->option<ConfigOptionBools>(\"filament_long_retractions_when_cut\")->values[extruder_idx] == 1",
+   "og_ironing_it": "std::find_if(page->m_optgroups.begin(), page->m_optgroups.end(), [](const ConfigOptionsGroupShp og) { return og->title == \"Ironing\"; })",
+   "edit_custom_gcode_fn": "[this](const t_config_option_key& opt_key) { edit_custom_gcode(opt_key); }"
+  },
+  "rules": [],
+  "stats": {
+   "toggle_calls_in_source": 0,
+   "rules_extracted": 0
+  }
+ },
+ "TabFilament::toggle_options": {
+  "locals": {
+   "has_enable_overhang_bridge_fan": "m_config->opt_bool(\"enable_overhang_bridge_fan\", 0)",
+   "has_slow_down_for_layer_cooling": "m_config->opt_bool(\"slow_down_for_layer_cooling\", 0)",
+   "support_air_filtration": "printer_cfg.opt_bool(\"support_air_filtration\")",
+   "activate_air_filtration": "m_config->opt_bool(\"activate_air_filtration\", 0)",
+   "pa": "m_config->opt_bool(\"enable_pressure_advance\", 0)",
+   "support_multi_bed_types": "std::find(bed_temp_keys.begin(), bed_temp_keys.end(), bed_temp_1st_layer_key) == bed_temp_keys.end() || is_BBL_printer || printer_cfg.opt_bool(\"support_multi_bed_types\")",
+   "has_adaptive_pa": "m_config->opt_bool(\"adaptive_pressure_advance\", 0)",
+   "is_pellet_printer": "printer_cfg.opt_bool(\"pellet_modded_printer\")",
+   "enable_fit": "volumetric_speed_cos != \"0 0 0 0 0 0\"",
+   "multitool_ramming": "m_config->opt_bool(\"filament_multitool_ramming\", 0)",
+   "is_BBL_multi_extruder": "is_BBL_printer && printer_cfg.option<ConfigOptionFloats>(\"nozzle_diameter\")->size() > 1",
+   "get_value_by_opt_key": "[&](const std::string& opt_key) { if (opt_key_pure == opt_key && !std::isnan(dvalue)) { // Return the incoming value (if it is valid) if the opt_key equals the key of the changed option. return percent_value_clamp(dvalue); } else if (!m_config->option<ConfigOptionPercents>(opt_key)->is_nil(opt_idx)) { // Return the overridden value if the option value for the opt_key was overridden for the given filament. return percent_value_clamp(m_config->option<ConfigOptionPercents>(opt_key)->get_at(opt_idx)); } else { // Return the value of the option value for opt_key from the printer setting if it was not overridden for the filament. const auto& printer_config = m_preset_bundle->printers.get_edited_preset().config; const std::string printer_opt_key = opt_key.substr(strlen(\"filament_\")); return percent_value_clamp(printer_config.option<ConfigOptionPercents>(printer_opt_key)->get_at(opt_idx)); } return 0.",
+   "edit_custom_gcode_fn": "[this](const t_config_option_key& opt_key) { edit_custom_gcode(opt_key); }",
+   "option": "optgroup->get_option(opt_key, 0)",
+   "flavor": "m_config->option<ConfigOptionEnum<GCodeFlavor>>(\"gcode_flavor\")->value",
+   "is_marlin_flavor": "(flavor == gcfMarlinLegacy || flavor == gcfMarlinFirmware || flavor == gcfKlipper || flavor == gcfRepRapFirmware || flavor == gcfRepetier)",
+   "is_SEMM": "m_config->opt_bool(\"single_extruder_multi_material\")",
+   "reset_to_filament_color": "[this, extruder_idx](wxWindow* parent) { // m_reset_to_filament_color = new ScalableButton(parent, wxID_ANY, \"undo\", _L(\"Reset to Filament Color\"), // wxDefaultSize, wxDefaultPosition, wxBU_LEFT | wxBU_EXACTFIT, true); // ScalableButton* btn = m_reset_to_filament_color; // btn->SetFont(Slic3r::GUI::wxGetApp().normal_font()); // btn->SetSize(btn->GetBestSize()); // auto sizer = new wxBoxSizer(wxHORIZONTAL); // sizer->Add(btn); // btn->Bind(wxEVT_BUTTON, [this, extruder_idx](wxCommandEvent& e) // { // std::vector<std::string> colors = static_cast<const ConfigOptionStrings*>(m_config->option(\"extruder_colour\"))->values; // colors[extruder_idx] = \"\"; // DynamicPrintConfig new_conf = *m_config; // new_conf.set_key_value(\"extruder_colour\", new ConfigOptionStrings(colors)); // load_config(new_conf); // update_dirty(); // update(); // })",
+   "has_multiple_nozzle": "extruder_max_nozzle_count && std::any_of(extruder_max_nozzle_count->values.begin(), extruder_max_nozzle_count->values.end(), [](int v) { return v > 1 && v != ConfigOptionIntsNullable::nil_value(); })",
+   "show_purge_mode": "has_multiple_nozzle || support_fast_purge",
+   "needs_reset": "std::find(allowed.begin(), allowed.end(), current) == allowed.end()"
+  },
+  "rules": [
+   {
+    "fields": [
+     "filament_minimal_purge_on_wipe_tower",
+     "filament_loading_speed_start",
+     "filament_loading_speed",
+     "filament_unloading_speed_start",
+     "filament_unloading_speed",
+     "filament_toolchange_delay",
+     "filament_cooling_moves",
+     "filament_cooling_initial_speed",
+     "filament_cooling_final_speed"
+    ],
+    "enable_if": "!is_BBL_printer",
+    "kind": "option",
+    "line": 4786
+   },
+   {
+    "fields": [
+     "dont_slow_down_outer_wall"
+    ],
+    "enable_if": "has_slow_down_for_layer_cooling",
+    "kind": "option",
+    "line": 4691
+   },
+   {
+    "fields": [
+     "activate_air_filtration_during_print"
+    ],
+    "enable_if": "activate_air_filtration",
+    "kind": "option",
+    "line": 4724
+   },
+   {
+    "fields": [
+     "during_print_exhaust_fan_speed"
+    ],
+    "enable_if": "activate_air_filtration && m_config->opt_bool(\"activate_air_filtration_during_print\", 0)",
+    "kind": "option",
+    "line": 4725
+   },
+   {
+    "fields": [
+     "activate_air_filtration_on_completion"
+    ],
+    "enable_if": "activate_air_filtration",
+    "kind": "option",
+    "line": 4726
+   },
+   {
+    "fields": [
+     "complete_print_exhaust_fan_speed"
+    ],
+    "enable_if": "activate_air_filtration && m_config->opt_bool(\"activate_air_filtration_on_completion\", 0)",
+    "kind": "option",
+    "line": 4727
+   },
+   {
+    "fields": [
+     "pressure_advance"
+    ],
+    "enable_if": "pa",
+    "kind": "option",
+    "line": 4733
+   },
+   {
+    "fields": [
+     "adaptive_pressure_advance"
+    ],
+    "enable_if": "pa",
+    "kind": "option",
+    "line": 4761
+   },
+   {
+    "fields": [
+     "adaptive_pressure_advance_overhangs"
+    ],
+    "enable_if": "pa",
+    "kind": "option",
+    "line": 4762
+   },
+   {
+    "fields": [
+     "filament_adaptive_volumetric_speed"
+    ],
+    "enable_if": "enable_fit, 256 + variant_idx",
+    "kind": "option",
+    "line": 4778
+   },
+   {
+    "fields": [
+     "filament_multitool_ramming_volume"
+    ],
+    "enable_if": "multitool_ramming",
+    "kind": "option",
+    "line": 4792
+   },
+   {
+    "fields": [
+     "filament_multitool_ramming_flow"
+    ],
+    "enable_if": "multitool_ramming",
+    "kind": "option",
+    "line": 4793
+   }
+  ],
+  "stats": {
+   "toggle_calls_in_source": 13,
+   "rules_extracted": 12
+  }
+ },
+ "TabPrinter::toggle_options": {
+  "locals": {
+   "extruders": "m_config->option<ConfigOptionEnumsGeneric>(\"extruder_type\")",
+   "get_index_for_extruder": "[this, &extruders, &nozzle_volumes, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, NozzleVolumeType nozzle_type) { return m_config->get_index_for_extruder(extruder_id + 1, variant_keys.first, ExtruderType(extruders->values[extruder_id]), nozzle_type, variant_keys.second); }",
+   "gcf_is_marlin_firmware": "gcf == GCodeFlavor::gcfMarlinFirmware",
+   "support_parallel_printheads": "printer_cfg.opt_bool(\"support_parallel_printheads\")",
+   "supports_wipe_tower_2": "!is_BBL_printer && m_config->opt_enum<WipeTowerType>(\"wipe_tower_type\") == WipeTowerType::Type2",
+   "bSEMM": "m_config->opt_bool(\"single_extruder_multi_material\")",
+   "have_retract_length": "m_config->opt_float(\"retraction_length\", variant_index) > 0",
+   "use_firmware_retraction": "m_config->opt_bool(\"use_firmware_retraction\")",
+   "retraction": "have_retract_length || use_firmware_retraction",
+   "wipe": "static_cast<ConfigOptionBools*>(m_config->option(\"wipe\")->clone())",
+   "retract_before_wipe": "static_cast<ConfigOptionPercents*>(m_config->option(\"retract_before_wipe\")->clone())",
+   "toolchange_retraction": "m_config->opt_float(\"retract_length_toolchange\", variant_index) > 0",
+   "gcf": "m_config->option<ConfigOptionEnum<GCodeFlavor>>(\"gcode_flavor\")->value",
+   "gcf_is_marlin_legacy": "gcf == GCodeFlavor::gcfMarlinLegacy",
+   "gcf_is_klipper": "gcf == GCodeFlavor::gcfKlipper",
+   "gcf_is_reprap_firmware": "gcf == GCodeFlavor::gcfRepRapFirmware",
+   "silent_mode": "m_config->opt_bool(\"silent_mode\")",
+   "enable_jerk": "!gcf_is_marlin_firmware",
+   "emittable_limits": "gcf_is_marlin_legacy || gcf_is_marlin_firmware || gcf_is_reprap_firmware",
+   "resonance_avoidance": "m_config->opt_bool(\"resonance_avoidance\")",
+   "input_shaping_compatible": "gcf_is_marlin_firmware || gcf_is_reprap_firmware",
+   "emit_machine_limits_to_gcode": "m_config->opt_bool(\"emit_machine_limits_to_gcode\")",
+   "input_shaping_emit": "emit_machine_limits_to_gcode && m_config->opt_bool(\"input_shaping_emit\")",
+   "tab": "wxGetApp().plate_tab) { tab->m_config->apply(*m_config); tab->update_extruder_variants(); } for (auto tab : wxGetApp().model_tabs_list) { tab->m_config->apply(*m_config); tab->update_extruder_variants(); } } update()",
+   "current_dirty": "! delete_current && m_presets->current_is_dirty()",
+   "print_tab": "m_presets->type() == Preset::TYPE_PRINT || m_presets->type() == Preset::TYPE_SLA_PRINT",
+   "printer_tab": "m_presets->type() == Preset::TYPE_PRINTER",
+   "old_preset_dirty": "dependent.current_is_dirty()",
+   "new_preset_compatible": "is_compatible_with_print(dependent.get_edited_preset_with_vendor_profile(), m_presets->get_preset_with_vendor_profile(*m_presets->find_preset(preset_name, true)), printer_profile)",
+   "no_transfer_variant": "cur_opt2->values != to_select_opt2->values",
+   "is_selected": "m_presets->select_preset_by_name(preset_name, false) || delete_current",
+   "update_compatible_type": "[delete_current](bool technology_changed, bool on_page, bool show_incompatible_presets) { return (delete_current || technology_changed) ? PresetSelectCompatibleType::Always : on_page ? PresetSelectCompatibleType::Never : show_incompatible_presets ? PresetSelectCompatibleType::OnlyIfWasCompatible : PresetSelectCompatibleType::Always; }",
+   "show": "m_show_btn_incompatible_presets && m_type != Slic3r::Preset::TYPE_PRINTER",
+   "is_empty": "m_config->option<ConfigOptionStrings>(\"compatible_prints\")->values.empty()",
+   "add": "! preset.is_default && ! preset.is_external",
+   "variants": "m_config->option<ConfigOptionStrings>(\"filament_extruder_variant\")",
+   "index": "m_variant_combo ? extruder_id : get_index_for_extruder(extruder_id == -1 ? 0 : extruder_id)",
+   "dirty": "opt.substr(n) == from_str",
+   "option": "dynamic_cast<ConfigOptionVectorBase*>(m_config->option(key))",
+   "has_any": "! m_config->option<ConfigOptionStrings>(deps.key_list)->values.empty()",
+   "opt_key2": "opt_key",
+   "iter": "m_opt_id_map.find(opt_key + '#' + std::to_string(opt_index - 256))",
+   "line": "Line{ m_config->def()->get(\"material_correction\")->full_label, \"\" }"
+  },
+  "rules": [
+   {
+    "fields": [
+     "enable_filament_ramming",
+     "cooling_tube_retraction",
+     "cooling_tube_length",
+     "parking_pos_retraction",
+     "extra_loading_move",
+     "high_current_on_filament_swap"
+    ],
+    "enable_if": "supports_wipe_tower_2",
+    "kind": "option",
+    "line": 6063
+   },
+   {
+    "fields": [
+     "change_filament_gcode"
+    ],
+    "enable_if": "have_multiple_extruders",
+    "kind": "option",
+    "line": 6026
+   },
+   {
+    "fields": [
+     "extruders_count"
+    ],
+    "enable_if": "!bSEMM",
+    "kind": "option",
+    "line": 6079
+   },
+   {
+    "fields": [
+     "manual_filament_change"
+    ],
+    "enable_if": "bSEMM",
+    "kind": "option",
+    "line": 6080
+   },
+   {
+    "fields": [
+     "purge_in_prime_tower"
+    ],
+    "enable_if": "bSEMM && supports_wipe_tower_2",
+    "kind": "option",
+    "line": 6081
+   },
+   {
+    "fields": [
+     "tool_change_on_wipe_tower"
+    ],
+    "enable_if": "!bSEMM && supports_wipe_tower_2 && extruders_count > 1",
+    "kind": "option",
+    "line": 6087
+   },
+   {
+    "fields": [
+     "extruder_printable_area"
+    ],
+    "enable_if": "false, i",
+    "kind": "option",
+    "line": 6099
+   },
+   {
+    "fields": [
+     "extruder_printable_height"
+    ],
+    "enable_if": "false, i",
+    "kind": "option",
+    "line": 6101
+   },
+   {
+    "fields": [
+     "retract_length"
+    ],
+    "enable_if": "!use_firmware_retraction, i",
+    "kind": "option",
+    "line": 6106
+   },
+   {
+    "fields": [
+     "retraction_minimum_travel"
+    ],
+    "enable_if": "have_retract_length || use_firmware_retraction, i",
+    "kind": "option",
+    "line": 6110
+   },
+   {
+    "fields": [
+     "retract_before_wipe"
+    ],
+    "enable_if": "wipe && !is_approx(retract_after_wipe, 100.), i",
+    "kind": "option",
+    "line": 6139
+   },
+   {
+    "fields": [
+     "retract_after_wipe"
+    ],
+    "enable_if": "wipe && !is_approx(retract_before_wipe, 100.), i",
+    "kind": "option",
+    "line": 6140
+   },
+   {
+    "fields": [
+     "wipe_distance"
+    ],
+    "enable_if": "wipe, i",
+    "kind": "option",
+    "line": 6166
+   },
+   {
+    "fields": [
+     "retract_length_toolchange"
+    ],
+    "enable_if": "have_multiple_extruders, i",
+    "kind": "option",
+    "line": 6168
+   },
+   {
+    "fields": [
+     "retract_restart_extra_toolchange"
+    ],
+    "enable_if": "have_multiple_extruders && toolchange_retraction, i",
+    "kind": "option",
+    "line": 6171
+   },
+   {
+    "fields": [
+     "long_retractions_when_cut"
+    ],
+    "enable_if": "!use_firmware_retraction && m_config->opt_int(\"enable_long_retraction_when_cut\"), i",
+    "kind": "option",
+    "line": 6173
+   },
+   {
+    "fields": [
+     "travel_slope"
+    ],
+    "enable_if": "m_config->opt_enum(\"z_hop_types\", i) != ZHopType::zhtNormal, i",
+    "kind": "option",
+    "line": 6176
+   },
+   {
+    "fields": [
+     "machine_max_acceleration_travel"
+    ],
+    "enable_if": "!gcf_is_marlin_legacy && !gcf_is_klipper, i",
+    "kind": "option",
+    "line": 6192
+   },
+   {
+    "fields": [
+     "machine_max_junction_deviation"
+    ],
+    "enable_if": "gcf_is_marlin_firmware, i",
+    "kind": "option",
+    "line": 6195
+   },
+   {
+    "fields": [
+     "machine_max_jerk_x"
+    ],
+    "enable_if": "enable_jerk, i",
+    "kind": "option",
+    "line": 6210
+   },
+   {
+    "fields": [
+     "machine_max_jerk_y"
+    ],
+    "enable_if": "enable_jerk, i",
+    "kind": "option",
+    "line": 6211
+   },
+   {
+    "fields": [
+     "machine_max_jerk_z"
+    ],
+    "enable_if": "enable_jerk, i",
+    "kind": "option",
+    "line": 6212
+   },
+   {
+    "fields": [
+     "machine_max_jerk_e"
+    ],
+    "enable_if": "enable_jerk, i",
+    "kind": "option",
+    "line": 6213
+   },
+   {
+    "fields": [
+     "emit_machine_limits_to_gcode"
+    ],
+    "enable_if": "emittable_limits",
+    "kind": "option",
+    "line": 6217
+   },
+   {
+    "fields": [
+     "min_resonance_avoidance_speed"
+    ],
+    "enable_if": "resonance_avoidance",
+    "kind": "option",
+    "line": 6220
+   },
+   {
+    "fields": [
+     "max_resonance_avoidance_speed"
+    ],
+    "enable_if": "resonance_avoidance",
+    "kind": "option",
+    "line": 6221
+   },
+   {
+    "fields": [
+     "input_shaping_emit"
+    ],
+    "enable_if": "emit_machine_limits_to_gcode",
+    "kind": "option",
+    "line": 6231
+   },
+   {
+    "fields": [
+     "input_shaping_type"
+    ],
+    "enable_if": "input_shaping_emit",
+    "kind": "option",
+    "line": 6233
+   },
+   {
+    "fields": [
+     "input_shaping_freq_x"
+    ],
+    "enable_if": "input_shaping_emit",
+    "kind": "option",
+    "line": 6234
+   },
+   {
+    "fields": [
+     "input_shaping_freq_y"
+    ],
+    "enable_if": "input_shaping_emit && !gcf_is_reprap_firmware",
+    "kind": "option",
+    "line": 6235
+   },
+   {
+    "fields": [
+     "input_shaping_damp_x"
+    ],
+    "enable_if": "input_shaping_emit",
+    "kind": "option",
+    "line": 6236
+   },
+   {
+    "fields": [
+     "input_shaping_damp_y"
+    ],
+    "enable_if": "input_shaping_emit && !gcf_is_reprap_firmware",
+    "kind": "option",
+    "line": 6237
+   }
+  ],
+  "stats": {
+   "toggle_calls_in_source": 35,
+   "rules_extracted": 32
+  }
+ },
+ "TabSLAMaterial::toggle_options": {
+  "locals": {
+   "is_visible": "m_config->def()->get(\"support_object_elevation\")->mode <= m_mode",
+   "elev": "!m_config->opt_bool(\"pad_enable\") || !m_config->opt_bool(\"pad_around_object\")"
+  },
+  "rules": [],
+  "stats": {
+   "toggle_calls_in_source": 0,
+   "rules_extracted": 0
+  }
+ },
+ "TabSLAPrint::toggle_options": {
+  "locals": {
+   "cb_toggle_field": "[this](const t_config_option_key& opt_key, bool toggle, int opt_index) { return toggle_option(opt_key, toggle, opt_index >= 0 ? opt_index + 256 : opt_index); }",
+   "cb_toggle_line": "[this](const t_config_option_key &opt_key, bool toggle, int opt_index) { return toggle_line(opt_key, toggle, opt_index >= 0 ? opt_index + 256 : opt_index); }",
+   "cb_value_change": "[this](const std::string& opt_key, const boost::any& value) { return on_value_change(opt_key, value); }"
+  },
+  "rules": [],
+  "stats": {
+   "toggle_calls_in_source": 1,
+   "rules_extracted": 0
+  }
+ }
+}

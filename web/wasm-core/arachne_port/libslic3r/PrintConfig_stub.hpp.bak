@@ -1,0 +1,36 @@
+// STUB (stage 7/8 port): real PrintConfig.hpp is enormous config machinery. Arachne needs only
+// forward-declared PrintObjectConfig/PrintConfig; Fill/FillBase needs the infill enums (by value)
+// and a forward-declared PrintRegionConfig (used only as a pointer). Enum definitions copied verbatim
+// from src/libslic3r/PrintConfig.hpp (values unchanged) so InfillPattern indices match the original.
+#pragma once
+namespace Slic3r {
+class PrintObjectConfig;
+class PrintConfig;
+class PrintRegionConfig;
+
+enum class CenterOfSurfacePattern {
+    Each_Surface,
+    Each_Model,
+    Each_Assembly,
+};
+
+enum InfillPattern : int {
+    ipMonotonic, ipMonotonicLine,
+    ipRectilinear, ipAlignedRectilinear, ipZigZag, ipCrossZag, ipLockedZag,
+    ipLine, ipGrid,
+    ipTriangles, ipStars,
+    ipCubic, ipAdaptiveCubic, ipQuarterCubic, ipSupportCubic, ipLightning,
+    ipHoneycomb, ip3DHoneycomb, ipLateralHoneycomb, ipLateralLattice,
+    ipCrossHatch, ipTpmsD, ipTpmsFK, ipGyroid,
+    ipConcentric, ipHilbertCurve, ipArchimedeanChords, ipOctagramSpiral,
+    ipSupportBase, ipConcentricInternal,
+    ipCount,
+};
+
+enum class SurfaceFillOrder {
+    Default,
+    Outward,
+    Inward,
+    Count,
+};
+} // namespace Slic3r

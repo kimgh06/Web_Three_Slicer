@@ -1,0 +1,64 @@
+// Stage-7 bridge implementation: converts kernel contours (mm) to Slic3r::Polygons, runs the
+// real ported Arachne WallToolPaths, and flattens the variable-width ExtrusionLines back to
+// plain WLine/WBead (mm). This is the ONLY translation unit where slicer_core meets Slic3r types.
+#include "arachne_bridge.h"
+#include "arachne_port/libslic3r/Arachne/WallToolPaths.hpp"
+
+using namespace Slic3r;
+using namespace Slic3r::Arachne;
+
+namespace Slic3r::Geometry { extern int g_cgal_planar_angle_calls; }  // stage-14 debug counter
+
+namespace arachne_bridge {
+
+int cgal_planar_check_count() { return Slic3r::Geometry::g_cgal_planar_angle_calls; }
+
+static inline coord_t to_scaled(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
+static inline double  to_mm(coord_t c)     { return double(c) * SCALING_FACTOR; }
+
+std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
+                                  double line_width_mm, int wall_count, double layer_height_mm)
+{
+    std::vector<WLine> out;
+    if (polys_mm.empty() || wall_count <= 0) return out;
+
+    Polygons outline;
+    for (const auto& poly : polys_mm) {
+        if (poly.size() < 3) continue;
+        Polygon p;
+        p.points.reserve(poly.size());
+        for (const auto& xy : poly) p.points.emplace_back(to_scaled(xy.first), to_scaled(xy.second));
+        outline.emplace_back(std::move(p));
+    }
+    if (outline.empty()) return out;
+
+    // Params: default Arachne tuning (mirrors OrcaSlicer make_paths_params for a 0.4mm nozzle).
+    WallToolPathsParams params;
+    const double nozzle = 0.4;
+    params.min_bead_width                   = 0.85f * float(nozzle);
+    params.min_feature_size                 = 0.10f * float(nozzle);
+    params.min_length_factor                = 0.5f;
+    params.wall_transition_length           = 1.0f * float(line_width_mm);
+    params.wall_transition_angle            = 10.f;
+    params.wall_transition_filter_deviation = 0.25f * float(nozzle);
+    params.wall_distribution_count          = 1;
+    params.is_top_or_bottom_layer           = false;
+
+    const coord_t bead_width = to_scaled(line_width_mm);
+    WallToolPaths wtp(outline, bead_width, bead_width, (size_t) wall_count, /*wall_0_inset*/0,
+                      (coordf_t) layer_height_mm, params);
+    const std::vector<VariableWidthLines>& toolpaths = wtp.generate();
+
+    for (const VariableWidthLines& grp : toolpaths)
+        for (const ExtrusionLine& line : grp) {
+            if (line.junctions.size() < 2) continue;
+            WLine wl; wl.closed = line.is_closed; wl.inset_idx = (int) line.inset_idx;
+            wl.pts.reserve(line.junctions.size());
+            for (const ExtrusionJunction& j : line.junctions)
+                wl.pts.push_back({ to_mm(j.p.x()), to_mm(j.p.y()), to_mm(j.w) });
+            out.push_back(std::move(wl));
+        }
+    return out;
+}
+
+} // namespace arachne_bridge

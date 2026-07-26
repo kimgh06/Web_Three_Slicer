@@ -1,0 +1,14 @@
+{
+  "name": "@orca-re/components",
+  "version": "0.1.0",
+  "description": "Reusable React components for the browser slicer (props-driven, no global/context coupling).",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    "./SettingsPanel": "./SettingsPanel.jsx"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "files": ["*.jsx", "*.js"]
+}

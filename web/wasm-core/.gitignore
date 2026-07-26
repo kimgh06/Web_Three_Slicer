@@ -1,0 +1,16 @@
+# 생성 산출물 (테스트/빌드)
+cube20.stl
+cube20_ascii.stl
+table.stl
+cylinder.stl
+*.gcode
+*.o
+# stage 11 config/WipeTower probe generated artifacts
+arachne_port/config_probe.mjs
+arachne_port/**/*.o
+arachne_port/test_config.js
+arachne_port/test_wipetower.js
+# stage 13 gcodeproc probe generated artifacts
+arachne_port/gcodeproc/**/*.wasm
+arachne_port/gcodeproc/**/*.js
+arachne_port/gcodeproc/obj/
