@@ -4,7 +4,7 @@ import schema from '@three-slicer/data/config-schema.json'
 import uiTree from '@three-slicer/data/ui-tree.json'
 import toggles from '@three-slicer/data/toggle-rules.json'
 import invalidation from '@three-slicer/data/invalidation-map.json'
-import Viewport from './Viewport.jsx'
+import Viewport from '@three-slicer/viewer'
 import SettingsPanel from '@three-slicer/components/SettingsPanel'   // 33단계 Phase 4: 분리된 독립 컴포넌트
 import { settingRaw } from '@three-slicer/engine/settings'
 import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
