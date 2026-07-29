@@ -8,7 +8,7 @@ import re, json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))   # .../<repo>/web
 REPO = os.path.dirname(HERE)                          # 저장소 루트
 SRC  = os.path.join(REPO, 'slicer')                   # 원본 OrcaSlicer 소스(33단계 이동)
-OUT  = os.path.join(HERE, 'packages', 'data')         # 33단계 Phase 3: 산출 JSON 은 @orca-re/data 패키지로
+OUT  = os.path.join(HERE, 'packages', 'data')         # 33단계 Phase 3: 산출 JSON 은 @three-slicer/data 패키지로
 os.makedirs(OUT, exist_ok=True)
 
 def read(p):

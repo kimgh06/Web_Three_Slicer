@@ -30,9 +30,9 @@ python3 web/extract_all.py
 
 ## 구조 (web/ npm workspaces)
 
-- `packages/engine/` — `@orca-re/engine`: WASM 커널 SDK (배치/스트리밍 슬라이스, 워커, 설정 매핑)
-- `packages/data/` — `@orca-re/data`: 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map)
-- `packages/components/` — `@orca-re/components`: React `<SettingsPanel/>` (전역 결합 0)
+- `packages/engine/` — `@three-slicer/engine`: WASM 커널 SDK (배치/스트리밍 슬라이스, 워커, 설정 매핑)
+- `packages/data/` — `@three-slicer/data`: 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map)
+- `packages/components/` — `@three-slicer/components`: React `<SettingsPanel/>` (전역 결합 0)
 - `viewer/` — 데모 앱 (Vite + React + three.js)
 - `wasm-core/` — 커널 C++ 소스 + `third_party/` (deps 사본, 독립 빌드용)
 - `apps/independence-check/` — 컴포넌트 독립성 증명 앱

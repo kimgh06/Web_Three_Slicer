@@ -1,4 +1,4 @@
-// Type definitions for @orca-re/engine
+// Type definitions for @three-slicer/engine
 export interface SliceLayer { z: number; idx: number; gcode: string; paths: Float32Array; widths: Float32Array }
 export interface SliceCallbacks {
   onProgress?: (done: number, total: number) => void

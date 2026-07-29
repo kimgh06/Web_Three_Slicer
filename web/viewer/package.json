@@ -1,5 +1,5 @@
 {
-  "name": "orca-re-viewer",
+  "name": "three-slicer-viewer",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@orca-re/components": "^0.1.0",
-    "@orca-re/data": "^0.1.0",
-    "@orca-re/engine": "^0.1.0",
+    "@three-slicer/components": "^0.1.0",
+    "@three-slicer/data": "^0.1.0",
+    "@three-slicer/engine": "^0.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.0.0",

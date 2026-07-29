@@ -1,7 +1,7 @@
-// @orca-re/engine headless SDK example + independence proof: drive the engine from Node using ONLY the
+// @three-slicer/engine headless SDK example + independence proof: drive the engine from Node using ONLY the
 // public API (no UI, no viewer). Generates a 20mm cube STL, slices it, prints stats + G-code length.
 //   run: node web/packages/engine/examples/headless.mjs
-import { createSlicer } from '@orca-re/engine'   // 워크스페이스 심링크로 해석 — 외부 소비자와 동일한 경로
+import { createSlicer } from '@three-slicer/engine'   // 워크스페이스 심링크로 해석 — 외부 소비자와 동일한 경로
 
 // minimal binary-STL writer for a box (public API takes a binary-STL ArrayBuffer)
 function boxTris(ox, oy, oz, sx, sy, sz) {
@@ -32,6 +32,6 @@ let chunks = 0, gbytes = 0
 const rs = slicer.slice(cube, params, { onLayer: ({ gcode }) => { chunks++; gbytes += gcode.length } })
 console.log(`stream: layers=${chunks} streamed=${rs.stats.streamed} assembled-gcode=${gbytes} chars`)
 
-if (r.gcode.length > 0 && chunks > 0) console.log('OK — @orca-re/engine drives headlessly via the public API')
+if (r.gcode.length > 0 && chunks > 0) console.log('OK — @three-slicer/engine drives headlessly via the public API')
 else { console.error('FAIL'); process.exit(1) }
 slicer.dispose()

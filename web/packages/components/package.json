@@ -1,5 +1,5 @@
 {
-  "name": "@orca-re/components",
+  "name": "@three-slicer/components",
   "version": "0.1.0",
   "description": "Reusable React components for the browser slicer (props-driven, no global/context coupling).",
   "license": "AGPL-3.0-or-later",
@@ -8,8 +8,8 @@
     "./SettingsPanel": "./SettingsPanel.jsx"
   },
   "dependencies": {
-    "@orca-re/data": "^0.1.0",
-    "@orca-re/engine": "^0.1.0"
+    "@three-slicer/data": "^0.1.0",
+    "@three-slicer/engine": "^0.1.0"
   },
   "peerDependencies": {
     "react": ">=18"

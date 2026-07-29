@@ -1,5 +1,5 @@
 {
-  "name": "@orca-re/engine",
+  "name": "@three-slicer/engine",
   "version": "0.1.0",
   "description": "Browser/WASM 3D-slicing kernel reverse-engineered from OrcaSlicer (headless-capable SDK).",
   "license": "AGPL-3.0-or-later",
@@ -15,7 +15,7 @@
     "./wasm": "./src/slicer_core.js"
   },
   "dependencies": {
-    "@orca-re/data": "^0.1.0"
+    "@three-slicer/data": "^0.1.0"
   },
   "files": ["index.js", "index.d.ts", "src", "examples"],
   "sideEffects": false

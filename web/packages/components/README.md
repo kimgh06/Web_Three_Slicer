@@ -1,4 +1,4 @@
-# @orca-re/components
+# @three-slicer/components
 
 Reusable React components for the browser slicer. **Props-driven, zero global/context coupling** — each
 component takes plain props and can render in any React tree (proven by `apps/independence-check`).
@@ -6,12 +6,12 @@ component takes plain props and can render in any React tree (proven by `apps/in
 ## `<SettingsPanel/>`
 
 Config-schema-driven settings form (907 options, tabs/pages/modes, search, dirty-dot + reset, disable
-rules). Depends only on React + `@orca-re/data` (schema/ui-tree/toggle-rules) + `@orca-re/engine`
+rules). Depends only on React + `@three-slicer/data` (schema/ui-tree/toggle-rules) + `@three-slicer/engine`
 (settingRaw/disabledKeys/makeCfg). No router, no global store.
 
 ```jsx
 import { useState } from 'react'
-import SettingsPanel from '@orca-re/components/SettingsPanel'
+import SettingsPanel from '@three-slicer/components/SettingsPanel'
 
 function MyTool() {
   const [settings, setSettings] = useState({})   // sparse map {optKey: value}; missing = schema default
@@ -36,7 +36,7 @@ context, no router) and edits flow to local state — build + run with `cd apps/
 ## `<SlicerViewport/>` (status)
 
 The 3D viewport + slice/preview orchestration currently lives as a single props-driven component
-`viewer/Viewport.jsx` (`<Viewport settings setSettings processPanel/>`), consuming `@orca-re/engine`
+`viewer/Viewport.jsx` (`<Viewport settings setSettings processPanel/>`), consuming `@three-slicer/engine`
 (worker + `deriveKernelParams`). It is already prop-driven at the top level, but has **not** yet been
 relocated into this package or split into its internal `PreviewPanel` / `ObjectList` / `FilamentBar`
 sub-components — that decomposition touches a large three.js/worker/assets module and requires a full

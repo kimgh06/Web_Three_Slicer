@@ -1,6 +1,6 @@
-// @orca-re/engine — browser/WASM 3D-slicing SDK (reverse-engineered from OrcaSlicer).
+// @three-slicer/engine — browser/WASM 3D-slicing SDK (reverse-engineered from OrcaSlicer).
 // Public API. Node-safe (imports only the pure-JS WASM factory; no JSON so it loads in plain Node ESM).
-// Schema-driven helpers (deriveKernelParams etc.) live in the "@orca-re/engine/settings" subpath because
+// Schema-driven helpers (deriveKernelParams etc.) live in the "@three-slicer/engine/settings" subpath because
 // they import JSON — use them in a bundler (vite) or with Node JSON import attributes.
 import createModule from './src/slicer_core.js'
 

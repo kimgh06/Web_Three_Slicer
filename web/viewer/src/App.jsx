@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from 'react'
 import { Link, Outlet, useParams, useSearchParams, useNavigate } from 'react-router'
-import schema from '@orca-re/data/config-schema.json'
-import uiTree from '@orca-re/data/ui-tree.json'
-import toggles from '@orca-re/data/toggle-rules.json'
-import invalidation from '@orca-re/data/invalidation-map.json'
+import schema from '@three-slicer/data/config-schema.json'
+import uiTree from '@three-slicer/data/ui-tree.json'
+import toggles from '@three-slicer/data/toggle-rules.json'
+import invalidation from '@three-slicer/data/invalidation-map.json'
 import Viewport from './Viewport.jsx'
-import SettingsPanel from '@orca-re/components/SettingsPanel'   // 33단계 Phase 4: 분리된 독립 컴포넌트
-import { settingRaw } from '@orca-re/engine/settings'
-import { disabledKeys, makeCfg } from '@orca-re/engine/toggle'
+import SettingsPanel from '@three-slicer/components/SettingsPanel'   // 33단계 Phase 4: 분리된 독립 컴포넌트
+import { settingRaw } from '@three-slicer/engine/settings'
+import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
 
 // 25단계 S5.2: dirty 판정 — settings 에 값이 있고 스키마 default 와 다르면 변경됨(프리셋 시스템 전이므로 기준=default).
 function isDirty(settings, key) {

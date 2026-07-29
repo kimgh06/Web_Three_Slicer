@@ -1,9 +1,9 @@
 // independence-check: render <SettingsPanel/> completely standalone — ONLY local useState, no App,
-// no React context, no router (onOptionOpen omitted → plain labels). Proves @orca-re/components has
+// no React context, no router (onOptionOpen omitted → plain labels). Proves @three-slicer/components has
 // zero global/context coupling. Editing any field mutates local state, shown live in the <pre>.
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import SettingsPanel from '@orca-re/components/SettingsPanel'
+import SettingsPanel from '@three-slicer/components/SettingsPanel'
 
 function Standalone() {
   const [settings, setSettings] = useState({})

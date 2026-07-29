@@ -1,16 +1,16 @@
-// @orca-re/components — <SettingsPanel/> : config-schema-driven slicer settings form.
+// @three-slicer/components — <SettingsPanel/> : config-schema-driven slicer settings form.
 // Independent & props-driven: NO global state, NO React context, NO router. Depends only on React,
-// @orca-re/data (schema/ui-tree/toggle-rules), and @orca-re/engine (settingRaw/disabledKeys/makeCfg).
+// @three-slicer/data (schema/ui-tree/toggle-rules), and @three-slicer/engine (settingRaw/disabledKeys/makeCfg).
 // Props:
 //   settings     : sparse map {optKey: value} (edited keys only; missing = schema default)
 //   setSettings  : (updater) => void   (React setState-style; the ONLY way state leaves the component)
 //   onOptionOpen : (optKey) => void    (optional; label click — deep-link/detail. Omit → plain labels,
 //                  which is what apps/independence-check does to prove zero router coupling.)
 import React, { useMemo, useState } from 'react'
-import schema from '@orca-re/data/config-schema.json'
-import uiTree from '@orca-re/data/ui-tree.json'
-import { settingRaw } from '@orca-re/engine/settings'
-import { disabledKeys, makeCfg } from '@orca-re/engine/toggle'
+import schema from '@three-slicer/data/config-schema.json'
+import uiTree from '@three-slicer/data/ui-tree.json'
+import { settingRaw } from '@three-slicer/engine/settings'
+import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
 
 const MAIN_BUILDERS = Object.keys(uiTree).filter(b => uiTree[b].length > 0)
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']

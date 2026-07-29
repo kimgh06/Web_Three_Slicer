@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { deriveKernelParams, settingRaw } from '@orca-re/engine/settings'
+import { deriveKernelParams, settingRaw } from '@three-slicer/engine/settings'
 import { buildSegmentData, makeToolpath, computeColors, roleRatios, VIEW_TYPES, DEFAULT_RANGES_COLORS, TYPE_COLOR } from './toolpath_gpu.js'
 import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
 // 27단계: 데스크톱 원본 툴바 아이콘 재사용(resources/images → assets, 동일 프로젝트 라이선스).

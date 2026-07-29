@@ -1,5 +1,5 @@
 {
-  "name": "@orca-re/web",
+  "name": "@three-slicer/web",
   "version": "0.1.0",
   "private": true,
   "description": "Browser slicing workspace: engine SDK (packages/), data, and the demo app (viewer).",

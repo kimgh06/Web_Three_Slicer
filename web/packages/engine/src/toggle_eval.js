@@ -2,8 +2,8 @@
 //  범위: 뷰어가 다루는 키에 관련된 규칙 중, 아래 하드코딩 로컬로 "완전히" 번역 가능한 것만 적용.
 //  번역 불가(모르는 로컬/enum 비교 등)는 fail-open(활성 유지) — 잘못된 비활성 방지(정직한 부분 구현).
 //  전체 907키·231규칙 완역은 범위 외(README 기록). 참조: toggle-rules.json 의 toggle_print_fff_options.locals.
-import toggles from '@orca-re/data/toggle-rules.json'
-import schema from '@orca-re/data/config-schema.json'
+import toggles from '@three-slicer/data/toggle-rules.json'
+import schema from '@three-slicer/data/config-schema.json'
 
 // 설정값 접근기 (settings 맵 우선, 없으면 스키마 default). 퍼센트("15%")는 숫자로.
 export function makeCfg(settings) {
