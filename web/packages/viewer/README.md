@@ -25,16 +25,36 @@ Subpath exports for custom UIs (framework-free, no React):
 - `@three-slicer/viewer/toolpath` — GPU toolpath renderer (`buildSegmentData`, `makeToolpath`, view-type colorers)
 - `@three-slicer/viewer/loaders` — model loaders returning unified triangle soup
 
+## Multithreaded slicing (automatic)
+
+The engine ships two WASM kernels: single-threaded (default) and `-pthread` multithreaded (~2× wall-clock on layer-parallel wall generation, measured 12× on the wall pass itself). The worker picks the mt kernel automatically when the page is [cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated) — i.e. served with:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+No headers → falls back to the single-threaded kernel. Nothing else to change.
+
 ## Bundler notes
 
-- **Vite:** zero config. The slicing worker ships as a static `new Worker(new URL(...))` pattern — your bundler emits the worker chunk automatically.
+- **Vite:** two config lines (worker code-splitting + top-level await in the mt glue; Chrome 89+/Safari 15+):
+
+```js
+// vite.config.js
+export default defineConfig({
+  worker: { format: 'es' },
+  build: { target: 'es2022' },
+})
+```
+
 - **Next.js / webpack:** render client-side (`dynamic(..., { ssr: false })`) and alias the emscripten glue's Node-only guards away:
 
 ```js
 // next.config.js
 module.exports = {
   webpack: (config) => {
-    for (const m of ['node:module', 'node:fs', 'node:path', 'node:url', 'node:crypto'])
+    for (const m of ['node:module', 'node:fs', 'node:path', 'node:url', 'node:crypto', 'node:worker_threads'])
       config.resolve.alias[m] = false
     return config
   },

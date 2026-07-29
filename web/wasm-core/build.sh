@@ -150,6 +150,8 @@ em++ -O2 -pthread --bind -std=c++17 \
   slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC /tmp/ts_group_mt.o
 
 sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../packages/engine/src/slicer_core.mt.js
+# mt 글루의 pthread 부트스트랩에도 동일 케이스: Node 가드 안의 동적 import("node:worker_threads")
+sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../packages/engine/src/slicer_core.mt.js
 
 echo "built -> ../packages/engine/src/slicer_core.mt.js"
 ls -la ../packages/engine/src/slicer_core.mt.js

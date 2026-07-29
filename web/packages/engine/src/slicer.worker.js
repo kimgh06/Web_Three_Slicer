@@ -6,14 +6,29 @@
 //  (Float32Array 버퍼 이전 → worker 사본 즉시 해제) 커널은 그 레이어 버퍼를 힙에서 해제한다. 결과 상주
 //  (전체 gw.s + 전체 layersArr)가 사라져 WASM 힙 피크가 급감 → 대형 모델 OOM 회피. 최종 'done' 은 stats 만.
 //  절약 모드(params.economy)면 툴패스 없이 g-code 청크만 방출(프리뷰 없이 완주). MM/실PE 경로는 배치 폴백.
-import createSlicer from './slicer_core.js'
+// 멀티스레드 커널 자동 선택: crossOriginIsolated(COOP/COEP 제공 사이트)면 mt(-pthread, PASS1 레이어
+//  병렬 — 실측 2.2×), 아니면 st(zero-config). 동적 import 라 번들러는 둘 다 청크로 내지만 런타임엔
+//  하나만 로드. mt 초기화 실패(SAB 차단 등) 시 st 폴백.
+const loadCore = async () => {
+  const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
+  if (isolated) {
+    try {
+      const M = await (await import('./slicer_core.mt.js')).default()
+      console.info('[slicer.worker] core: mt (threads)')
+      return M
+    } catch (e) { console.warn('[slicer.worker] mt 로드 실패 — st 폴백:', e) }
+  }
+  const M = await (await import('./slicer_core.js')).default()
+  console.info('[slicer.worker] core: st')
+  return M
+}
 
 let modPromise = null
 
 self.onmessage = async (e) => {
   const d = e.data
   try {
-    if (!modPromise) modPromise = createSlicer()
+    if (!modPromise) modPromise = loadCore()
     const Module = await modPromise
     // 20단계: 수동 서포트 페인팅 — selector 상태는 이 worker Module 에 지속(슬라이스도 같은 Module).
     if (d.cmd === 'prepare') { Module.selector_prepare(new Uint8Array(d.stl)); self.postMessage({ type: 'prepared', facets: Module.selector_facet_count() }); return }

@@ -21,7 +21,12 @@ EOF
 cat > vite.config.js <<'EOF'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-export default defineConfig({ plugins: [react()] })
+// README 의 Vite 요구 2줄: 워커 st/mt 동적 선택(es 워커) + mt 글루 top-level await(es2022)
+export default defineConfig({
+  plugins: [react()],
+  worker: { format: 'es' },
+  build: { target: 'es2022' },
+})
 EOF
 cat > index.html <<'EOF'
 <!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>
@@ -53,7 +58,7 @@ EOF
 cat > next.config.js <<'EOF'
 /** README 의 Next 레시피: emscripten 글루의 Node 가드 경로(node:*) 를 빈 모듈로 */
 module.exports = { webpack: (config) => {
-  for (const m of ['node:module','node:fs','node:path','node:url','node:crypto']) config.resolve.alias[m] = false
+  for (const m of ['node:module','node:fs','node:path','node:url','node:crypto','node:worker_threads']) config.resolve.alias[m] = false
   return config
 } }
 EOF
