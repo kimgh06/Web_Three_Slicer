@@ -107,6 +107,9 @@ em++ -O2 -std=c++17 -r -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUN
 
 ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 
+# 속도 플래그 실측 (2026-07-29, big_cyl arachne+support): -O3 -msimd128 은 5183ms vs -O2 5149ms —
+#  이득 0.7%(노이즈) 에 크기 +9%(3.43→3.74MB) 라 -O2 유지. -flto 는 wasm-ld SIGSEGV(-r 부분링크 충돌).
+#  -ffast-math 는 금지(golden byte-identical 깨짐). 병목은 스칼라 정수 폴리곤 연산 — 실 레버는 스레딩.
 em++ -O2 --bind -std=c++17 \
   -DCGAL_DISABLE_ROUNDING_MATH_CHECK \
   -s MODULARIZE=1 \
