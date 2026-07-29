@@ -4,8 +4,11 @@
   "description": "Reusable React components for the browser slicer (props-driven, no global/context coupling).",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
   "exports": {
-    "./SettingsPanel": "./SettingsPanel.jsx"
+    "./SettingsPanel": "./dist/SettingsPanel.js"
   },
   "dependencies": {
     "@three-slicer/data": "^0.1.0",
@@ -14,5 +17,8 @@
   "peerDependencies": {
     "react": ">=18"
   },
-  "files": ["*.jsx", "*.js"]
+  "devDependencies": {
+    "vite": "^5.4.11"
+  },
+  "files": ["dist"]
 }

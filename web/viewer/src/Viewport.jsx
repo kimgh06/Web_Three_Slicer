@@ -6,15 +6,7 @@ import { deriveKernelParams, settingRaw } from '@three-slicer/engine/settings'
 import { buildSegmentData, makeToolpath, computeColors, roleRatios, VIEW_TYPES, DEFAULT_RANGES_COLORS, TYPE_COLOR } from './toolpath_gpu.js'
 import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
 // 27단계: 데스크톱 원본 툴바 아이콘 재사용(resources/images → assets, 동일 프로젝트 라이선스).
-import moveIcon from './assets/move.svg'
-import rotateIcon from './assets/rotate.svg'
-import scaleIcon from './assets/scale.svg'
-import paintIcon from './assets/paint.svg'
-import openIcon from './assets/open.svg'
-import addIcon from './assets/add.svg'
-import deleteIcon from './assets/delete.svg'
-import arrangeIcon from './assets/arrange.svg'
-import orientIcon from './assets/orient.svg'
+import { moveIcon, rotateIcon, scaleIcon, paintIcon, openIcon, addIcon, deleteIcon, arrangeIcon, orientIcon } from './icons.js'
 
 // 3D 뷰포트 + 브라우저 단독 슬라이싱(WASM, 트랙 C 4단계).
 //  - 슬라이스 파라미터는 우측 편집 패널 설정값에서 유도(deriveKernelParams) — 중복 폼 없음.
