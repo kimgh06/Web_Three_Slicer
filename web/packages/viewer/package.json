@@ -23,5 +23,29 @@
   "devDependencies": {
     "vite": "^5.4.11"
   },
-  "files": ["dist", "styles.css", "src"]
+  "files": [
+    "dist",
+    "styles.css",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "directory": "web/packages/viewer"
+  },
+  "homepage": "https://github.com/kimgh06/Web_Three_Slicer#readme",
+  "keywords": [
+    "3d-printing",
+    "slicer",
+    "gcode",
+    "stl",
+    "wasm",
+    "orcaslicer",
+    "three",
+    "react",
+    "viewer"
+  ]
 }

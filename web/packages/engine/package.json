@@ -8,7 +8,10 @@
   "module": "index.js",
   "types": "index.d.ts",
   "exports": {
-    ".": { "types": "./index.d.ts", "import": "./index.js" },
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
     "./settings": "./src/settings.js",
     "./toggle": "./src/toggle_eval.js",
     "./worker": "./src/slicer.worker.js",
@@ -17,6 +20,28 @@
   "dependencies": {
     "@three-slicer/data": "^0.1.0"
   },
-  "files": ["index.js", "index.d.ts", "src", "examples"],
-  "sideEffects": false
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "src",
+    "examples"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "directory": "web/packages/engine"
+  },
+  "homepage": "https://github.com/kimgh06/Web_Three_Slicer#readme",
+  "keywords": [
+    "3d-printing",
+    "slicer",
+    "gcode",
+    "stl",
+    "wasm",
+    "orcaslicer"
+  ]
 }

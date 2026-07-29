@@ -11,5 +11,24 @@
     "./toggle-rules.json": "./toggle-rules.json",
     "./invalidation-map.json": "./invalidation-map.json"
   },
-  "files": ["*.json"]
+  "files": [
+    "*.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "directory": "web/packages/data"
+  },
+  "homepage": "https://github.com/kimgh06/Web_Three_Slicer#readme",
+  "keywords": [
+    "3d-printing",
+    "slicer",
+    "gcode",
+    "stl",
+    "wasm",
+    "orcaslicer"
+  ]
 }

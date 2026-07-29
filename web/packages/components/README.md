@@ -1,44 +1,39 @@
 # @three-slicer/components
 
-Reusable React components for the browser slicer. **Props-driven, zero global/context coupling** — each
-component takes plain props and can render in any React tree (proven by `apps/independence-check`).
+Reusable React components for the browser slicer. Props-driven — no global state, no React context, no router coupling (proven standalone by `apps/independence-check`).
 
 ## `<SettingsPanel/>`
 
-Config-schema-driven settings form (907 options, tabs/pages/modes, search, dirty-dot + reset, disable
-rules). Depends only on React + `@three-slicer/data` (schema/ui-tree/toggle-rules) + `@three-slicer/engine`
-(settingRaw/disabledKeys/makeCfg). No router, no global store.
+An OrcaSlicer-style settings form generated from `@three-slicer/data` (schema + UI tree + toggle rules): tab/page/group navigation, mode filter (simple/advanced/expert), search across 907 options, dirty markers with per-option reset, and enable/disable rules evaluation.
+
+```bash
+npm i @three-slicer/components react
+```
 
 ```jsx
 import { useState } from 'react'
 import SettingsPanel from '@three-slicer/components/SettingsPanel'
 
-function MyTool() {
-  const [settings, setSettings] = useState({})   // sparse map {optKey: value}; missing = schema default
-  return (
-    <SettingsPanel
-      settings={settings}
-      setSettings={setSettings}
-      onOptionOpen={key => {/* optional: open detail/deep-link. Omit → plain labels (no router needed). */}}
-    />
-  )
+function App() {
+  const [settings, setSettings] = useState({})   // sparse map: edited keys only; missing = schema default
+  return <SettingsPanel settings={settings} setSettings={setSettings} />
 }
 ```
 
 Props:
-- `settings` — sparse `{optKey: value}` map (edited keys only).
-- `setSettings` — `(updater) => void` (React setState style); the only channel state leaves the component.
-- `onOptionOpen?` — `(optKey) => void`; label click. Omit for zero router dependency.
 
-Standalone proof: `apps/independence-check` renders `<SettingsPanel/>` with just `useState` (no App, no
-context, no router) and edits flow to local state — build + run with `cd apps/independence-check && npm i && npm run dev`.
+| Prop | Type | Description |
+|---|---|---|
+| `settings` | `{ [schemaKey]: value }` | Sparse settings map — the consumer's state is the single source of truth |
+| `setSettings` | `(updater) => void` | React setState-style updater; the only way state leaves the component |
+| `onOptionOpen` | `(key) => void` (optional) | Label click hook for deep links/detail views. Omit → plain labels |
 
-## `<SlicerViewport/>` (status)
+The same `settings` object feeds `deriveKernelParams()` in `@three-slicer/engine` and the `<Viewport/>` in `@three-slicer/viewer` — one state connects all three.
 
-The 3D viewport + slice/preview orchestration currently lives as a single props-driven component
-`viewer/Viewport.jsx` (`<Viewport settings setSettings processPanel/>`), consuming `@three-slicer/engine`
-(worker + `deriveKernelParams`). It is already prop-driven at the top level, but has **not** yet been
-relocated into this package or split into its internal `PreviewPanel` / `ObjectList` / `FilamentBar`
-sub-components — that decomposition touches a large three.js/worker/assets module and requires a full
-demo regression pass (load / slice / preview / plates / paint / OOM / gizmo), deferred to a focused
-follow-up. `apps/demo` (the viewer) consumes `<SettingsPanel/>` from here today.
+Ships transpiled ESM (`dist/`); react is a peer dependency. Styling is class-based and unstyled by default (bring your own CSS, or reuse the demo's).
+
+The 3D viewport lives in its own package: `@three-slicer/viewer`.
+
+## License
+
+AGPL-3.0-or-later (derived from OrcaSlicer).
