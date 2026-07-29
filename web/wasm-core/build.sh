@@ -119,5 +119,9 @@ em++ -O2 --bind -std=c++17 \
   -o ../packages/engine/src/slicer_core.js \
   slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC $TS_GROUP_OBJ
 
+# webpack 호환: ENVIRONMENT_IS_NODE 가드 안의 동적 import("node:module") 를 webpack 이
+# 정적 해석하다 실패(node: 스킴) → webpackIgnore 매직 코멘트로 제외. 런타임 동작 불변(Vite/Node 무영향).
+sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../packages/engine/src/slicer_core.js
+
 echo "built -> ../packages/engine/src/slicer_core.js"
 ls -la ../packages/engine/src/slicer_core.js
