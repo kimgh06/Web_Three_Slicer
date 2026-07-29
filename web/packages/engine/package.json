@@ -15,7 +15,8 @@
     "./settings": "./src/settings.js",
     "./toggle": "./src/toggle_eval.js",
     "./worker": "./src/slicer.worker.js",
-    "./wasm": "./src/slicer_core.js"
+    "./wasm": "./src/slicer_core.js",
+    "./wasm-mt": "./src/slicer_core.mt.js"
   },
   "dependencies": {
     "@three-slicer/data": "^0.1.0"

@@ -128,3 +128,28 @@ sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ 
 
 echo "built -> ../packages/engine/src/slicer_core.js"
 ls -la ../packages/engine/src/slicer_core.js
+
+# ---- 멀티스레드(mt) 빌드: PASS 1 레이어 병렬 (__EMSCRIPTEN_PTHREADS__) ----
+#  별도 산출물 — 기본(st)은 zero-config 유지, mt 는 브라우저에서 COOP/COEP(crossOriginIsolated) 필요.
+#  ALLOW_MEMORY_GROWTH+pthreads 조합은 emscripten 이 성능 경고를 내지만 기능상 유효(측정으로 판단).
+echo "compiling treesupport group (mt) -> /tmp/ts_group_mt.o"
+em++ -O2 -pthread -std=c++17 -r -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK $TS_INC $TS_UNIQUE_SRC -o /tmp/ts_group_mt.o
+
+em++ -O2 -pthread --bind -std=c++17 \
+  -DCGAL_DISABLE_ROUNDING_MATH_CHECK \
+  -s MODULARIZE=1 \
+  -s EXPORT_ES6=1 \
+  -s SINGLE_FILE=1 \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s MALLOC=mimalloc \
+  -s PTHREAD_POOL_SIZE='(typeof navigator!=="undefined"&&navigator.hardwareConcurrency)||4' \
+  -s EXPORT_NAME=createSlicer \
+  -s ENVIRONMENT=web,worker,node \
+  $ARACHNE_INC \
+  -o ../packages/engine/src/slicer_core.mt.js \
+  slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC /tmp/ts_group_mt.o
+
+sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../packages/engine/src/slicer_core.mt.js
+
+echo "built -> ../packages/engine/src/slicer_core.mt.js"
+ls -la ../packages/engine/src/slicer_core.mt.js

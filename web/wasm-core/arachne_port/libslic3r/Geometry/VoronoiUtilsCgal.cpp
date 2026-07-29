@@ -6,6 +6,7 @@
 #include <boost/variant/get.hpp>
 #include <vector>
 #include <cassert>
+#include <atomic>
 
 #include "libslic3r/Geometry/Voronoi.hpp"
 #include "libslic3r/Geometry/VoronoiUtils.hpp"
@@ -25,7 +26,8 @@ namespace Slic3r::Geometry {
 
 // stage-14 debug counter: incremented each time the REAL CGAL planarity check runs (exposed via
 // arachne_bridge to prove the check is invoked, not the old always-true stub).
-int g_cgal_planar_angle_calls = 0;
+// (mt) std::atomic — PASS 1 레이어 병렬화(-pthread 빌드)에서 증가 손실 방지. 문서화된 최소 수정.
+std::atomic<int> g_cgal_planar_angle_calls{0};
 
 using PolygonsSegmentIndexConstIt = std::vector<Arachne::PolygonsSegmentIndex>::const_iterator;
 using LinesIt                     = Lines::iterator;

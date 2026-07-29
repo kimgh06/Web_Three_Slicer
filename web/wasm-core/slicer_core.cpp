@@ -55,6 +55,9 @@
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 #include <emscripten/heap.h>   // 30단계: emscripten_get_heap_size() — 힙 피크 벤치(ALLOW_MEMORY_GROWTH 단조증가)
+#include <emscripten/emscripten.h>  // emscripten_get_now() — 스테이지 계측
+#include <thread>    // (mt) PASS 1 레이어 병렬 — __EMSCRIPTEN_PTHREADS__ 빌드에서만 실사용
+#include <atomic>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -1177,10 +1180,17 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   int N = 0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
   int total = 2*N;
 
+  // 스테이지 계측 (stats 로만 노출 — g-code 무영향, golden 안전)
+  double tw0 = emscripten_get_now(), tw_p1 = 0, tw_p15 = 0, tw_sup = 0;
+
   // ---- PASS 1: 레이어별 윤곽·벽·인필영역 ----
-  std::vector<LayerData> L; L.reserve(N);
-  { int i=0;
-    for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height, ++i) {
+  //  레이어 간 의존 0 (읽기: tris/p 공유 불변, 쓰기: L[i] 독립) → -pthread 빌드에서 레이어 병렬.
+  //  z 는 기존 누적 루프(z+=layer_height)와 동일하게 직렬 선계산 — FP 누적 순서 보존(golden 안전).
+  std::vector<LayerData> L(N);
+  { std::vector<double> zsv; zsv.reserve(N);
+    for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) zsv.push_back(z);
+    auto computeLayer = [&](int i) {
+      const double z = zsv[i];
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
       std::vector<Seg> segs; Seg sg;
       for (const Tri& t:tris){ double zmin=std::min({t.v[0].z,t.v[1].z,t.v[2].z}),zmax=std::max({t.v[0].z,t.v[1].z,t.v[2].z});
@@ -1215,10 +1225,25 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
           ld.thin.clear();   // arachne 가 얇은 영역을 가변폭 벽으로 직접 처리 → classic 씬월 비활성
         }
       }
-      L.push_back(std::move(ld));
-      report(i+1, total);
+      L[i] = std::move(ld);
+    };
+#ifdef __EMSCRIPTEN_PTHREADS__
+    { unsigned hw = std::thread::hardware_concurrency();
+      unsigned nt = std::max(1u, std::min<unsigned>(hw ? hw : 4, (unsigned)N));
+      std::atomic<int> nextIdx{0};
+      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) computeLayer(i); };
+      std::vector<std::thread> ths; ths.reserve(nt-1);
+      for (unsigned t=1; t<nt; ++t) ths.emplace_back(workfn);
+      workfn();                                  // 메인 스레드도 참여
+      for (auto& th : ths) th.join();
+      report(N, total);                          // JS 콜백은 메인 스레드 전용 → 코스 단위 보고
     }
+#else
+    for (int i=0;i<N;++i){ computeLayer(i); report(i+1, total); }
+#endif
   }
+
+  tw_p1 = emscripten_get_now();
 
   // ---- PASS 1.5: 표면 검출 (이 레이어 fill − 이웃 contour) ----
   for (int i=0;i<N;++i) {
@@ -1228,6 +1253,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     L[i].topSurf = clip_paths(L[i].fill, above, ctDifference);  // 위가 비면 top 표면
     L[i].botSurf = clip_paths(L[i].fill, below, ctDifference);  // 아래가 비면 bottom 표면
   }
+
+  tw_p15 = emscripten_get_now();
 
   // ---- PASS 1.6: 서포트 (오버행 검출 → 수직 투영 → iface/base) ----
   double treeZMaxResid = -1.0; int treeSupLayers = 0;   // 19단계: 트리 서포트 z 정합 진단(오브젝트 z 그리드와 오차)
@@ -1470,6 +1497,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     zShift = raftFirstH + (nraft-1)*p.layer_height;   // 모델 첫 레이어 Z = zShift + first_layer_height
   }
 
+  tw_sup = emscripten_get_now();
+
   // ---- PASS 2: 솔리드/스파스 인필 분리 + 서포트 + 방출 ----
   for (int i=0;i<N;++i) {
     LayerData& ld = L[i];
@@ -1682,6 +1711,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   stats.set("path_segments", (double)gw.segments);
   stats.set("filament_mm", gw.filament);
   stats.set("wall_crossings", (double)gw.wall_crossings);   // 벽 횡단 트래블 수(reduce_crossing_wall 검산)
+  { double tw_end = emscripten_get_now();                    // 스테이지 계측(ms) — 병렬화 대상 판정용
+    stats.set("t_pass1_ms",   tw_p1  - tw0);
+    stats.set("t_surface_ms", tw_p15 - tw_p1);
+    stats.set("t_support_ms", tw_sup - tw_p15);
+    stats.set("t_emit_ms",    tw_end - tw_sup); }
   stats.set("over_bed", over_bed);
   // 원본 시간추정 결과
   stats.set("time_estimate", te.total_s);                   // 총 예상 출력 시간(초)

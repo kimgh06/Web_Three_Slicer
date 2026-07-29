@@ -7,7 +7,8 @@
 using namespace Slic3r;
 using namespace Slic3r::Arachne;
 
-namespace Slic3r::Geometry { extern int g_cgal_planar_angle_calls; }  // stage-14 debug counter
+#include <atomic>
+namespace Slic3r::Geometry { extern std::atomic<int> g_cgal_planar_angle_calls; }  // stage-14 debug counter (mt-safe)
 
 namespace arachne_bridge {
 
