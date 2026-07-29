@@ -14,6 +14,9 @@
     "./worker": "./src/slicer.worker.js",
     "./wasm": "./src/slicer_core.js"
   },
+  "dependencies": {
+    "@orca-re/data": "^0.1.0"
+  },
   "files": ["index.js", "index.d.ts", "src", "examples"],
   "sideEffects": false
 }

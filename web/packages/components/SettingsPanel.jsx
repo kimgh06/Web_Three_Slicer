@@ -7,10 +7,10 @@
 //   onOptionOpen : (optKey) => void    (optional; label click — deep-link/detail. Omit → plain labels,
 //                  which is what apps/independence-check does to prove zero router coupling.)
 import React, { useMemo, useState } from 'react'
-import schema from '../data/config-schema.json'
-import uiTree from '../data/ui-tree.json'
-import { settingRaw } from '../engine/src/settings.js'
-import { disabledKeys, makeCfg } from '../engine/src/toggle_eval.js'
+import schema from '@orca-re/data/config-schema.json'
+import uiTree from '@orca-re/data/ui-tree.json'
+import { settingRaw } from '@orca-re/engine/settings'
+import { disabledKeys, makeCfg } from '@orca-re/engine/toggle'
 
 const MAIN_BUILDERS = Object.keys(uiTree).filter(b => uiTree[b].length > 0)
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']

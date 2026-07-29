@@ -3,7 +3,7 @@
 // zero global/context coupling. Editing any field mutates local state, shown live in the <pre>.
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import SettingsPanel from '../../packages/components/SettingsPanel.jsx'
+import SettingsPanel from '@orca-re/components/SettingsPanel'
 
 function Standalone() {
   const [settings, setSettings] = useState({})

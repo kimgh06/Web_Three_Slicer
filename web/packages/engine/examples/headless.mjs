@@ -1,7 +1,7 @@
 // @orca-re/engine headless SDK example + independence proof: drive the engine from Node using ONLY the
 // public API (no UI, no viewer). Generates a 20mm cube STL, slices it, prints stats + G-code length.
 //   run: node web/packages/engine/examples/headless.mjs
-import { createSlicer } from '../index.js'   // external consumers: import { createSlicer } from '@orca-re/engine'
+import { createSlicer } from '@orca-re/engine'   // 워크스페이스 심링크로 해석 — 외부 소비자와 동일한 경로
 
 // minimal binary-STL writer for a box (public API takes a binary-STL ArrayBuffer)
 function boxTris(ox, oy, oz, sx, sy, sz) {
