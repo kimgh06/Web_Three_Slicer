@@ -29,6 +29,11 @@ struct Params {
     double bed_width_mm            = 200.0;
     double bed_depth_mm            = 200.0;
     double printable_height_mm     = 250.0;
+    // 33단계: print_config "resolution"(경로 단순화 허용오차, mm). 원본 TreeSupportCommon.hpp:56 이
+    //  TreeSupportSettings::resolution 을 여기서 받아 TreeSupport3D 의 polygons_simplify 에 쓴다.
+    //  브릿지가 이 값을 안 넘기면 PrintConfig 기본값(0.01)이 적용된다 — 곡면 가지에서 현 길이 ≈0.4mm.
+    //  값을 키우면 세그먼트가 줄어 G-code 가 작아진다(디테일과의 트레이드오프).
+    double resolution_mm           = 0.01;
 };
 
 // object_slices_mm[layer] = the object's slice rings at that layer (mm). layer_print_z_mm[layer] = its print_z.

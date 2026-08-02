@@ -92,6 +92,9 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
     const double hw = P.bed_width_mm * 0.5, hd = P.bed_depth_mm * 0.5;
     pr.m_config.printable_area.values  = { Vec2d(-hw,-hd), Vec2d(hw,-hd), Vec2d(hw,hd), Vec2d(-hw,hd) };
     pr.m_config.nozzle_diameter.values = { P.nozzle_mm };
+    // 33단계: 경로 단순화 허용오차 배선. TreeSupportCommon.hpp:56 이 이 값을 TreeSupportSettings::resolution
+    //  으로 받아 TreeSupport3D 의 polygons_simplify 에 쓴다. 미설정 시 PrintConfig 기본 0.01 이 적용된다.
+    if (P.resolution_mm > 0.0) pr.m_config.resolution.value = P.resolution_mm;
 
     PrintInstance inst; inst.print_object = &po; inst.shift = Point(0,0);
     po.m_instances.push_back(inst);

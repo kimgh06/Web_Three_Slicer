@@ -63,8 +63,12 @@ export function deriveKernelParams(settings) {
     seam_position: seam,
     skirt_loops: num('skirt_loops', 1),
     skirt_distance: num('skirt_distance', 2),
+    skirt_height: num('skirt_height', 1),                       // 33단계: 커널이 첫 레이어 고정이었음
     brim_width: num('brim_width', 0),
+    brim_object_gap: num('brim_object_gap', 0),                 // 33단계: 커널이 w*0.5 고정이었음
     retract_length: num('retraction_length', 0.8),              // 벡터[0]
+    retraction_minimum_travel: num('retraction_minimum_travel', 2),  // 33단계: 커널 상수 2.0 이었음
+    gcode_resolution: num('resolution', 0.01),                  // 33단계: 트리 서포트 경로 단순화 허용오차
     retract_speed: num('retraction_speed', 30),
     z_hop: num('z_hop', 0.4),
     travel_speed: num('travel_speed', 120),
@@ -82,7 +86,23 @@ export function deriveKernelParams(settings) {
     support_bottom_z_distance: num('support_bottom_z_distance', 0.2),   // 32단계: 서포트 바닥 z-gap(기본 0.2=현행 등가)
     support_xy_distance: num('support_object_xy_distance', 0.35),
     support_interface_top_layers: num('support_interface_top_layers', 2),
+    // 33단계: 커널 하드코딩 제거로 신설된 서포트 키 배선(원본 스키마 키 그대로)
+    support_angle: num('support_angle', 0),
+    support_base_pattern: String(S('support_base_pattern') ?? 'default'),
+    support_interface_pattern: String(S('support_interface_pattern') ?? 'auto'),
+    support_interface_spacing: num('support_interface_spacing', 0.5),
+    support_base_pattern_spacing: num('support_base_pattern_spacing', 2.5),
+    support_remove_small_overhang: bool('support_remove_small_overhang', true),
+    bridge_no_support: bool('bridge_no_support', false),
+    support_expansion: num('support_expansion', 0),
+    support_threshold_overlap: (() => { const v = settingRaw(settings, 'support_threshold_overlap')
+      if (typeof v === 'string' && v.trim().endsWith('%')) return parseFloat(v) / 100
+      const n = Number(v); return Number.isFinite(n) ? n : 0.5 })(),   // "50%" → 0.5 (압출폭 비율)
+    support_on_build_plate_only: bool('support_on_build_plate_only', false),
+    support_interface_bottom_layers: num('support_interface_bottom_layers', 0),
     raft_layers: num('raft_layers', 0),
+    raft_expansion: num('raft_expansion', 1.5),                 // 33단계: 커널이 +3.0 고정이었음
+    raft_contact_distance: num('raft_contact_distance', 0.1),   // 33단계: 커널에 미반영이었음
     fan_speed: num('fan_max_speed', 100),                       // fan_speed 키 없음 → fan_max_speed
     close_fan_the_first_x_layers: num('close_fan_the_first_x_layers', 1),
     full_fan_speed_layer: num('full_fan_speed_layer', 0),

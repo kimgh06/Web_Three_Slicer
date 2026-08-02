@@ -76,8 +76,9 @@ namespace em = emscripten;
 static const double SCALE  = 1e6;          // mm → clipper 정수 좌표
 static const double INV    = 1.0 / SCALE;
 static const double PI     = 3.14159265358979323846;
-static const double BED_CENTER = 128.0;    // 256mm 베드 중심 (G-code 양수화)
-static const double TRAVEL_RETRACT_MIN = 2.0; // mm 초과 이동 시 리트랙션
+// 33단계: BED_CENTER(=128.0, 256mm 베드 가정) 제거 — 선언만 있고 참조처가 없었다(실측).
+//  베드 중심은 실제로 gw.offX/offY = bed_width/depth * 0.5 로 계산된다.
+// TRAVEL_RETRACT_MIN 도 제거 — p.retraction_minimum_travel 로 배선.
 
 // ---- 파라미터 (1단계 이름 불변 + 2단계 신규) -----------------------------------
 struct Params {
@@ -105,7 +106,34 @@ struct Params {
   int    support_interface_top_layers=2;               // support_interface_top_layers
   bool   support_auto=true;                             // 20단계: true=자동 오버행 검출, false=수동(페인트 enforcer만)
   double support_line_width=0.0;                        // support_line_width (0=auto; 실 트리 서포트 압출폭)
+  // 33단계: 하드코딩 제거 — 원본 설정 키 배선(기본값은 config-schema 원본 default 와 일치)
+  double support_angle=0.0;                             // support_angle: 서포트 본체 기준 각도(°). 원본 SupportParameters::base_angle
+  std::string support_base_pattern="default";           // support_base_pattern: default|rectilinear|rectilinear-grid|honeycomb|...
+  std::string support_interface_pattern="auto";         // support_interface_pattern: auto|rectilinear|concentric|rectilinear_interlaced|grid
+  double support_interface_spacing=0.5;                 // support_interface_spacing (mm, 0=솔리드). 원본 default 0.5
+  double support_base_pattern_spacing=2.5;              // support_base_pattern_spacing (mm). density 와 함께 간격 결정
+  double support_overhang_min_area=0.0;                 // 오버행 최소 면적(mm², 0=자동 w²). 형태학 열림 대체 필터
+  bool   support_remove_small_overhang=true;            // support_remove_small_overhang (원본 default true)
+  bool   bridge_no_support=false;                       // bridge_no_support: 브리지 영역엔 서포트 미생성
+  double support_expansion=0.0;                         // support_expansion (mm): 오버행 영역 팽창
+  double support_threshold_overlap=0.5;                 // support_threshold_overlap: θ=0 일 때 겹침 기준(압출폭 비율)
+  bool   support_on_build_plate_only=false;             // support_on_build_plate_only: 베드까지 닿는 서포트만
+  int    support_interface_bottom_layers=0;             // support_interface_bottom_layers (0=없음)
+  bool   support_grid_snap=true;                        // 원본 SupportGridPattern 상당(grid 스타일 기본 동작)
+  double tree_lite_shrink=0.5, tree_lite_min_radius=1.5;// tree_lite 테이퍼 상수(자체 근사 — 대응 원본 키 없음)
   int    raft_layers=0;                                // raft_layers
+  double raft_expansion=1.5;                           // raft_expansion (mm). 원본 default 1.5 (기존 하드코딩 3.0)
+  double raft_contact_distance=0.1;                    // raft_contact_distance (mm)
+  double raft_first_layer_height=0.30;                 // 래프트 첫 레이어 높이(mm)
+  int    skirt_height=1;                               // skirt_height: 스커트를 그릴 레이어 수
+  double brim_object_gap=0.0;                          // brim_object_gap (mm): 브림-오브젝트 간격
+  double retraction_minimum_travel=2.0;                // retraction_minimum_travel (mm): 리트랙션 발동 최소 이동
+  double gcode_resolution=0.01;                        // resolution (mm): 경로 단순화 허용오차. 원본 PrintConfig default 0.01
+  // wipe_tower_x/y (G-code 좌표, mm). 스키마 원본 default 는 (15, 220) 이지만 그건 256mm 베드 전제라
+  //  200mm 베드에서 베드를 벗어난다. 커널 기본은 어떤 베드에서도 안전한 구석(10,10)을 유지하고,
+  //  UI/소비자가 명시적으로 넘길 때만 원본 좌표를 쓴다(기존 동작 보존).
+  double prime_tower_x=10.0, prime_tower_y=10.0;
+  double prime_tower_ring_size=15.0;                   // 폴백 사각링 한 변(mm)
   double bed_width=256.0, bed_depth=256.0;             // 베드 크기 (오프셋=bed/2)
   // 4단계 신규 (경로·G-code 레벨)
   std::string sparse_infill_pattern="rectilinear";     // rectilinear|grid|triangles|zigzag|gyroid
@@ -133,7 +161,11 @@ struct Params {
   int    extruder_count=1;                              // 멀티머티리얼: 사용 익스트루더 수(1|2)
   int    mm_group_split=0;                              // 삼각형 그룹 경계 인덱스([0,split)=T0, [split,N)=T1)
   bool   auto_center=false;                             // 28단계: true=결합 bbox 를 원점 재정렬(3단계 레거시). false(기본)=뷰어 좌표 신뢰(재정렬 없음, Z 만 안착) → 툴패스가 화면 모델과 정확히 겹침. 원본 = plate origin 오프셋만(GCode.cpp:932).
-  bool   wipe_tower_real=false;                         // 12단계: MM 전환 시 6단계 사각링 대신 실 WipeTower.generate()
+  // 33단계: 기본값 true 로 전환. 근거(compare_wipetower.mjs 실측, 2박스 MM):
+  //  실 경로가 49/49 레이어 폴백 없이 성공, 퍼지량이 실제 계산됨(필라멘트 1098→4902mm),
+  //  원본 G-code 구조 방출(CP TOOLCHANGE/WIPE_TOWER 마커 343), 성능 불이익 없음(25ms vs 31ms).
+  //  기존 false 경로(15mm 사각링 3개)는 퍼지 개념이 없는 장식이라 실사용 G-code 로 부적합 — 폴백으로만 유지.
+  bool   wipe_tower_real=true;                          // 12단계: MM 전환 시 6단계 사각링 대신 실 WipeTower.generate()
   double prime_tower_width=30.0;                        //  실 WipeTower 폭(mm). 사각링 폭(15)과 별개.
   // 7단계 신규 (실제 Arachne 이식)
   std::string wall_generator="classic";                // classic|arachne (arachne=이식된 실제 WallToolPaths)
@@ -238,6 +270,32 @@ static Params parse_params(const std::string& j) {
   p.support_interface_top_layers  = (int)jget(j,"support_interface_top_layers",p.support_interface_top_layers);
   p.support_line_width            = jget(j,"support_line_width",p.support_line_width);
   p.support_auto                  = jbool(j,"support_auto",p.support_auto);
+  // 33단계: 하드코딩 제거로 신설된 키들
+  p.support_angle                 = jget(j,"support_angle",p.support_angle);
+  p.support_base_pattern          = jstr(j,"support_base_pattern",p.support_base_pattern);
+  p.support_interface_pattern     = jstr(j,"support_interface_pattern",p.support_interface_pattern);
+  p.support_interface_spacing     = jget(j,"support_interface_spacing",p.support_interface_spacing);
+  p.support_base_pattern_spacing  = jget(j,"support_base_pattern_spacing",p.support_base_pattern_spacing);
+  p.support_overhang_min_area     = jget(j,"support_overhang_min_area",p.support_overhang_min_area);
+  p.support_remove_small_overhang = jbool(j,"support_remove_small_overhang",p.support_remove_small_overhang);
+  p.bridge_no_support             = jbool(j,"bridge_no_support",p.bridge_no_support);
+  p.support_expansion             = jget(j,"support_expansion",p.support_expansion);
+  p.support_threshold_overlap     = jget(j,"support_threshold_overlap",p.support_threshold_overlap);
+  p.support_on_build_plate_only   = jbool(j,"support_on_build_plate_only",p.support_on_build_plate_only);
+  p.support_interface_bottom_layers = (int)jget(j,"support_interface_bottom_layers",p.support_interface_bottom_layers);
+  p.support_grid_snap             = jbool(j,"support_grid_snap",p.support_grid_snap);
+  p.tree_lite_shrink              = jget(j,"tree_lite_shrink",p.tree_lite_shrink);
+  p.tree_lite_min_radius          = jget(j,"tree_lite_min_radius",p.tree_lite_min_radius);
+  p.raft_expansion                = jget(j,"raft_expansion",p.raft_expansion);
+  p.raft_contact_distance         = jget(j,"raft_contact_distance",p.raft_contact_distance);
+  p.raft_first_layer_height       = jget(j,"raft_first_layer_height",p.raft_first_layer_height);
+  p.skirt_height        = (int)jget(j,"skirt_height",p.skirt_height);
+  p.brim_object_gap               = jget(j,"brim_object_gap",p.brim_object_gap);
+  p.retraction_minimum_travel     = jget(j,"retraction_minimum_travel",p.retraction_minimum_travel);
+  p.gcode_resolution              = jget(j,"gcode_resolution",p.gcode_resolution);
+  p.prime_tower_x                 = jget(j,"prime_tower_x",p.prime_tower_x);
+  p.prime_tower_y                 = jget(j,"prime_tower_y",p.prime_tower_y);
+  p.prime_tower_ring_size         = jget(j,"prime_tower_ring_size",p.prime_tower_ring_size);
   p.raft_layers        = (int)jget(j,"raft_layers",p.raft_layers);
   p.bed_width          = jget(j,"bed_width",p.bed_width);
   p.bed_depth          = jget(j,"bed_depth",p.bed_depth);
@@ -474,6 +532,35 @@ static Paths centerline_of(const Paths& comp, double w){
   return out;
 }
 // 트리라이트 1층 수축: 성분별로 폭<2·minR 이면 유지(최소 기둥), 아니면 -shrink 수축 후 병합.
+// 33단계: 원본 SupportGridPattern(SupportMaterial.cpp:637~) 근사 — 서포트 영역을 격자에 스냅한다.
+//  원본은 폴리곤을 압출폭 해상도로 래스터화한 뒤 support_spacing 크기 매크로 블록에 seed fill 해서,
+//  블록에 조금이라도 걸친 서포트 섬을 블록 단위로 확정한다(rasterize_polygons + seed_fill_block).
+//  효과: ① 기둥이 일정 격자에 정렬되고 ② **채울 수 없을 만큼 얇은 조각이 최소 한 셀로 부풀어 실제 출력 가능**해진다.
+//  ②가 없으면 얇은 벽 형상(예: 실물 Benchy 굴뚝, 링 단면)의 서포트가 검출은 되어도 인필이 한 줄도
+//  안 들어가 결과적으로 사라진다(실측: support_expansion 을 줘야만 생성됐다).
+//  여기서는 Clipper 만으로 동치를 구현한다 — 셀이 서포트 영역과 겹치면 그 셀 전체를 채택.
+//  래스터/seed fill 대신 셀-폴리곤 교차로 판정하므로 오버샘플링 세부는 근사다.
+static Paths grid_snap(const Paths& region, double cell) {
+  if (region.empty() || cell <= 1e-6) return region;
+  double minx,miny,maxx,maxy; bbox_of(region, minx,miny,maxx,maxy);
+  const long i0=(long)std::floor(minx/cell), i1=(long)std::ceil(maxx/cell);
+  const long j0=(long)std::floor(miny/cell), j1=(long)std::ceil(maxy/cell);
+  if ((i1-i0+1) > 2000 || (j1-j0+1) > 2000 || (i1-i0+1)*(j1-j0+1) > 200000) return region;  // 방어: 과대 격자면 원본 반환
+  Paths cells;
+  for (long i=i0;i<=i1;++i) for (long j=j0;j<=j1;++j) {
+    const double x0=i*cell, y0=j*cell, x1=x0+cell, y1=y0+cell;
+    Path c;
+    c.push_back(IntPoint((cInt)std::llround(x0*SCALE),(cInt)std::llround(y0*SCALE)));
+    c.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y0*SCALE)));
+    c.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y1*SCALE)));
+    c.push_back(IntPoint((cInt)std::llround(x0*SCALE),(cInt)std::llround(y1*SCALE)));
+    if (clip_paths(Paths{c}, region, ctIntersection).empty()) continue;   // 이 셀에 서포트가 걸치는가
+    cells.push_back(std::move(c));
+  }
+  if (cells.empty()) return region;
+  return SimplifyPolygons(cells, pftNonZero);   // 인접 셀 병합
+}
+
 static Paths tree_taper(const Paths& in, double shrink, double minR){
   if (in.empty()) return in;
   Paths out;
@@ -620,6 +707,7 @@ struct GW {
   long   segments=0;
   int    curF=-1;
   double retract_len=0.8; int retractF=1800; // mm, mm/min
+  double retract_min_travel=2.0;             // 33단계: retraction_minimum_travel(기존 TRAVEL_RETRACT_MIN 상수)
   double z_hop=0.0;
   double offX=128.0, offY=128.0;   // G-code XY 오프셋 = bed/2
   int    lastFan=-1;               // 냉각 팬 현재값 (변경 시만 M106)
@@ -679,7 +767,7 @@ struct GW {
   // 리트랙션 포함 직선 트래블 (원본 동작)
   void travel_raw(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
-    bool retract = d > TRAVEL_RETRACT_MIN && retract_len > 0;
+    bool retract = d > retract_min_travel && retract_len > 0;
     if (retract) {
       std::snprintf(buf,sizeof buf,"G1 E-%.4f F%d", retract_len, retractF); raw(buf);
       if (z_hop > 0) { std::snprintf(buf,sizeof buf,"G1 Z%.3f F%d", z + z_hop, fTravel); raw(buf); }
@@ -1017,6 +1105,7 @@ static em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::
 
   GW gw; gw.s.reserve(1<<16);
   gw.retract_len=p.retract_length; gw.retractF=(int)std::llround(p.retract_speed*60); gw.z_hop=p.z_hop;
+  gw.retract_min_travel=p.retraction_minimum_travel;
   gw.offX=p.bed_width*0.5; gw.offY=p.bed_depth*0.5;
   gw.filament_area=PI*p.filament_diameter*p.filament_diameter/4.0;
   SeamCtx seamCtx;
@@ -1033,9 +1122,11 @@ static em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::
 
   int fTravel=(int)std::llround(p.travel_speed*60);
   double sparse_sp=(p.infill_density>1e-4)?(w/p.infill_density):(w*3.0);
-  // 프라임 타워: 베드 구석(G-code≈10,10) 15×15 동심 사각 링 (모델좌표=gcode−off)
-  double ptx=10.0-gw.offX, pty=10.0-gw.offY;
-  auto primeRings=[&](){ Paths ps; for(int k=0;k<3;++k){ double o=k*w; double x0=ptx+o,y0=pty+o,x1=ptx+15-o,y1=pty+15-o;
+  // 프라임 타워 폴백(사각 링). 33단계: 위치(10,10)·크기 15 하드코딩 → prime_tower_x/y/ring_size 배선.
+  //  ※ 기본 경로는 wipe_tower_real(실 WipeTower) 이고 이 링은 그 실패 시 폴백이다.
+  double ptx=p.prime_tower_x-gw.offX, pty=p.prime_tower_y-gw.offY;
+  const double ptSize=p.prime_tower_ring_size;
+  auto primeRings=[&](){ Paths ps; for(int k=0;k<3;++k){ double o=k*w; double x0=ptx+o,y0=pty+o,x1=ptx+ptSize-o,y1=pty+ptSize-o;
     Path r; r.push_back(IntPoint((cInt)std::llround(x0*SCALE),(cInt)std::llround(y0*SCALE)));
     r.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y0*SCALE)));
     r.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y1*SCALE)));
@@ -1071,7 +1162,7 @@ static em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::
         toolTo(1);
         if (p.wipe_tower_real) {                          // 12단계: 실 WipeTower.generate()
           auto wt = config_bridge::wipe_tower_block(p.bed_width,p.bed_depth,p.first_layer_height,
-                        p.layer_height, zE, i==0, 0, 1, /*tower bed x,y*/10.0, 10.0,
+                        p.layer_height, zE, i==0, 0, 1, p.prime_tower_x, p.prime_tower_y,   // 33단계: 10,10 상수 → wipe_tower_x/y
                         p.prime_tower_width, p.filament_diameter);
           if (wt.ok) {
             gw.raw("; wipe_tower_real: real ported WipeTower.generate()");
@@ -1290,6 +1381,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     tsp.support_auto=p.support_auto;                                // 20단계: 자동/수동(페인트 enforcer만)
     tsp.support_line_width_mm=p.support_line_width;                 // 19단계: 실 서포트 압출폭(config→flow→per-path)
     tsp.bed_width_mm=p.bed_width; tsp.bed_depth_mm=p.bed_depth;
+    tsp.resolution_mm=p.gcode_resolution;   // 33단계: 트리 경로 단순화 허용오차(원본 print_config "resolution")
     std::vector<treesupport_bridge::LayerOut> tlayers = treesupport_bridge::generate(slices, zs, tsp);
     for (const treesupport_bridge::LayerOut& lo : tlayers) {
       // 19단계 z 정합: 서포트 레이어는 오브젝트 레이어와 동기(layer_z 가 동일 slicing_params 사용)되므로
@@ -1307,8 +1399,17 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       }
     }
    } else {
-    double maxStep = std::tan(p.support_threshold_angle * PI/180.0) * p.layer_height; // 층당 허용 수평 이동
-    double openR = w * 0.6;                                                            // 슬리버 제거 반경
+    // 층당 허용 수평 이동 = layer_height / tan(θ). 원본 detect_overhangs(SupportMaterial.cpp:1439)
+    //  lower_layer_offset = scale_(lower_layer.height / tan(threshold_rad)) 와 동일.
+    //  θ 는 "기울기 각(90°=수직)" 이라 작을수록 완만 → 확장량이 커져 서포트가 줄어든다(원본 툴팁 정합).
+    //  ※ 33단계 이전에는 tan 이 분자에 있어 방향이 반대였다(30°에서 3배 과다 검출). 45°에서만 우연히 일치.
+    //  경계: 원본과 같이 89° 로 클램프(tan→∞ 방지), θ<=0 은 "전면 서포트"(확장 0)로 처리.
+    const double thrDeg = std::min(89.0, p.support_threshold_angle);
+    // 33단계: θ=0 은 "자동" — 원본은 각도 대신 겹침 기준을 쓴다(detect_overhangs):
+    //   lower_layer_offset = fw - scale_(support_threshold_overlap.get_abs_value(fw))
+    //  기존엔 0 을 그대로 써 하층 확장이 0(=모든 상층 증가분이 오버행)이 되는 과다검출이었다.
+    double maxStep = (thrDeg > 0.0) ? (p.layer_height / std::tan(thrDeg * PI/180.0))
+                                    : std::max(0.0, w - p.support_threshold_overlap * w);
     int gap = std::max(1, (int)std::llround(p.support_top_z_distance / p.layer_height)); // 접촉 z 간격(층)
     int ifaceN = std::max(1, p.support_interface_top_layers);
     // 20단계: 수동 페인트 enforcer/blocker → 레이어별 폴리곤(slice_mesh_slabs 투영, facade 와 동일 slice_z)
@@ -1324,36 +1425,104 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       return out;
     };
     std::vector<Paths> enfL = projToPaths(true), blkL = projToPaths(false);
-    // 오버행: contour_i − offset(contour_{i-1}, +maxStep), open 으로 노이즈 제거 (수동 모드면 자동검출 생략)
+    // 오버행: contour_i − offset(contour_{i-1}, +maxStep)
+    // 33단계: 기존의 형태학 열림(offset -openR → +openR)을 제거한다. 열림은 폭 2*openR(=1.26w) 미만의
+    //  띠를 통째로 지워, 완만한 경사(실측 25° 이상)에서 서포트가 아예 생성되지 않게 만들고 있었다
+    //  (support_threshold_angle 을 사실상 무력화). 원본 detect_overhangs 는 오버행 결과를 침식하지 않고,
+    //  ① 하층 slice 중 압출폭 미만의 섬을 먼저 걸러내고(offset(-fw/2) 가 비면 제외; "Do not use offset2()")
+    //  ② 결과는 면적 기준으로 정리한다. 여기서도 동일하게 한다.
+    const double minOhArea = (p.support_overhang_min_area > 1e-9) ? p.support_overhang_min_area : (w*w);
     std::vector<Paths> overhang(N);
     if (p.support_auto) for (int i=1;i<N;++i) {
       // 32단계 Fix A: 하층이 비어도(부유 파트, 풀 z-gap 위) skip 하지 않는다 — 하층 없으면
       //  offset(empty)=empty 라 clip 결과가 contour_i 전체 = 전면 오버행 → 그 아래 서포트 생성.
       if (L[i].contour.empty()) continue;
-      Paths oh = clip_paths(L[i].contour, offset_paths(L[i-1].contour, maxStep), ctDifference);
+      // ① 하층 섬 필터: 압출폭 미만으로 얇은 하층 조각은 지지력이 없으므로 하층에서 제외(원본 규칙)
+      Paths lower;
+      for (const Path& isl : L[i-1].contour) {
+        Paths one{isl};
+        if (!offset_paths(one, -w*0.5).empty()) lower.push_back(isl);
+      }
+      Paths oh = clip_paths(L[i].contour, offset_paths(lower, maxStep), ctDifference);
       if (oh.empty()) continue;
-      oh = offset_paths(oh, -openR); oh = offset_paths(oh, openR);
-      overhang[i] = oh;
+      // 33단계: bridge_no_support — 브리지로 걸쳐 출력될 영역엔 서포트를 만들지 않는다(원본 동명 옵션).
+      //  브리지 후보 = 이 레이어의 노출 바닥면(botSurf, PASS 1.5 산출). 커널은 이미 반대 방향
+      //  (서포트 접촉면은 브리지 아님)을 처리하고 있었고, 이쪽 방향이 빠져 있었다.
+      if (p.bridge_no_support && !L[i].botSurf.empty()) {
+        oh = clip_paths(oh, L[i].botSurf, ctDifference);
+        if (oh.empty()) continue;
+      }
+      // 33단계: support_expansion — 오버행 영역을 넓혀 접촉면을 키운다(원본 xy_expansion).
+      if (p.support_expansion > 1e-9) oh = offset_paths(oh, p.support_expansion);
+      // ② 성분별 선별(침식이 아니라 판정 — 통과한 성분은 원형 그대로 보존된다)
+      //   ⓐ 면적: 최소면적 미만은 수치 노이즈
+      //   ⓑ support_remove_small_overhang(원본 default true, SupportMaterial.cpp:2244):
+      //      원본은 오버행을 층간 클러스터로 묶고 1×압출폭 침식 후 bbox 가 2×압출폭 미만이면 버린다.
+      //      여기서는 성분 단위 근사 — offset(-w) 가 비면 "두 줄도 못 놓는 조각"이라 버린다.
+      //      ※ 이건 모양을 깎지 않는다(판정만). 기존 openR 열림은 모양 자체를 침식해 띠를 지웠다.
+      // 부유 아일랜드 면제: 아래(lower)가 통째로 비면 이 층은 공중에서 시작하는 섬이다.
+      //  크기와 무관하게 서포트가 없으면 출력 자체가 불가하므로 작은-오버행 제거 대상에서 뺀다.
+      //  원본은 같은 상황을 cantilever/sharp-tail 예외로 살린다(SupportMaterial.cpp:2270 부근) —
+      //  그 검출기가 없는 우리는 "아래가 비었는가"로 근사한다.
+      //  ※ 실측: 이 면제가 없으면 실물 Benchy 굴뚝(얇은 벽 링, z40.4)이 offset(-w) 에서 사라져
+      //    서포트가 전혀 생기지 않고 공중에 떴다.
+      const bool floatingIsland = lower.empty();
+      Paths keep;
+      for (const Paths& comp : split_components(oh)) {
+        if (paths_area(comp) < minOhArea) continue;
+        if (p.support_remove_small_overhang && !floatingIsland) {
+          // 원본이 작은-오버행 제거에서 면제하는 두 부류(SupportMaterial.cpp:2270 부근)를 구현한다.
+          //  ⓐ sharp tail: 면적 < 36mm²(=6×6, area_thresh_well_supported) 이면서 0.1×fw 침식에
+          //     살아남는 얇고 뾰족한 섬. 지지 없이는 무너지므로 유지.  (원본 :1484)
+          const bool sharpTail = paths_area(comp) < 36.0 && !offset_paths(comp, -0.1*w).empty();
+          //  ⓑ cantilever: 하층에 붙어 있으나 그 접합부에서 3mm 넘게 뻗어나간 외팔보. (원본 :1524-1542)
+          //     원본은 접합부까지의 최대 거리를 재지만, 여기서는 동치인 집합 연산으로 판정한다 —
+          //     접합부를 3mm 팽창시켜도 남는 부분이 있으면 3mm 초과로 뻗은 것이다.
+          bool cantilever = false;
+          {
+            Paths base = clip_paths(comp, offset_paths(lower, std::max(w, maxStep) + 0.1), ctIntersection);
+            if (!base.empty()) cantilever = !clip_paths(comp, offset_paths(base, 3.0), ctDifference).empty();
+          }
+          if (!sharpTail && !cantilever && offset_paths(comp, -w).empty()) continue;
+        }
+        for (const Path& q : comp) keep.push_back(q);
+      }
+      if (!keep.empty()) overhang[i] = keep;
     }
     // enforcer: 페인트 영역을 오버행으로 강제 추가(아래로 서포트 컬럼 투영). blocker: 오버행에서 차감(그 아래
     //  컬럼 미생성) — tree generate_overhangs 와 동일 의미(overhangs -= blockers).
     for (int i=0;i<N;++i) if (!enfL[i].empty()) overhang[i] = union_paths(overhang[i], enfL[i]);
     for (int i=0;i<N;++i) if (!blkL[i].empty()) overhang[i] = clip_paths(overhang[i], blkL[i], ctDifference);
-    // 하강 투영: 위→아래. grid = 수직 union(일정 단면). tree_lite = 층마다 -0.5mm 수축(최소
-    //  기둥 반경 1.5mm 유지) 후 union 병합 → 위 넓고 아래 좁은 나무형.
-    //  ⚠ 오가닉 트리(가지 분기/각도 최적화) 아님 — 단순 하강 테이퍼 근사.
+    // 하강 투영: 위→아래.
+    // 33단계 [공중 뜬 서포트 수정] 원본 project_support_to_grid(SupportMaterial.cpp) 규칙을 따른다:
+    //   Polygons trimming = offset(layer.lslices, EPS);
+    //   overhangs_projection = diff(overhangs, trimming);   // ← 투영 자체를 깎아서 아래로 넘긴다
+    //   ...  out.second(=깎인 투영) 가 다음(아래) 레이어의 overhangs_projection 이 된다
+    // 즉 모델에 닿은 투영은 거기서 영구히 소멸한다(= 그 지점이 bottom contact, 서포트가 모델 위에 착지).
+    // 기존 구현은 accum 을 모델 차감 없이 누적만 하고 클립을 "나중에 레이어별로" 했기 때문에,
+    //  레이어 j 에서 모델에 가려 지워진 영역이 모델이 사라지는 j-1 에서 되살아나 **공중에 뜬 서포트**가 됐다.
+    // ※ 원본의 "얇아진 컬럼 전파 중단"(column_propagation_filtering_radius 로 opening)은 실제로는
+    //   주석 처리되어 비활성이다(SupportMaterial.cpp:2701). 여기서도 하지 않는다 —
+    //   레이어 j 에서 컬럼을 지우면 그 위 j+1 의 서포트가 받칠 것을 잃어 오히려 부유가 생긴다(실측 확인).
     bool treeLite = (p.support_style == "tree_lite");
+    // 33단계: support_on_build_plate_only — 원본 project_support_to_grid 는 이 옵션이 켜지면
+    //  trimming 을 "이 레이어의 모델"이 아니라 buildplate_covered(아래에서 누적된 모델 발자국)로 바꾼다.
+    //  결과적으로 모델이 한 번이라도 있었던 XY 에는 투영이 살아남지 못해, 베드까지 곧장 내려가는 기둥만 남는다.
+    std::vector<Paths> covered;
+    if (p.support_on_build_plate_only) {
+      covered.resize(N); Paths cov;
+      for (int j=0;j<N;++j) { if (!L[j].contour.empty()) cov = union_paths(cov, L[j].contour); covered[j]=cov; }
+    }
     std::vector<Paths> column(N);
     Paths accum;
-    if (!treeLite) {
-      for (int j=N-1;j>=0;--j) { int src=j+gap; if (src<N) accum = union_paths(accum, overhang[src]); column[j]=accum; }
-    } else {
-      const double shrink=0.5, minR=1.5;
-      for (int j=N-1;j>=0;--j) {
-        accum = tree_taper(accum, shrink, minR);                       // 층당 테이퍼(최소기둥 유지)
-        int src=j+gap; if (src<N) accum = union_paths(accum, overhang[src]);  // 이 층 오버행 추가(상단 넓음)
-        column[j]=accum;
-      }
+    for (int j=N-1;j>=0;--j) {
+      if (treeLite) accum = tree_taper(accum, p.tree_lite_shrink, p.tree_lite_min_radius);  // 층당 테이퍼(최소기둥 유지)
+      int src=j+gap; if (src<N) accum = union_paths(accum, overhang[src]);
+      // ★ 원본 diff(overhangs, trimming): 이 레이어의 모델을 투영에서 빼고, 그 결과가 아래로 계속된다.
+      //   이 한 줄이 "모델에 착지한 서포트는 거기서 끝난다"(bottom contact)를 만든다.
+      const Paths& trim = p.support_on_build_plate_only ? covered[j] : L[j].contour;
+      if (!trim.empty()) accum = clip_paths(accum, offset_paths(trim, p.support_xy_distance), ctDifference);
+      column[j]=accum;
     }
     // 32단계 Fix B: 바닥 z-gap(support_bottom_z_distance) — 모델 상면에 얹히는 서포트 바닥과 상면 사이 간격.
     //  botGap 레이어 = round(dist/lh). 기본 0.2/0.2=1 → 아래 추가 클립 루프 미실행 → 현행과 동일(golden byte-identical).
@@ -1366,9 +1535,31 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       for (int k=1;k<botGap;++k){ int b=j-k; if (b>=0 && !L[b].contour.empty()) modelClear = union_paths(modelClear, offset_paths(L[b].contour, p.support_xy_distance)); }
       Paths col = clip_paths(column[j], modelClear, ctDifference);
       if (col.empty()) continue;
+      // 33단계: 그리드 스냅(원본 SupportGridPattern). 스냅 후 모델 영역으로 다시 트리밍한다 —
+      //  원본도 support_grid_pattern(support_polygons, trimming_polygons) 로 두 인자를 함께 넘긴다.
+      //  grid style 에만 적용(tree_lite 는 테이퍼 형상이 목적이라 스냅하면 의미가 사라진다).
+      if (!treeLite && p.support_grid_snap) {
+        Paths snapped = grid_snap(col, support_spacing);
+        snapped = clip_paths(snapped, modelClear, ctDifference);   // 스냅으로 부푼 부분이 모델을 침범하지 않게
+        if (!snapped.empty()) col = snapped;
+      }
       Paths iface;
       for (int k=0;k<ifaceN;++k){ int s=j+gap+k; if (s<N) iface = union_paths(iface, overhang[s]); }
       iface = clip_paths(iface, col, ctIntersection);
+      // 33단계: support_interface_bottom_layers — 서포트가 모델 상면에 얹히는 쪽(bottom contact)의
+      //  인터페이스. 원본 generate_interface_layers 는 top/bottom 인터페이스를 따로 만든다
+      //  (SupportParameters.hpp:37 num_bottom_interface_layers). 우리는 top 만 있었다.
+      //  판정: 이 층의 서포트 바로 아래(botGap 만큼 띄운 지점) 근방에 모델이 있으면 그 부분이 바닥 접촉면.
+      if (p.support_interface_bottom_layers > 0) {
+        Paths under;
+        for (int k=botGap;k<botGap+p.support_interface_bottom_layers;++k) {
+          int b=j-k; if (b>=0 && !L[b].contour.empty()) under = union_paths(under, offset_paths(L[b].contour, p.support_xy_distance));
+        }
+        if (!under.empty()) {
+          Paths botIface = clip_paths(col, under, ctIntersection);
+          if (!botIface.empty()) iface = union_paths(iface, botIface);
+        }
+      }
       L[j].supIface = iface;
       L[j].supBase  = clip_paths(col, iface, ctDifference);
     }
@@ -1378,6 +1569,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   // ---- 프리앰블 ----
   GW gw; gw.s.reserve(1<<17);
   gw.retract_len = p.retract_length;
+  gw.retract_min_travel = p.retraction_minimum_travel;
   gw.retractF    = (int)std::llround(p.retract_speed * 60);
   gw.z_hop       = p.z_hop;
   gw.offX        = p.bed_width  * 0.5;
@@ -1471,11 +1663,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   double zShift = 0.0;
   int nraft = std::max(0, p.raft_layers);
   if (nraft > 0 && !L.empty() && !L[0].contour.empty()) {
-    const double raftFirstH = 0.30;
+    const double raftFirstH = p.raft_first_layer_height;   // 33단계: 0.30 상수 → 파라미터
     Paths base = L[0].contour;
     base = union_paths(base, L[0].supIface);
     base = union_paths(base, L[0].supBase);
-    Paths raftArea = offset_paths(base, 3.0);   // +3mm 팽창 베이스
+    Paths raftArea = offset_paths(base, p.raft_expansion); // 33단계: +3.0 상수 → raft_expansion(원본 default 1.5)
     double rz = raftFirstH;
     gw.set_fan(0);                               // 래프트(첫 레이어들)는 팬 off
     for (int k=0;k<nraft;++k) {
@@ -1494,7 +1686,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       rz += p.layer_height;
     }
     g_seg_w = nullptr;   // 21단계: 래프트 widths(로컬) 수명 종료 → 댕글링 방지
-    zShift = raftFirstH + (nraft-1)*p.layer_height;   // 모델 첫 레이어 Z = zShift + first_layer_height
+    // 33단계: raft_contact_distance 배선 — 래프트 최상면과 모델 첫 레이어 사이 간격(분리용 에어갭).
+    zShift = raftFirstH + (nraft-1)*p.layer_height + p.raft_contact_distance;   // 모델 첫 레이어 Z = zShift + first_layer_height
   }
 
   tw_sup = emscripten_get_now();
@@ -1513,7 +1706,32 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
     char cm[72];
     if (ld.contour.empty()) {
-      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (empty)",i,zE); gw.raw(cm);
+      // 33단계 [부유 모델 수정] 모델이 없는 레이어라도 **서포트는 방출해야 한다**.
+      //  기존에는 여기서 곧장 continue 해 서포트를 통째로 버렸다. 그 결과 부유 아일랜드
+      //  (예: 실물 Benchy 의 지붕 z32.2 / 굴뚝 z39.8) 아래를 받칠 기둥이 빈 구간에서 끊겨,
+      //  모델이 공중에서 시작했다(실측: z27.8 다음이 z32.2 — 4.4mm 구간 레이어 자체가 누락).
+      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (no model)",i,zE); gw.raw(cm);
+      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+      gw.z = zE; gw.set_e_per_mm(ld.h, p); gw.pe_reset();
+      gw.set_fan(fan_S(i, p));                                        // 압출이 있는 레이어이므로 팬 램프도 동일 적용
+      const int fSup = (int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
+      // 지지 기둥만 있는 레이어 — 패턴/각도는 모델 있는 레이어와 동일 규칙(레이어 ±45° 교차).
+      const double angB = p.support_angle + (i % 2 ? -45.0 : 45.0);
+      auto rp = [](const std::string& s){ return (s=="default"||s=="auto"||s=="rectilinear-grid") ? std::string("rectilinear") : s; };
+      const double ifSp = (p.support_interface_spacing > 1e-6) ? (w + p.support_interface_spacing) : solid_spacing;
+      Paths eI = (p.enable_support && !ld.supIface.empty())
+        ? build_sparse(ld.supIface, rp(p.support_interface_pattern), angB+90.0, ifSp, i, zE, w, 1.0) : Paths{};
+      Paths eB = (p.enable_support && !ld.supBase.empty())
+        ? build_sparse(ld.supBase, rp(p.support_base_pattern), angB, support_spacing, i, zE, w, p.support_density) : Paths{};
+      if (!eI.empty() || !eB.empty()) {
+        gw.raw("; support");
+        if (!eI.empty()) emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel);
+        if (!eB.empty()) emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel);
+      }
+      if (p.enable_support && !ld.supTree.empty()) {
+        gw.raw("; support (organic tree — real ported TreeSupport)");
+        emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
+      }
       flush_layer(zE, i, tp, widths);
       report(N+i+1, total); continue;
     }
@@ -1589,13 +1807,26 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     Paths bridgeLines = bridge.empty() ? Paths{} : infill_clipped(bridge, sa, solid_spacing);
     Paths sparseLines = (sparse_spacing>0 && !sparse.empty())
         ? build_sparse(sparse, p.sparse_infill_pattern, p.infill_angle, sparse_spacing, i, zE, w, p.infill_density) : Paths{};
-    Paths supI = (p.enable_support && !ld.supIface.empty()) ? infill_clipped(ld.supIface, 0.0, solid_spacing)   : Paths{};
-    Paths supB = (p.enable_support && !ld.supBase.empty())  ? infill_clipped(ld.supBase,  0.0, support_spacing) : Paths{};
-    Paths flExtra; bool brim=false;                                    // 첫 레이어 스커트/브림
-    if (i==0 && nraft==0) {
-      int brimRings = (int)std::llround(p.brim_width / w); brim = brimRings>0;
+    // 33단계: 서포트 각도/패턴/간격 배선 (기존 각도 0.0 고정 → 원본 SupportParameters 규칙).
+    //  base_angle = support_angle, interface_angle = support_angle + 90° (SupportParameters.hpp:110-111),
+    //  레이어마다 ±45° 반전(raft_interface_angle 규칙) → 평행벽이 아니라 격자로 맞물린다.
+    //  build_sparse 가 rectilinear 일 때 layerIdx%2 로 한 번 더 90° 교차시키므로 base 만 넘긴다.
+    const double supBaseAng  = p.support_angle + (i % 2 ? -45.0 : 45.0);
+    const double supIfaceAng = supBaseAng + 90.0;
+    // 패턴: "default"/"auto" 는 rectilinear 로 해석(원본도 default→rectilinear 계열). 미지원 패턴은 build_sparse 가 폴백.
+    auto resolvePat = [](const std::string& s) { return (s=="default"||s=="auto"||s=="rectilinear-grid") ? std::string("rectilinear") : s; };
+    // 인터페이스 간격: 0 이면 솔리드(=line_width), 아니면 line_width + spacing
+    const double ifaceSp = (p.support_interface_spacing > 1e-6) ? (w + p.support_interface_spacing) : solid_spacing;
+    Paths supI = (p.enable_support && !ld.supIface.empty())
+      ? build_sparse(ld.supIface, resolvePat(p.support_interface_pattern), supIfaceAng, ifaceSp, i, zE, w, 1.0) : Paths{};
+    Paths supB = (p.enable_support && !ld.supBase.empty())
+      ? build_sparse(ld.supBase, resolvePat(p.support_base_pattern), supBaseAng, support_spacing, i, zE, w, p.support_density) : Paths{};
+    Paths flExtra; bool brim=false;                                    // 스커트/브림
+    // 33단계: skirt_height 배선(기존 첫 레이어 고정) + brim_object_gap 배선(기존 w*0.5 고정)
+    if (i < std::max(1, p.skirt_height) && nraft==0) {
+      int brimRings = (int)std::llround(p.brim_width / w); brim = brimRings>0 && i==0;   // 브림은 첫 레이어만
       for (int k=0; k<p.skirt_loops; ++k) { Paths r=offset_paths(ld.contour,(p.skirt_distance+w*0.5+k*w)); for (auto& q:r) flExtra.push_back(q); }
-      for (int k=1; k<=brimRings; ++k)     { Paths r=offset_paths(ld.contour,(w*0.5+k*w));                for (auto& q:r) flExtra.push_back(q); }
+      if (i==0) for (int k=1; k<=brimRings; ++k) { Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w)); for (auto& q:r) flExtra.push_back(q); }
     }
 
     double thinLen=0; for (auto& tr:thinRuns) thinLen += paths_len(tr.line,false);
