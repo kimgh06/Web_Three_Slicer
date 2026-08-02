@@ -36,14 +36,18 @@
 /* 중앙 뷰포트 칼럼 */
 .viewport-col { position: relative; flex: 1 1 auto; min-width: 0; background: #161a1e; }
 .vp-top-toolbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center;
-  gap: 3px; background: rgba(18,23,28,.85); padding: 4px; border-radius: 9px; border: 1px solid #2a323a; z-index: 3; }
+  gap: 3px; background: rgba(18,23,28,.85); padding: 4px; border-radius: 9px; border: 1px solid #2a323a; z-index: 3;
+  /* 33단계: 버튼이 늘어남. flex-wrap 은 절대배치 박스의 shrink-to-fit 폭을 붕괴시켜(실측 848→424px)
+     내용이 다 들어가는데도 2줄로 접힌다. 한 줄을 유지하고, 좁은 뷰포트에서만 가로 스크롤로 흘린다. */
+  max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+.vp-top-toolbar::-webkit-scrollbar { display: none; }
+.vp-top-toolbar > * { flex: 0 0 auto; }
 .vp-top-toolbar button { width: 32px; height: 32px; border: 0; background: transparent; border-radius: 6px; cursor: pointer;
   display: flex; align-items: center; justify-content: center; }
 .vp-top-toolbar button img { width: 18px; height: 18px; opacity: .82; }
 .vp-top-toolbar button:hover:not(:disabled) { background: #2a333c; }
 .vp-top-toolbar button:disabled { opacity: .32; cursor: not-allowed; }
 .vtt-sep { width: 1px; align-self: stretch; background: #333c45; margin: 3px 3px; }
-.vp-top-toolbar button.vtt-text { color: #cdd6dd; font-size: 13px; font-weight: 700; }
 
 /* 29단계-2: 플레이트 탭바 + 슬라이스 드롭다운 */
 .plate-bar { position: absolute; right: 14px; bottom: 30px; display: flex; align-items: center; gap: 4px; z-index: 3;
@@ -247,6 +251,36 @@
 .drop-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(0,174,66,.14); color: #d7f7e3; font-size: 18px; font-weight: 700; pointer-events: none;
   border: 3px dashed #00ae42; box-sizing: border-box; }
+
+/* 오브젝트 분리 버튼 */
+.obj-split { border: 0; background: transparent; cursor: pointer; padding: 0 3px; line-height: 0; }
+.obj-split img { width: 13px; height: 13px; opacity: .6; }
+.obj-split:hover img { opacity: 1; }
+
+/* 우클릭 컨텍스트 메뉴 */
+.ctx-scrim { position: absolute; inset: 0; z-index: 24; }
+.ctx-menu { position: absolute; z-index: 25; min-width: 168px; padding: 4px;
+  background: #1b2027; border: 1px solid #2f3944; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.ctx-menu button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: #dfe6ee;
+  font-size: 12px; text-align: left; cursor: pointer; }
+.ctx-menu button:hover:not(:disabled) { background: #273140; }
+.ctx-menu button:disabled { color: #64707d; cursor: not-allowed; }
+.ctx-menu button.danger:hover:not(:disabled) { background: #4a2229; color: #ffb3b3; }
+.ctx-menu hr { margin: 4px 6px; border: 0; border-top: 1px solid #2f3944; }
+.ctx-key { color: #7d8b96; font-family: ui-monospace, monospace; font-size: 11px; }
+
+/* 단축키 도움말 오버레이 ('?') */
+.help-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(8,12,16,.72); z-index: 20; }
+.help-card { background: #1b2027; color: #dfe6ee; border: 1px solid #2f3944; border-radius: 10px;
+  padding: 18px 22px; max-width: 720px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.help-card h3 { margin: 0 0 12px; font-size: 15px; }
+.help-card h4 { margin: 0 0 6px; font-size: 12px; color: #00ae42; text-transform: uppercase; letter-spacing: .04em; }
+.help-cols { display: flex; gap: 26px; flex-wrap: wrap; }
+.help-card dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 12px; }
+.help-card dt { color: #9fb0c2; font-family: ui-monospace, monospace; white-space: nowrap; }
+.help-card dd { margin: 0; }
 
 /* 멀티 오브젝트 목록 / 서포트 토글 (3단계) */
 .slice-objs { list-style: none; margin: 4px 0; padding: 0; max-height: 88px; overflow-y: auto; }

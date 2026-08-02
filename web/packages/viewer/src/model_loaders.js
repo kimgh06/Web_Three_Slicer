@@ -111,3 +111,68 @@ export async function loadModel(name, buffer) {
       throw new Error(`지원하지 않는 포맷: .${ext} (STEP 은 범위 외 — OCCT 필요)`)
   }
 }
+
+// ---- 33단계: 객체 분리 (원본 Split to objects / TriangleMesh::its_split) ----
+// 원본 정의: "면은 **에지를 공유하면** 연결된 것으로 본다(공유 에지 = 정점 인덱스 2개 공유)"
+//  (TriangleMesh.cpp:1505). 그 연결 성분(patch)마다 독립 오브젝트가 된다.
+// 우리 localPos 는 비인덱스 삼각형 스트림(정점 9개/삼각형)이라, 먼저 좌표를 양자화해 정점을 용접하고
+//  에지를 만든 뒤 union-find 로 성분을 모은다. 인접 리스트를 만들지 않아 메모리/시간이 선형에 가깝다.
+//
+// 반환: 성분이 2개 이상이면 Float32Array[] (각 성분의 localPos, 좌표계는 입력 그대로),
+//       1개면 null (분리 불가).
+export function splitConnectedComponents(localPos) {
+  const nTri = Math.floor(localPos.length / 9)
+  if (nTri < 2) return null
+
+  // 정점 용접: 부동소수 오차로 같은 점이 갈라지지 않도록 1e-4mm 격자로 양자화
+  const Q = 1e4
+  const vmap = new Map()
+  const vidx = new Int32Array(nTri * 3)
+  for (let t = 0; t < nTri; t++) {
+    for (let k = 0; k < 3; k++) {
+      const o = t * 9 + k * 3
+      const key = `${Math.round(localPos[o] * Q)},${Math.round(localPos[o + 1] * Q)},${Math.round(localPos[o + 2] * Q)}`
+      let id = vmap.get(key)
+      if (id === undefined) { id = vmap.size; vmap.set(key, id) }
+      vidx[t * 3 + k] = id
+    }
+  }
+
+  // union-find
+  const parent = new Int32Array(nTri)
+  for (let i = 0; i < nTri; i++) parent[i] = i
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] } return x }
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a }
+
+  // 에지(정점쌍) → 처음 본 면. 같은 에지를 다시 만나면 두 면을 합친다.
+  //  에지당 면이 3개 이상인 비-매니폴드도 첫 면 기준으로 전부 이어져 문제없다.
+  const edge = new Map()
+  for (let t = 0; t < nTri; t++) {
+    for (let e = 0; e < 3; e++) {
+      const a = vidx[t * 3 + e], b = vidx[t * 3 + (e + 1) % 3]
+      const key = a < b ? a * 4294967296 + b : b * 4294967296 + a   // 정점 인덱스 2개를 하나의 수로
+      const prev = edge.get(key)
+      if (prev === undefined) edge.set(key, t)
+      else union(t, prev)
+    }
+  }
+
+  // 성분별 면 수집
+  const groups = new Map()
+  for (let t = 0; t < nTri; t++) {
+    const r = find(t)
+    let g = groups.get(r)
+    if (!g) { g = []; groups.set(r, g) }
+    g.push(t)
+  }
+  if (groups.size < 2) return null
+
+  // 큰 성분부터 (원본도 부피 순으로 정렬해 첫 오브젝트가 본체가 되게 한다)
+  const parts = [...groups.values()].sort((a, b) => b.length - a.length)
+  return parts.map(faces => {
+    const out = new Float32Array(faces.length * 9)
+    let w = 0
+    for (const t of faces) { const o = t * 9; for (let k = 0; k < 9; k++) out[w++] = localPos[o + k] }
+    return out
+  })
+}

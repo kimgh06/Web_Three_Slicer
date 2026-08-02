@@ -5,9 +5,13 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { deriveKernelParams, settingRaw } from '@three-slicer/engine/settings'
 import { makeSlicerWorker } from './make_worker.js'
 import { buildSegmentData, makeToolpath, computeColors, roleRatios, VIEW_TYPES, DEFAULT_RANGES_COLORS, TYPE_COLOR } from './toolpath_gpu.js'
-import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
+import { loadModel, SUPPORTED_EXT, fileExt, splitConnectedComponents } from './model_loaders.js'
 // 27단계: 데스크톱 원본 툴바 아이콘 재사용(resources/images → assets, 동일 프로젝트 라이선스).
-import { moveIcon, rotateIcon, scaleIcon, paintIcon, openIcon, addIcon, deleteIcon, arrangeIcon, orientIcon } from './icons.js'
+import {
+  moveIcon, rotateIcon, scaleIcon, paintIcon, openIcon, addIcon, deleteIcon, arrangeIcon, orientIcon,
+  onbedIcon, duplicateIcon, splitIcon, deleteallIcon, cutIcon, booleanIcon, negativeIcon,
+  seamIcon, mmuIcon, textmarkIcon, measureIcon, varlayerIcon,
+} from './icons.js'
 
 // 3D 뷰포트 + 브라우저 단독 슬라이싱(WASM, 트랙 C 4단계).
 //  - 슬라이스 파라미터는 우측 편집 패널 설정값에서 유도(deriveKernelParams) — 중복 폼 없음.
@@ -36,9 +40,12 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const three = useRef({})
   const workerRef = useRef(null)
   const objectsRef = useRef([])        // [{id,name,mesh,localPos}]
-  const layersDataRef = useRef(null)
-  const toolpathRef = useRef(null)     // 24단계: makeToolpath() 컨트롤러(원본 libvgcode 인스턴싱 렌더러)
-  const segDataRef = useRef(null)      // 25단계: buildSegmentData 결과(뷰 타입 색 재계산용)
+  const layersDataRef = useRef(null)   // 포커스(선택) 플레이트의 레이어 데이터 별칭
+  const toolpathRef = useRef(null)     // 24단계: makeToolpath() 컨트롤러 — 포커스 플레이트 별칭(슬라이더/트래블 대상)
+  const segDataRef = useRef(null)      // 25단계: buildSegmentData 결과 — 포커스 플레이트 별칭(뷰 타입 색 재계산용)
+  const plateTpRef = useRef({})        // 플레이트별 툴패스 실체 {idx: {group, ctl, seg}} — 전 플레이트 동시 렌더
+  const keyRef = useRef(null)          // 단축키 핸들러(컴포넌트 스코프 — 최신 상태 캡처). 이펙트는 포워딩만.
+  const clipboardRef = useRef(null)    // 인앱 복사 버퍼(오브젝트 스냅샷) — OS 클립보드 미사용
   const showTravelRef = useRef(false)
   const viewTypeRef = useRef('feature')  // 25단계: 뷰 타입(feature/speed/height/width/fan/temp)
   const layerLoRef = useRef(0)         // 25단계: 이중 슬라이더 하한/상한(0-based 레이어)
@@ -78,6 +85,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const [plateCount, setPlateCount] = useState(1)       // 29단계-2: 플레이트 수
   const [selectedPlate, setSelectedPlate] = useState(0) // 선택 플레이트(0-based)
   const [sliceMenu, setSliceMenu] = useState(false)     // [슬라이스 ▾] 드롭다운 열림
+  const [showHelp, setShowHelp] = useState(false)       // '?' 단축키 도움말 오버레이
+  const [slicedPlateCount, setSlicedPlateCount] = useState(0)   // 결과 보유 플레이트 수(전체 내보내기 노출용)
+  const [ctxMenu, setCtxMenu] = useState(null)          // 우클릭 컨텍스트 메뉴 {x, y, onObject}
   // 25단계 S6: 뷰 타입 + 이중 슬라이더 + 그라디언트 범례
   const [viewType, setViewType] = useState('feature')
   const [colorRange, setColorRange] = useState(null)   // {min,max,label,unit,cont}
@@ -128,7 +138,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
 
     // 26단계: 하드코딩 데모 메시(큐브/실린더/토러스) 제거 — 빈 씬 + 드롭 오버레이로 안내.
     const objectsGroup = new THREE.Group(); scene.add(objectsGroup)
-    const toolpathGroup = new THREE.Group(); toolpathGroup.rotation.x = -Math.PI / 2; scene.add(toolpathGroup)
+    // 툴패스 루트(회전 없는 컨테이너, 모드 가시성 게이팅 대상). 플레이트별 서브그룹이
+    //  rotation.x=-90°(셰이더 로컬 z-up) + position(offX,0,offZ) 을 각자 가져 전 플레이트 동시 렌더.
+    const toolpathGroup = new THREE.Group(); scene.add(toolpathGroup)
 
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.target.set(0, 22, 0); orbit.enableDamping = true; orbit.update()
@@ -151,8 +163,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     const activeMeshes = () => objectsRef.current.map(o => o.mesh)
     const paint = () => { for (const m of activeMeshes()) m.material.emissive.setHex(m === selected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000) }
     const statusText = () => objectsRef.current.length
-      ? `오브젝트 ${objectsRef.current.length}개 · 선택: ${selected ? selected.userData.name : '—'} | 이동 G/R/S · 좌드래그 회전`
-      : `호버: ${hovered ? hovered.userData.name : '—'} · 선택: ${selected ? selected.userData.name : '—'} | 좌드래그 회전 · G/R/S`
+      ? `오브젝트 ${objectsRef.current.length}개 · 선택: ${selected ? selected.userData.name : '—'} | M/R/S · 좌드래그 회전 · ? 단축키`
+      : `호버: ${hovered ? hovered.userData.name : '—'} · 선택: ${selected ? selected.userData.name : '—'} | 좌드래그 회전 · ? 단축키`
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
     // 20단계: 페인팅 — raycast 히트(faceIndex + 월드점)를 kernel 좌표로 변환해 worker 로 paint 명령.
@@ -165,18 +177,61 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       workerRef.current?.postMessage({ cmd:'paint', facet:hit.faceIndex, hx:hk[0],hy:hk[1],hz:hk[2],
         cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer' })
     }
+    // 커서 힌트: 페인트 모드 crosshair, 오브젝트 호버 pointer, 그 외 기본(카메라 조작).
+    const applyCursor = () => {
+      const el = renderer.domElement
+      el.style.cursor = canvasModeRef.current === 'preview' ? ''
+        : paintModeRef.current !== 'off' ? 'crosshair'
+        : hovered ? 'pointer' : ''
+    }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: Preview 에선 호버/선택 없음
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current) paintAt(ev); return }
-      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); setStatus(statusText()) } }
+      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     const onDown = ev => {
+      if (ev.button !== 0) return                       // 좌클릭만 — 우/휠 클릭은 OrbitControls 팬·줌 전용(선택·페인팅 오발 방지)
       if (canvasModeRef.current === 'preview') return   // S2: Preview 에선 기즈모/페인팅 없음
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
+    // 페인팅 종료는 window 에서 받는다 — 캔버스 밖에서 버튼을 떼도 paintDrawing/orbit.enabled 가 고착되지 않도록.
     const onUp = () => { if (paintDrawingRef.current) { paintDrawingRef.current = false; orbit.enabled = true } }
+    // 더블클릭: 오브젝트 = 줌투, 빈 공간 = 선택 해제 (3D 앱 관례)
+    const onDblClick = ev => {
+      if (ev.button !== 0 || canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
+      toPointer(ev)
+      if (pick()) frameObjects()
+      else { selected = null; transform.detach(); paint(); setStatus(statusText()) }
+    }
+    // 휠: 페인트 모드에선 브러시 반경 조절(원본 GLGizmoPainterBase 관례) — 그 외엔 OrbitControls 줌 그대로.
+    const onWheel = ev => {
+      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview') return
+      ev.preventDefault(); ev.stopPropagation()
+      const v = Math.min(15, Math.max(1, brushRadiusRef.current + (ev.deltaY < 0 ? 0.5 : -0.5)))
+      brushRadiusRef.current = v; setBrushRadius(v)
+    }
+    // 우클릭 컨텍스트 메뉴 — 눌린 지점의 오브젝트를 선택한 뒤 메뉴 좌표를 컴포넌트로 넘긴다.
+    //  (OrbitControls 가 contextmenu 를 preventDefault 하므로 기본 메뉴와 충돌 없음.)
+    //  주의: 우클릭 팬 드래그와 구분 — pointerdown 위치에서 4px 이상 움직였으면 메뉴를 열지 않는다.
+    let rmbDown = null
+    const onRmbDown = ev => { if (ev.button === 2) rmbDown = { x: ev.clientX, y: ev.clientY } }
+    const onCtxMenu = ev => {
+      ev.preventDefault()
+      if (canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
+      if (rmbDown && Math.hypot(ev.clientX - rmbDown.x, ev.clientY - rmbDown.y) > 4) return   // 팬 드래그였음
+      toPointer(ev); const hit = pick()
+      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() }
+      paint(); setStatus(statusText())
+      const r = renderer.domElement.getBoundingClientRect()
+      setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top, onObject: !!hit })
+    }
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerdown', onDown)
-    renderer.domElement.addEventListener('pointerup', onUp)
+    renderer.domElement.addEventListener('pointerdown', onRmbDown)
+    renderer.domElement.addEventListener('contextmenu', onCtxMenu)
+    renderer.domElement.addEventListener('dblclick', onDblClick)
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
 
     const setMode = m => { transform.setMode(m); setGmode(m) }
     const frameObjects = () => {
@@ -188,27 +243,54 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       orbit.target.copy(c); camera.position.set(c.x + d * 0.7, c.y + d * 0.55 + s.y * 0.3, c.z + d); camera.updateProjectionMatrix(); orbit.update()
     }
 
-    apiRef.current = {
-      setMode,
-      detachTransform: () => { selected = null; transform.detach(); paint() },   // 20단계: 페인팅 진입 시 기즈모 해제
-      addObject: (name, modelPos) => {
-        const { localPos, size } = bakeLocal(modelPos)
-        const geo = new THREE.BufferGeometry()
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3)); geo.computeVertexNormals()
-        const col0 = extruderColorsRef.current[0] || '#6aa0dc'   // T1 필라멘트 색 반영
-        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide }))
-        // 26단계 R4 + 29단계-2: 선택 플레이트 위에 나란히 배치(placeXRef=플레이트 상대 커서, PX=플레이트 오프셋).
+    // 오브젝트 메시 등록 공통 경로 — addObject(신규 로드)와 spawnSnapshot(복제/붙여넣기)이 공유.
+    //  26단계 R4 + 29단계-2: 선택 플레이트 위에 나란히 배치(placeXRef=플레이트 상대 커서, PX=플레이트 오프셋).
+    //  pos 를 주면 배치 커서 대신 그 위치에 놓는다(분리: 부품이 원래 있던 자리를 유지해야 한다).
+    const spawnMesh = (name, localPos, rot = null, scale = null, pos = null) => {
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3)); geo.computeVertexNormals()
+      geo.computeBoundingBox()
+      const col0 = extruderColorsRef.current[0] || '#6aa0dc'   // T1 필라멘트 색 반영
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide }))
+      if (rot) mesh.rotation.copy(rot)
+      if (scale) mesh.scale.copy(scale)
+      if (pos) {
+        mesh.position.copy(pos)                       // 분리 등: 원래 자리 유지(배치 커서 미사용)
+      } else {
+        const w = (geo.boundingBox.max.x - geo.boundingBox.min.x) * (scale ? Math.abs(scale.x) : 1)
         if (objectsRef.current.length === 0) placeXRef.current = 0
         const px = selectedPlateRef.current * (plateBWRef.current + PLATE_GAP)
-        mesh.position.set(px + placeXRef.current + size.w / 2, 0, 0)
-        placeXRef.current += size.w + 8
-        mesh.userData = { name }
-        objectsGroup.add(mesh)
-        const id = ++objIdCounter
-        objectsRef.current.push({ id, name, mesh, localPos, extruder: 1, visible: true })   // MM: 기본 익스트루더 1
-        objectsGroup.visible = true
-        setStatus(statusText()); frameObjects()
-        return { id, name }
+        mesh.position.set(px + placeXRef.current + w / 2, 0, 0)
+        placeXRef.current += w + 8
+      }
+      mesh.userData = { name }
+      objectsGroup.add(mesh)
+      const id = ++objIdCounter
+      objectsRef.current.push({ id, name, mesh, localPos, extruder: 1, visible: true })   // MM: 기본 익스트루더 1
+      objectsGroup.visible = true
+      setStatus(statusText()); frameObjects()
+      return { id, name }
+    }
+
+    apiRef.current = {
+      setMode,
+      refreshCursor: () => applyCursor(),                                        // 페인트 모드 전환 시 커서 힌트 동기화
+      detachTransform: () => { selected = null; transform.detach(); paint() },   // 20단계: 페인팅 진입 시 기즈모 해제
+      addObject: (name, modelPos) => spawnMesh(name, bakeLocal(modelPos).localPos),
+      // ---- 단축키 지원 (복제/넛지/회전/줌투) ----
+      getSnapshot: (id) => {           // 복사/복제용 스냅샷 — localPos 는 불변이라 참조 공유
+        const o = objectsRef.current.find(x => x.id === id); if (!o) return null
+        return { name: o.name, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
+      },
+      // keepPos=true 면 스냅샷의 원래 위치를 유지(분리). false(기본)면 배치 커서로 옆에 놓는다(복제/붙여넣기).
+      spawnSnapshot: (snap, keepPos = false) => snap ? spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, keepPos ? (snap.pos || null) : null) : null,
+      nudgeSelected: (dx, dz) => { if (!selected) return; selected.position.x += dx; selected.position.z += dz },
+      rotateSelectedY: (rad) => { if (!selected) return; selected.rotation.y += rad },
+      frame: () => frameObjects(),                                   // Z: 전체 오브젝트로 줌
+      frameBed: () => {                                              // B: 선택 플레이트로 줌
+        const px = selectedPlateRef.current * (plateBWRef.current + PLATE_GAP)
+        const d = Math.max(plateBWRef.current, plateBDRef.current) * 1.1 + 40
+        orbit.target.set(px, 0, 0); camera.position.set(px + d * 0.55, d * 0.8, d); orbit.update()
       },
       removeObject: (id) => {
         const arr = objectsRef.current
@@ -268,6 +350,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // 27단계: 출력 토글(눈알)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // 필라멘트 색 변경 반영
       selectedObjectId: () => selected ? (objectsRef.current.find(o => o.mesh === selected)?.id ?? null) : null,   // 27단계: 뷰포트 툴바 "선택 삭제"
+      selectObject: (id) => {   // 33단계: 목록에서 클릭한 오브젝트를 선택(분리 등 선택 기반 동작용)
+        const o = objectsRef.current.find(x => x.id === id); if (!o) return
+        selected = o.mesh; transform.attach(o.mesh); paint(); setStatus(statusText())
+      },
       // 28단계 P1: 바닥 안착 — 로컬 지오메트리는 bakeLocal 이 minZ→0(로드 시 1회). 기즈모 Z이동 후 재안착.
       //  (원본 ensure_on_bed 의 싱킹 허용[allow_negative_z]은 범위 외 — 우리는 -min_z 안착만.)
       placeOnBed: () => { for (const o of objectsRef.current) o.mesh.position.y = 0; if (selected) transform.update?.() },
@@ -291,16 +377,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         }
       },
       setBed: (bw, bd) => { apiRef.current?.setPlates(plateCountRef.current, bw, bd, selectedPlateRef.current) },   // 하위호환
-      setToolpathOffset: (x, z) => { const g = three.current.toolpathGroup; if (g) { g.position.x = x || 0; g.position.z = z || 0 } },   // 29단계: 중심화 슬라이스 → 모델 위치로 오프셋(겹침)
     }
 
-    const onKey = e => {
-      const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
-      if (e.key === 'g' || e.key === 'G') setMode('translate')
-      else if (e.key === 'r' || e.key === 'R') setMode('rotate')
-      else if (e.key === 's' || e.key === 'S') setMode('scale')
-      else if (e.key === 'Escape') { selected = null; transform.detach(); paint() }
-    }
+    // 단축키 본체는 컴포넌트 스코프(keyRef — 매 렌더 최신 상태/함수 캡처). 이펙트는 포워딩만.
+    const onKey = e => keyRef.current?.(e)
     window.addEventListener('keydown', onKey)
     const ro = new ResizeObserver(() => { w = mount.clientWidth || w; h = mount.clientHeight || h; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h) })
     ro.observe(mount)
@@ -313,6 +393,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       cancelAnimationFrame(raf)
       ro.disconnect(); window.removeEventListener('keydown', onKey)
       renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
+      renderer.domElement.removeEventListener('dblclick', onDblClick); renderer.domElement.removeEventListener('wheel', onWheel, { capture: true })
+      window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
       apiRef.current = null
       transform.detach(); transform.dispose(); orbit.dispose()
       scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose() })
@@ -340,12 +423,50 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     }
   }, [canvasMode])
 
-  // ---- 툴패스 빌드 (24단계: 원본 libvgcode GPU 인스턴싱) ----
+  // ---- 툴패스 빌드 (24단계: 원본 libvgcode GPU 인스턴싱 / 플레이트별 동시 렌더) ----
+  function disposePlateToolpath(idx) {
+    const e = plateTpRef.current[idx]
+    if (!e) return
+    e.group.remove(e.ctl.mesh); e.group.remove(e.ctl.travLines); e.ctl.dispose()
+    three.current.toolpathGroup?.remove(e.group)
+    delete plateTpRef.current[idx]
+    if (toolpathRef.current === e.ctl) { toolpathRef.current = null; segDataRef.current = null }
+  }
   function clearToolpaths() {
+    for (const k of Object.keys(plateTpRef.current)) disposePlateToolpath(Number(k))
+    toolpathRef.current = null; segDataRef.current = null
+  }
+  // 플레이트 idx 의 툴패스 실체를 (재)구축 — 서브그룹이 자기 오프셋을 가져 다른 플레이트와 동시 표시.
+  function buildPlateToolpath(idx, layers) {
     const { toolpathGroup } = three.current
-    if (toolpathRef.current) {
-      if (toolpathGroup) { toolpathGroup.remove(toolpathRef.current.mesh); toolpathGroup.remove(toolpathRef.current.travLines) }
-      toolpathRef.current.dispose(); toolpathRef.current = null
+    if (!toolpathGroup) return null
+    disposePlateToolpath(idx)
+    if (!layers || !layers.length) return null
+    const seg = buildSegmentData(layers, lineWidthRef.current)
+    if (import.meta.env?.DEV && seg.hasNaN) console.error('[toolpath] non-finite vertex data')   // dev 회귀 감지
+    const ctl = makeToolpath(THREE, seg)
+    const off = plateOffsetsRef.current[idx] || { offX: 0, offZ: 0 }
+    const group = new THREE.Group()
+    group.rotation.x = -Math.PI / 2
+    group.position.set(off.offX || 0, 0, off.offZ || 0)
+    group.add(ctl.mesh); group.add(ctl.travLines)
+    toolpathGroup.add(group)
+    ctl.setTravelVisible(showTravelRef.current)
+    ctl.setLayerRange(0, Math.max(0, layers.length - 1))            // 비포커스 기본: 전체 범위
+    const cc = computeColors(seg, viewTypeRef.current, viewCtx())   // 현재 뷰 타입 색 적용
+    ctl.setColors(cc.color)
+    const entry = { group, ctl, seg, layers }   // layers = 소스 참조(재슬라이스 감지용)
+    plateTpRef.current[idx] = entry
+    return entry
+  }
+  // 캐시된 모든 플레이트 결과의 툴패스 실체를 보장 — slice-all 후 전 플레이트 동시 조회.
+  //  소스 레이어 참조가 바뀌었으면(재슬라이스) 스테일 실체를 재구축.
+  function ensurePlateToolpaths() {
+    for (const [k, r] of Object.entries(plateResultsRef.current)) {
+      const idx = Number(k)
+      if (!r || r.error || !r.layers || !r.layers.length) continue
+      const e = plateTpRef.current[idx]
+      if (!e || e.layers !== r.layers) buildPlateToolpath(idx, r.layers)
     }
   }
   // CPU 는 지오메트리를 만들지 않는다 — buildSegmentData 로 텍스처 스트림만 준비 → makeToolpath 로 인스턴싱 메시.
@@ -368,31 +489,33 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       tempFirst: S('nozzle_temperature_initial_layer', S('nozzle_temperature', 210)),
     }
   }
-  // 현재 뷰 타입으로 color 텍스처 재계산 + 범례 갱신 (§7 구조: color 텍스처만 교체).
+  // 현재 뷰 타입으로 color 텍스처 재계산 — 모든 플레이트에 적용, 범례/범위는 포커스 플레이트 기준.
   function applyViewColors() {
-    const seg = segDataRef.current, ctl = toolpathRef.current
-    if (!seg || !ctl) return
-    const cc = computeColors(seg, viewTypeRef.current, viewCtx())
-    ctl.setColors(cc.color)
-    setColorRange({ min: cc.min, max: cc.max, label: cc.label, unit: cc.unit, cont: cc.cont })
+    const ctx = viewCtx()
+    for (const e of Object.values(plateTpRef.current)) {
+      const cc = computeColors(e.seg, viewTypeRef.current, ctx)
+      e.ctl.setColors(cc.color)
+      if (e.ctl === toolpathRef.current)
+        setColorRange({ min: cc.min, max: cc.max, label: cc.label, unit: cc.unit, cont: cc.cont })
+    }
   }
+  // 포커스 플레이트(selectedPlateRef) 툴패스 재구축 + 별칭/통계 갱신. 다른 플레이트 실체는 유지.
   function rebuildToolpaths() {
-    const { toolpathGroup } = three.current
-    if (!toolpathGroup) return
-    clearToolpaths()
+    const idx = selectedPlateRef.current
     const data = layersDataRef.current || []
-    if (!data.length) { setSegCount(0); segDataRef.current = null; return }
-    const seg = buildSegmentData(data, lineWidthRef.current)
-    if (import.meta.env?.DEV && seg.hasNaN) console.error('[toolpath] non-finite vertex data')   // dev 회귀 감지
-    segDataRef.current = seg
-    const ctl = makeToolpath(THREE, seg)
-    toolpathGroup.add(ctl.mesh); toolpathGroup.add(ctl.travLines)
-    ctl.setTravelVisible(showTravelRef.current)
-    toolpathRef.current = ctl
-    ctl.setLayerRange(layerLoRef.current, layerHiRef.current)
+    if (!data.length) {
+      disposePlateToolpath(idx)
+      setSegCount(0); toolpathRef.current = null; segDataRef.current = null
+      return
+    }
+    const entry = buildPlateToolpath(idx, data)
+    if (!entry) { setSegCount(0); return }
+    toolpathRef.current = entry.ctl
+    segDataRef.current = entry.seg
+    entry.ctl.setLayerRange(layerLoRef.current, layerHiRef.current)
     applyViewColors()
-    setSegCount(seg.nSeg)
-    setRoleLegend(roleRatios(seg.typeLengths))   // S6.3: 역할별 비율
+    setSegCount(entry.seg.nSeg)
+    setRoleLegend(roleRatios(entry.seg.typeLengths))   // S6.3: 역할별 비율
   }
   function applyLayerRange() { toolpathRef.current?.setLayerRange(layerLoRef.current, layerHiRef.current) }
 
@@ -453,7 +576,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     if (!files.length) { if (rejected) setError('지원 포맷: STL/OBJ/3MF/AMF/PLY'); return }
     setError(''); setTriWarn(''); setProgress(0)
     layersDataRef.current = null; segDataRef.current = null; plateResultsRef.current = {}; plateOffsetsRef.current = {}
-    clearToolpaths(); apiRef.current?.setToolpathOffset(0, 0)
+    clearToolpaths(); refreshSlicedCount()
     setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setSliceNotice(''); setDowngradeOffer(null)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return '' })
     setCanvasMode('prepare')   // S2: 새 모델은 Prepare 로
@@ -508,6 +631,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       getWorker().postMessage({ cmd: 'prepare', stl: merged.buf })
     }
     paintModeRef.current = mode; setPaintModeState(mode)
+    apiRef.current?.refreshCursor()   // 페인트 진입/해제 시 커서 힌트 갱신
   }
   function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }) }
 
@@ -550,24 +674,53 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     if (typeof window !== 'undefined' && window.__vpForceTree) { params.enable_support = true; params.support_style = 'tree'; params.support_threshold_angle = 40 }  // 31단계 테스트 훅: 트리 서포트 강제(프로덕션 미설정)
     return params
   }
-  // 캐시된 결과를 Preview 로 표시 — 툴패스는 플레이트 로컬 좌표라 PX 오프셋으로 해당 플레이트 위에 렌더(28단계 겹침).
+  // 캐시된 결과를 Preview 로 표시 — 캐시된 모든 플레이트의 툴패스를 각자 오프셋으로 동시 렌더하고,
+  //  idx 는 포커스(슬라이더/stats/G-code 대상)가 된다. 캐시 없는 플레이트 포커스 = 빈 상태(잔류 제거).
   function showPlateResult(idx) {
+    ensurePlateToolpaths()                                   // 전 플레이트 동시 조회
+    const prev = toolpathRef.current
+    if (prev) prev.setLayerRange(0, 1e9)                     // 이전 포커스는 전체 범위로 복귀
     const r = plateResultsRef.current[idx]
-    if (!r || r.error) return
+    if (!r || r.error || !r.layers || !r.layers.length) {    // 결과 없는 플레이트: 포커스 UI 비움
+      layersDataRef.current = null; toolpathRef.current = null; segDataRef.current = null
+      setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setRoleLegend([])
+      setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return '' })
+      return
+    }
     layersDataRef.current = r.layers
     const n = r.layers.length
     layerLoRef.current = 0; layerHiRef.current = n - 1; setLayerLo(0); setLayerHi(n - 1)
-    rebuildToolpaths()
-    const off = plateOffsetsRef.current[idx] || { offX: 0, offZ: 0 }
-    apiRef.current?.setToolpathOffset(off.offX, off.offZ)
+    const cached = plateTpRef.current[idx]
+    const entry = (cached && cached.layers === r.layers) ? cached : buildPlateToolpath(idx, r.layers)
+    if (entry) {
+      toolpathRef.current = entry.ctl; segDataRef.current = entry.seg
+      entry.ctl.setLayerRange(0, n - 1)
+      applyViewColors()
+      setSegCount(entry.seg.nSeg); setRoleLegend(roleRatios(entry.seg.typeLengths))
+    }
     apiRef.current?.onSliced()
     setCanvasMode('preview')
     setStats({ layers: r.stats.layers, segments: r.stats.path_segments, filament: r.stats.filament_mm, timeSec: r.stats.time_estimate })
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
-    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
+    setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
   }
   function downloadGcode(gcode, name) { const url = URL.createObjectURL(new Blob([gcode], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = name; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(url) }, 4000) }
   const _sleep = (ms) => new Promise(r => setTimeout(r, ms))
+  // plateResultsRef 는 ref 라 UI 가 자동 갱신되지 않는다 — 변경 지점마다 개수를 state 로 동기화.
+  function refreshSlicedCount() {
+    setSlicedPlateCount(Object.values(plateResultsRef.current).filter(r => r && !r.error && r.gcode).length)
+  }
+  // 슬라이스된 전 플레이트 G-code 를 한 번에 저장 — 사용자가 명시적으로 요청했을 때만(자동 저장 아님).
+  //  브라우저가 연속 다운로드를 쓰로틀링하므로 파일 사이에 간격을 둔다.
+  async function exportAllGcode() {
+    setSliceMenu(false)
+    const done = Object.entries(plateResultsRef.current)
+      .filter(([, r]) => r && !r.error && r.gcode)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+    if (!done.length) { setError('내보낼 슬라이스 결과가 없습니다 — 먼저 슬라이스하세요'); return }
+    for (const [i, r] of done) { downloadGcode(r.gcode, `plate_${Number(i) + 1}.gcode`); await _sleep(350) }
+    setSliceNotice(`${done.length}개 플레이트 G-code 를 내보냈습니다`)
+  }
   async function onSlice(scope = 'current') {
     setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
     const idx0 = selectedPlateRef.current
@@ -580,13 +733,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
           const { r, economy } = await sliceLadder(merged.buf, buildParams(merged))   // 정상 실패 시 절약 재시도
-          plateResultsRef.current[i] = r; downloadGcode(r.gcode, `plate_${i + 1}.gcode`); await _sleep(350); sliced++
+          plateResultsRef.current[i] = r; refreshSlicedCount(); sliced++   // 자동 다운로드 없음 — 탭 전환으로 조회, 저장은 명시적 내보내기로
           if (economy) anyEconomy = true
         } catch (e) { failed.push(i + 1) }   // E1: 실패해도 이미 완주한 플레이트 g-code 는 보존/제공됨
       }
       setSlicing(false)
       if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('모든 플레이트 슬라이스 실패(절약 모드 포함) — 간소화 재시도를 시도하세요'); return }
-      if (failed.length) setError(`플레이트 ${failed.join(', ')} 실패 — 완주한 ${sliced}개 G-code 는 저장됨`)
+      if (failed.length) setError(`플레이트 ${failed.join(', ')} 실패 — 완주한 ${sliced}개 결과는 유지됨(탭에서 조회·내보내기)`)
       if (anyEconomy) setSliceNotice('메모리 압박 — 일부 플레이트를 절약 모드로 완주(프리뷰 없음, G-code 정상)')
       showPlateResult(plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0])
     } else {
@@ -596,7 +749,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       setSlicing(true); setProgress(0)
       try {
         const { r, economy } = await sliceLadder(merged.buf, buildParams(merged))
-        plateResultsRef.current[idx0] = r; setSlicing(false); showPlateResult(idx0)
+        plateResultsRef.current[idx0] = r; refreshSlicedCount(); setSlicing(false); showPlateResult(idx0)
         if (economy) setSliceNotice('메모리 압박 — 절약 모드로 완주(프리뷰 없음, G-code 는 다운로드 가능)')
       } catch (e) { setSlicing(false); setDowngradeOffer({ scope: 'current' }); setError('슬라이스 실패(절약 모드도 실패): ' + e.message) }
     }
@@ -610,7 +763,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   // 플레이트 추가/삭제/선택
   function addPlate() { setPlateCount(n => Math.min(6, n + 1)) }
   function deletePlate() {
-    setPlateCount(n => { if (n <= 1) return n; const last = n - 1; delete plateResultsRef.current[last]; if (selectedPlateRef.current >= last) selectPlate(last - 1); return last })
+    setPlateCount(n => { if (n <= 1) return n; const last = n - 1; delete plateResultsRef.current[last]; disposePlateToolpath(last); refreshSlicedCount(); if (selectedPlateRef.current >= last) selectPlate(last - 1); return last })
   }
   function selectPlate(i) {
     selectedPlateRef.current = i; setSelectedPlate(i); placeXRef.current = 0
@@ -632,7 +785,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     if (next) setRange(layerHiRef.current, layerHiRef.current)   // 단일 레이어 = 상한 레이어만
   }
   function onViewType(e) { const v = e.target.value; setViewType(v); viewTypeRef.current = v; applyViewColors() }
-  function onToggleTravel(e) { const v = e.target.checked; setShowTravel(v); showTravelRef.current = v; toolpathRef.current?.setTravelVisible(v) }
+  function onToggleTravel(e) { const v = e.target.checked; setShowTravel(v); showTravelRef.current = v; for (const p of Object.values(plateTpRef.current)) p.ctl.setTravelVisible(v) }
   function onToggleSupport(e) { const v = e.target.checked; setSettings(s => ({ ...s, enable_support: v })) }
   const supportOn = !!settingRaw(settings, 'enable_support')
   // 27단계 S4: 필라멘트 색/개수 + 오브젝트 출력토글 + 페인팅 기즈모 모드
@@ -649,25 +802,151 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   }
   function toggleObjVisible(id) { const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
   function togglePaintGizmo() { setPaintMode(paintMode === 'off' ? 'enforcer' : 'off') }
+
+  // ---- 오브젝트 툴바 정의 ----
+  //  원본 툴바(GLToolbar) 구성을 따른다. run 이 없으면 비활성으로 렌더되며, 툴팁에 무엇이고 왜 안 되는지 적는다.
+  //  버튼을 늘릴 때 JSX 를 복제하지 말고 이 배열만 고칠 것.
+  const OBJECT_TOOLS = [
+    { id: 'add', icon: addIcon, label: '추가', tip: '모델 파일을 현재 플레이트에 추가 (기존 오브젝트 유지)', run: () => fileInputRef.current?.click() },
+    { id: 'delete', icon: deleteIcon, label: '삭제', tip: '선택한 오브젝트 삭제 (Del)', run: deleteSelected },
+    { id: 'delete-all', icon: deleteallIcon, label: '전체 삭제', tip: '플레이트의 모든 오브젝트 삭제', run: deleteAllObjects, disabled: () => objects.length === 0 },
+    { sep: true },
+    { id: 'duplicate', icon: duplicateIcon, label: '복제', tip: '선택 오브젝트 복제 (Ctrl+K)', run: duplicateSelected },
+    { id: 'split', icon: splitIcon, label: '분리', tip: '객체로 분리 — 서로 떨어진 부분(연결 성분)마다 독립 오브젝트로 나눔. 파트로 분리는 미구현(파트 개념 부재)', run: splitSelected },
+    { id: 'onbed', icon: onbedIcon, label: '바닥에 놓기', tip: '모든 오브젝트를 베드 바닥(Z=0)에 붙임 — 기즈모로 띄운 뒤 재안착용', run: () => apiRef.current?.placeOnBed() },
+    { sep: true },
+    { id: 'arrange', icon: arrangeIcon, label: '배치', tip: '자동 배치 — 오브젝트를 베드에 겹치지 않게 정렬. 미구현(libslic3r Arrange 이식 필요)' },
+    { id: 'orient', icon: orientIcon, label: '방향', tip: '자동 방향 — 서포트가 덜 필요한 방향으로 회전. 미구현(libslic3r Orient 이식 필요)' },
+    { sep: true },
+    { id: 'cut', icon: cutIcon, label: '컷', tip: '컷 — 평면으로 모델을 잘라 두 조각으로 분리. 미구현(절단면 재봉합 필요)' },
+    { id: 'boolean', icon: booleanIcon, label: '불리언', tip: '메시 불리언 — 두 오브젝트의 합/차/교집합. 미구현(CGAL 불리언 이식 필요)' },
+    { id: 'negative', icon: negativeIcon, label: '음각 파트', tip: '음각·모디파이어 파트 추가 — 한 오브젝트 안에 성질이 다른 파트를 넣음. 미구현(파트 개념 부재)' },
+    { sep: true },
+    { id: 'seam', icon: seamIcon, label: '심 페인팅', tip: '심 페인팅 — 레이어 이음매 위치를 브러시로 지정. 미구현(커널 심 배선 필요)' },
+    { id: 'mmu', icon: mmuIcon, label: '컬러 페인팅', tip: '컬러 페인팅 — 멀티머티리얼 색을 면 단위로 지정. 미구현(MMU 페인트 코덱 배선 필요)' },
+    { id: 'text', icon: textmarkIcon, label: '텍스트', tip: '텍스트·SVG 각인 — 모델 표면에 문자/도형을 새김. 미구현(폰트 래스터화 필요)' },
+    { id: 'measure', icon: measureIcon, label: '측정', tip: '측정 — 두 지점/면 사이 거리·각도 측정. 미구현' },
+    { id: 'varlayer', icon: varlayerIcon, label: '가변 레이어', tip: '가변 레이어 높이 — 구간별로 레이어 높이를 다르게. 미구현(커널 가변 z 미지원)' },
+  ]
+
+  // ---- 단축키 (SPECS §4 원본 + PrusaSlicer/Cura 관례) ----
+  //  Prepare/Preview 로 유효 키가 갈린다. 입력 위젯 포커스 시 전부 무시.
+  // 33단계: 선택이 없을 때 조용히 무시하지 않고 이유를 알린다(툴바 버튼에서 눌러도 아무 일이 없어 보이던 문제).
+  function duplicateSelected() {
+    const id = apiRef.current?.selectedObjectId()
+    if (!id) { setError('먼저 복제할 오브젝트를 선택하세요'); return }
+    const snap = apiRef.current?.getSnapshot(id)
+    if (snap) { apiRef.current?.spawnSnapshot(snap); refreshObjects(); setError('') }
+  }
+  function copySelected() {
+    const id = apiRef.current?.selectedObjectId()
+    if (!id) { setError('먼저 복사할 오브젝트를 선택하세요'); return }
+    clipboardRef.current = apiRef.current?.getSnapshot(id); setError('')
+    setSliceNotice('오브젝트를 복사했습니다 (Ctrl+V 로 붙여넣기)')
+  }
+  function pasteClipboard() { if (clipboardRef.current) { apiRef.current?.spawnSnapshot(clipboardRef.current); refreshObjects() } }
+  function deleteSelected() {
+    const id = apiRef.current?.selectedObjectId()
+    if (!id) { setError('먼저 삭제할 오브젝트를 선택하세요'); return }
+    removeObject(id); setError('')
+  }
+  // 33단계: 전체 삭제 (원본 Ctrl+D / Delete all). 씬의 모든 오브젝트를 비운다.
+  function deleteAllObjects() {
+    const ids = objectsRef.current.map(o => o.id)
+    if (!ids.length) return
+    for (const id of ids) apiRef.current?.removeObject(id)
+    refreshObjects()
+    setSliceNotice(`${ids.length}개 오브젝트를 모두 삭제했습니다`)
+  }
+  // 33단계: 객체 분리 (원본 Split to objects). 연결 성분마다 독립 오브젝트로 만든다.
+  //  각 성분은 원본 좌표를 유지하므로, spawnMesh 의 배치 커서가 제대로 놓도록 bakeLocal 과 같은 규칙
+  //  (XZ 중심·minY=0)으로 재정렬한 뒤 등록한다.
+  function splitSelected() {
+    const id = apiRef.current?.selectedObjectId()
+    if (!id) { setError('먼저 분리할 오브젝트를 선택하세요'); return }
+    const snap = apiRef.current?.getSnapshot(id); if (!snap) return
+    let parts
+    try { parts = splitConnectedComponents(snap.localPos) }
+    catch (e) { setError('분리 실패: ' + (e?.message || e)); return }
+    if (!parts || parts.length < 2) { setError('분리할 독립 부분이 없습니다 — 하나로 연결된 메시입니다'); return }
+    // 각 성분의 좌표는 부모의 로컬 좌표계 그대로다. 부모의 위치/회전/스케일을 그대로 물려주면
+    //  분리 후에도 화면상 위치가 변하지 않는다(원본 Split 과 동일 — 부품이 제자리에 남는다).
+    //  재정렬해서 배치 커서로 늘어놓으면 21개가 일렬이 되어 베드를 벗어난다(실측).
+    const base = String(snap.name || 'object').replace(/\.[^.]+$/, '')
+    removeObject(id)
+    parts.forEach((p, i) => apiRef.current?.spawnSnapshot(
+      { name: `${base}_${i + 1}`, localPos: p, rot: snap.rot, scale: snap.scale, pos: snap.pos }, true))
+    refreshObjects()
+    setError('')
+    setSliceNotice(`${parts.length}개 오브젝트로 분리했습니다`)
+  }
+  function setGizmo(m) { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.setMode(m) }   // 페인트 해제 선행(툴바와 동일 경로)
+
+  keyRef.current = (e) => {
+    const t = e.target
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+    const k = e.key, low = typeof k === 'string' ? k.toLowerCase() : ''
+    const mod = e.ctrlKey || e.metaKey
+    const preview = canvasModeRef.current === 'preview'
+    const stop = () => { e.preventDefault(); e.stopPropagation() }
+
+    if (mod) {                                            // ---- Ctrl/⌘ 조합 (모드 공통) ----
+      if (low === 'r') { stop(); if (!slicing) onSlice('current') }        // 슬라이스(원본 Ctrl+R)
+      else if (low === 'c') { stop(); copySelected() }
+      else if (low === 'v') { stop(); pasteClipboard() }
+      else if (low === 'x') { stop(); copySelected(); deleteSelected() }
+      else if (low === 'k' || low === 'd') { stop(); duplicateSelected() }  // Ctrl+K(원본) / ⌘D(macOS 관례)
+      return
+    }
+
+    if (preview) {                                        // ---- Preview: 레이어 검사 ----
+      const step = e.shiftKey ? 10 : 1
+      if (k === 'ArrowUp')        { stop(); const v = layerHiRef.current + step; singleLayer ? setRange(v, v) : setRange(layerLoRef.current, v) }
+      else if (k === 'ArrowDown') { stop(); const v = layerHiRef.current - step; singleLayer ? setRange(v, v) : setRange(layerLoRef.current, v) }
+      else if (low === 'l')       { stop(); toggleSingle() }
+      else if (low === 't')       { stop(); onToggleTravel({ target: { checked: !showTravelRef.current } }) }
+      else if (low === 'z')       { stop(); apiRef.current?.frame() }
+      else if (low === 'b')       { stop(); apiRef.current?.frameBed() }
+      else if (k === 'Escape')    { stop(); setCanvasMode('prepare') }
+      return
+    }
+
+    // ---- Prepare: 오브젝트 조작 ----
+    if (low === 'm' || low === 'g') { stop(); setGizmo('translate') }       // M=원본, G=Blender 관례(유지)
+    else if (low === 'r')           { stop(); setGizmo('rotate') }
+    else if (low === 's')           { stop(); setGizmo('scale') }
+    else if (low === 'z')           { stop(); apiRef.current?.frame() }
+    else if (low === 'b')           { stop(); apiRef.current?.frameBed() }
+    else if (k === 'Delete' || k === 'Backspace') { stop(); deleteSelected() }
+    else if (k === 'Escape')        { stop(); if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() }
+    else if (k === 'PageUp')        { stop(); apiRef.current?.rotateSelectedY(Math.PI / 4) }
+    else if (k === 'PageDown')      { stop(); apiRef.current?.rotateSelectedY(-Math.PI / 4) }
+    else if (k.startsWith?.('Arrow')) {                                     // 넛지: 10mm, Shift=1mm (Prusa 관례)
+      stop(); const d = e.shiftKey ? 1 : 10
+      apiRef.current?.nudgeSelected(k === 'ArrowLeft' ? -d : k === 'ArrowRight' ? d : 0,
+                                    k === 'ArrowUp' ? -d : k === 'ArrowDown' ? d : 0)
+    }
+    else if (k === '?')             { stop(); setShowHelp(v => !v) }
+  }
   const nozzleDia = kp.nozzle_diameter || settingRaw(settings, 'nozzle_diameter') || '0.4'
 
   // Preview 컨트롤(뷰 타입 + 이중 슬라이더 + 범례) — 사이드바에 배치
   const previewControls = layerCount > 0 && (
     <div className="slice-layer" data-testid="preview-controls">
       <label className="view-type-row">뷰 타입
-        <select value={viewType} onChange={onViewType} data-testid="view-type-select">
+        <select value={viewType} onChange={onViewType} data-testid="view-type-select" title="툴패스 색을 무엇으로 칠할지 — 피처 종류·속도·레이어 높이·폭·팬·온도">
           {VIEW_TYPES.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
         </select>
       </label>
       <label>레이어 <b data-testid="layer-range">{singleLayer ? (layerHi + 1) : `${layerLo + 1}..${layerHi + 1}`}</b> / {layerCount}
         <span className="muted"> ({segCount.toLocaleString()} 세그먼트)</span></label>
       <div className="dual-slider">
-        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerLo} onChange={onLo} data-testid="layer-lo" title="하한" />
-        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerHi} onChange={onHi} data-testid="layer-hi" title="상한" />
+        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerLo} onChange={onLo} data-testid="layer-lo" title="표시할 최하단 레이어 (↓/↑ 로도 조절)" />
+        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerHi} onChange={onHi} data-testid="layer-hi" title="표시할 최상단 레이어 (↓/↑, Shift 로 10단계)" />
       </div>
       <div className="layer-ctl">
-        <button className={singleLayer ? 'on' : ''} onClick={toggleSingle} data-testid="single-layer-btn">단일 레이어</button>
-        <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" /> 트래블</label>
+        <button className={singleLayer ? 'on' : ''} onClick={toggleSingle} data-testid="single-layer-btn" title="선택한 한 층만 보기 (L)">단일 레이어</button>
+        <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="압출 없이 이동하는 경로를 회색 선으로 표시 (T)" /> 트래블</label>
       </div>
       {colorRange && colorRange.cont ? (
         <div className="grad-legend" data-testid="view-legend">
@@ -703,23 +982,23 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   return (
     <div className="app-shell">
       {/* 공용 숨김 파일 입력 */}
-      <input ref={fileInputRef} type="file" accept=".stl,.obj,.3mf,.amf,.ply" multiple onChange={onFiles} data-testid="stl-input" style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept=".stl,.obj,.3mf,.amf,.ply" multiple onChange={onFiles} title="STL·OBJ·3MF·AMF·PLY (여러 개 선택 가능)" data-testid="stl-input" style={{ display: 'none' }} />
 
       {/* S1 상단바 */}
       <header className="topbar">
         <div className="tb-left">
           <span className="tb-logo"><b>Orca</b>Slicer <span className="tb-re">RE</span></span>
-          <button className="tb-btn" onClick={() => fileInputRef.current?.click()} title="파일 열기" data-testid="open-file"><img src={openIcon} alt="" /><span>열기</span></button>
+          <button className="tb-btn" onClick={() => fileInputRef.current?.click()} title="모델 파일 열기 — 기존 오브젝트는 모두 지워짐" data-testid="open-file"><img src={openIcon} alt="" /><span>열기</span></button>
         </div>
         {ok && (
           <div className="tb-tabs" role="tablist" aria-label="캔버스 모드">
-            <button role="tab" className={canvasMode === 'prepare' ? 'on' : ''} onClick={() => setCanvasMode('prepare')} data-testid="mode-prepare">Prepare</button>
-            <button role="tab" className={canvasMode === 'preview' ? 'on' : ''} onClick={() => setCanvasMode('preview')} disabled={layerCount === 0} data-testid="mode-preview">Preview</button>
+            <button role="tab" className={canvasMode === 'prepare' ? 'on' : ''} onClick={() => setCanvasMode('prepare')} data-testid="mode-prepare" title="모델 배치·변형·서포트 페인팅">Prepare</button>
+            <button role="tab" className={canvasMode === 'preview' ? 'on' : ''} onClick={() => setCanvasMode('preview')} disabled={layerCount === 0} data-testid="mode-preview" title="슬라이스된 툴패스 미리보기 (슬라이스 후 활성화)">Preview</button>
           </div>
         )}
         <div className="tb-right">
-          <button className="tb-icon" disabled title="실행 취소 — 후속 과제(undo/redo)">↶</button>
-          <button className="tb-icon" disabled title="다시 실행 — 후속 과제(undo/redo)">↷</button>
+          <button className="tb-icon" disabled title="실행 취소 — 미구현(작업 이력 스택 필요)">↶</button>
+          <button className="tb-icon" disabled title="다시 실행 — 미구현(작업 이력 스택 필요)">↷</button>
         </div>
       </header>
 
@@ -727,11 +1006,11 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         {/* S3 좌측 기즈모 툴바 */}
         {ok && canvasMode === 'prepare' && (
           <nav className="left-rail" role="toolbar" aria-label="기즈모 도구">
-            <button className={gmode === 'translate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('translate') }} title="이동 (G)" data-testid="gizmo-move"><img src={moveIcon} alt="이동" /></button>
-            <button className={gmode === 'rotate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('rotate') }} title="회전 (R)" data-testid="gizmo-rotate"><img src={rotateIcon} alt="회전" /></button>
-            <button className={gmode === 'scale' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('scale') }} title="스케일 (S)" data-testid="gizmo-scale"><img src={scaleIcon} alt="스케일" /></button>
+            <button className={gmode === 'translate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('translate') }} title="오브젝트 이동 — 기즈모 축을 끌거나 방향키로 10mm(Shift 1mm) 이동 (M/G)" data-testid="gizmo-move"><img src={moveIcon} alt="이동" /></button>
+            <button className={gmode === 'rotate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('rotate') }} title="오브젝트 회전 — PageUp/PageDown 으로 45° 단위 회전 (R)" data-testid="gizmo-rotate"><img src={rotateIcon} alt="회전" /></button>
+            <button className={gmode === 'scale' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('scale') }} title="오브젝트 크기 조절 (S)" data-testid="gizmo-scale"><img src={scaleIcon} alt="스케일" /></button>
             <div className="rail-sep" />
-            <button className={paintMode !== 'off' ? 'on' : ''} onClick={togglePaintGizmo} title="서포트 페인팅" data-testid="gizmo-paint"><img src={paintIcon} alt="서포트 페인팅" /></button>
+            <button className={paintMode !== 'off' ? 'on' : ''} onClick={togglePaintGizmo} title="브러시로 면을 칠해 서포트를 강제하거나 차단 — 휠로 브러시 크기 조절" data-testid="gizmo-paint"><img src={paintIcon} alt="서포트 페인팅" /></button>
           </nav>
         )}
 
@@ -745,21 +1024,75 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
                 <div className="eh-icon">📦</div>
                 <div className="eh-title">파일을 드래그하거나 선택하세요</div>
                 <div className="eh-sub">STL · OBJ · 3MF · AMF · PLY</div>
-                <button className="eh-btn" onClick={() => fileInputRef.current?.click()} data-testid="empty-pick">파일 선택</button>
+                <button className="eh-btn" onClick={() => fileInputRef.current?.click()} data-testid="empty-pick" title="STL·OBJ·3MF·AMF·PLY 파일 선택 (여러 개 가능)">파일 선택</button>
               </div>
             )}
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">여기에 놓기 (STL/OBJ/3MF/AMF/PLY)</div>}
+            {ctxMenu && (
+              <>
+                <div className="ctx-scrim" onPointerDown={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null) }} />
+                <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} data-testid="ctx-menu">
+                  {ctxMenu.onObject ? (<>
+                    <button onClick={() => { setCtxMenu(null); duplicateSelected() }} data-testid="ctx-duplicate" title="선택 오브젝트를 같은 크기·회전으로 복제해 옆에 배치">복제 <span className="ctx-key">Ctrl+K</span></button>
+                    <button onClick={() => { setCtxMenu(null); copySelected() }} data-testid="ctx-copy" title="선택 오브젝트를 버퍼에 복사 (붙여넣기로 추가)">복사 <span className="ctx-key">Ctrl+C</span></button>
+                    <button onClick={() => { setCtxMenu(null); splitSelected() }} data-testid="ctx-split" title="객체로 분리 — 서로 떨어진 부분(연결 성분)마다 독립 오브젝트로 나눔. 파트로 분리는 미구현(파트 개념 부재)">분리</button>
+                    <button onClick={() => { setCtxMenu(null); apiRef.current?.placeOnBed() }} data-testid="ctx-seat" title="모든 오브젝트를 베드 바닥(Z=0)에 붙임">바닥에 놓기</button>
+                    <hr />
+                    <button className="danger" onClick={() => { setCtxMenu(null); deleteSelected() }} data-testid="ctx-delete" title="선택 오브젝트를 씬에서 제거">삭제 <span className="ctx-key">Del</span></button>
+                  </>) : (<>
+                    <button onClick={() => { setCtxMenu(null); fileInputRef.current?.click() }} data-testid="ctx-open" title="모델 파일을 열어 현재 플레이트에 추가">모델 열기…</button>
+                    <button disabled={!clipboardRef.current} onClick={() => { setCtxMenu(null); pasteClipboard() }} data-testid="ctx-paste" title="복사해 둔 오브젝트를 현재 플레이트에 추가">붙여넣기 <span className="ctx-key">Ctrl+V</span></button>
+                    <hr />
+                    <button onClick={() => { setCtxMenu(null); apiRef.current?.frame() }} data-testid="ctx-zoom-all" title="모든 오브젝트가 보이도록 카메라 맞춤">전체 보기 <span className="ctx-key">Z</span></button>
+                    <button onClick={() => { setCtxMenu(null); apiRef.current?.frameBed() }} data-testid="ctx-zoom-bed" title="선택한 플레이트 전체가 보이도록 카메라 맞춤">베드 보기 <span className="ctx-key">B</span></button>
+                  </>)}
+                </div>
+              </>
+            )}
+            {showHelp && (
+              <div className="help-overlay" data-testid="help-overlay" onClick={() => setShowHelp(false)}>
+                <div className="help-card" onClick={e => e.stopPropagation()}>
+                  <h3>단축키 <span className="muted">(? 로 닫기)</span></h3>
+                  <div className="help-cols">
+                    <section>
+                      <h4>Prepare</h4>
+                      <dl>
+                        <dt>M / G</dt><dd>이동</dd><dt>R</dt><dd>회전</dd><dt>S</dt><dd>스케일</dd>
+                        <dt>방향키</dt><dd>10mm 이동 (Shift 1mm)</dd>
+                        <dt>PageUp/Down</dt><dd>45° 회전</dd>
+                        <dt>Del</dt><dd>선택 삭제</dd><dt>Esc</dt><dd>선택/페인트 해제</dd>
+                      </dl>
+                    </section>
+                    <section>
+                      <h4>Preview</h4>
+                      <dl>
+                        <dt>↑ / ↓</dt><dd>레이어 (Shift 10단계)</dd>
+                        <dt>L</dt><dd>단일 레이어</dd><dt>T</dt><dd>트래블</dd>
+                        <dt>Esc</dt><dd>Prepare 로</dd>
+                      </dl>
+                    </section>
+                    <section>
+                      <h4>공통</h4>
+                      <dl>
+                        <dt>Ctrl+R</dt><dd>슬라이스</dd>
+                        <dt>Ctrl+K / ⌘D</dt><dd>복제</dd>
+                        <dt>Ctrl+C/V/X</dt><dd>복사/붙여넣기/잘라내기</dd>
+                        <dt>Z / B</dt><dd>전체 / 베드로 줌</dd>
+                      </dl>
+                    </section>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 뷰포트 상단 오브젝트 툴바 */}
           {ok && canvasMode === 'prepare' && (
             <div className="vp-top-toolbar" role="toolbar" aria-label="오브젝트 도구">
-              <button onClick={() => fileInputRef.current?.click()} title="파일 추가" data-testid="tool-add"><img src={addIcon} alt="추가" /></button>
-              <button onClick={() => { const id = apiRef.current?.selectedObjectId(); if (id) removeObject(id) }} title="선택 삭제" data-testid="tool-delete"><img src={deleteIcon} alt="삭제" /></button>
-              <button onClick={() => apiRef.current?.placeOnBed()} title="바닥에 놓기 (Z 안착)" data-testid="tool-onbed" className="vtt-text">⬇0</button>
-              <span className="vtt-sep" />
-              <button disabled title="자동 배치 — 백엔드 이식 예정(libslic3r Arrange)" data-testid="tool-arrange"><img src={arrangeIcon} alt="배치" /></button>
-              <button disabled title="자동 정렬 — 백엔드 이식 예정(libslic3r Orient)" data-testid="tool-orient"><img src={orientIcon} alt="정렬" /></button>
+              {OBJECT_TOOLS.map((t, i) => t.sep
+                ? <span key={'sep' + i} className="vtt-sep" />
+                : <button key={t.id} onClick={t.run} disabled={t.disabled?.() ?? !t.run}
+                    title={t.tip} data-testid={`tool-${t.id}`}><img src={t.icon} alt={t.label} /></button>)}
             </div>
           )}
 
@@ -768,10 +1101,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
             <div className="brush-panel" data-testid="paint-tools">
               <div className="bp-title">서포트 페인팅</div>
               <div className="bp-modes">
-                <button className={paintMode === 'enforcer' ? 'on enf' : 'enf'} onClick={() => setPaintMode('enforcer')} data-testid="paint-enforcer">enforcer</button>
-                <button className={paintMode === 'blocker' ? 'on blk' : 'blk'} onClick={() => setPaintMode('blocker')} data-testid="paint-blocker">blocker</button>
-                <button onClick={clearPaint} data-testid="paint-clear">지우기</button>
-                <button onClick={() => setPaintMode('off')} data-testid="paint-off">닫기</button>
+                <button className={paintMode === 'enforcer' ? 'on enf' : 'enf'} onClick={() => setPaintMode('enforcer')} title="칠한 면 아래에 서포트를 강제로 생성" data-testid="paint-enforcer">enforcer</button>
+                <button className={paintMode === 'blocker' ? 'on blk' : 'blk'} onClick={() => setPaintMode('blocker')} title="칠한 면 아래에 서포트가 생기지 않게 차단" data-testid="paint-blocker">blocker</button>
+                <button onClick={clearPaint} data-testid="paint-clear" title="칠한 강제/차단 영역을 모두 지움">지우기</button>
+                <button onClick={() => setPaintMode('off')} data-testid="paint-off" title="페인팅 모드 종료 (Esc)">닫기</button>
               </div>
               <label className="bp-radius">브러시 반경 {brushRadius}mm
                 <input type="range" min="1" max="15" step="0.5" value={brushRadius}
@@ -790,10 +1123,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
           {ok && (
             <div className="plate-bar" data-testid="plate-bar" role="tablist" aria-label="플레이트">
               {Array.from({ length: plateCount }, (_, i) => (
-                <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} data-testid={`plate-${i}`} title={`플레이트 ${i + 1}`}>{i + 1}</button>
+                <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} title={`플레이트 ${i + 1} 선택 — Preview 에선 이 플레이트 결과로 전환`} data-testid={`plate-${i}`} title={`플레이트 ${i + 1}`}>{i + 1}</button>
               ))}
-              <button className="plate-add" onClick={addPlate} disabled={plateCount >= 6} title="플레이트 추가" data-testid="plate-add">+</button>
-              {plateCount > 1 && <button className="plate-del" onClick={deletePlate} title="플레이트 삭제" data-testid="plate-del">−</button>}
+              <button className="plate-add" onClick={addPlate} disabled={plateCount >= 6} title="빈 플레이트 추가 (최대 6개) — 플레이트별로 따로 슬라이스·내보내기" data-testid="plate-add">+</button>
+              {plateCount > 1 && <button className="plate-del" onClick={deletePlate} title="마지막 플레이트와 그 슬라이스 결과 삭제" data-testid="plate-del">−</button>}
             </div>
           )}
 
@@ -815,8 +1148,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               <section className="side-card" data-testid="filament-section">
                 <div className="sc-head">🧵 필라멘트 <span className="sc-count">{extruderColors.length}</span>
                   <span className="sc-head-btns">
-                    <button onClick={addFilament} disabled={extruderColors.length >= 4} title="추가" data-testid="filament-add">+</button>
-                    <button onClick={removeFilament} disabled={extruderColors.length <= 1} title="제거" data-testid="filament-del">−</button>
+                    <button onClick={addFilament} disabled={extruderColors.length >= 4} title="필라멘트(익스트루더) 추가 — 최대 4개, 오브젝트별로 지정 가능" data-testid="filament-add">+</button>
+                    <button onClick={removeFilament} disabled={extruderColors.length <= 1} title="마지막 필라멘트 제거 — 이를 쓰던 오브젝트는 남은 번호로 재배정" data-testid="filament-del">−</button>
                   </span>
                 </div>
                 {extruderColors.map((c, i) => (
@@ -836,23 +1169,24 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
                   <ul className="obj-list2" data-testid="obj-list">
                     {objects.map(o => (
                       <li key={o.id} className={o.visible === false ? 'obj-hidden' : ''}>
-                        <button className="obj-eye" onClick={() => toggleObjVisible(o.id)} title="출력 토글" data-testid={`eye-${o.id}`}>{o.visible === false ? '🚫' : '👁'}</button>
+                        <button className="obj-eye" onClick={() => toggleObjVisible(o.id)} title="이 오브젝트를 출력 대상에서 제외/포함 — 제외해도 씬에는 남음" data-testid={`eye-${o.id}`}>{o.visible === false ? '🚫' : '👁'}</button>
                         <span className="obj-name" title={o.name}>{o.name}</span>
-                        <select className="obj-ext" value={o.extruder ?? 1} onChange={e => setObjExtruder(o.id, +e.target.value)} title="익스트루더" data-testid={`ext-${o.id}`}>
+                        <select className="obj-ext" value={o.extruder ?? 1} onChange={e => setObjExtruder(o.id, +e.target.value)} title="이 오브젝트를 출력할 필라멘트(익스트루더) 번호" data-testid={`ext-${o.id}`}>
                           {extruderColors.map((c, i) => <option key={i} value={i + 1}>T{i + 1}</option>)}
                         </select>
-                        <button className="obj-del" onClick={() => removeObject(o.id)} title="삭제">✕</button>
+                        <button className="obj-split" onClick={() => { apiRef.current?.selectObject(o.id); splitSelected() }} title="객체로 분리 — 서로 떨어진 부분(연결 성분)마다 독립 오브젝트로 나눔. 파트로 분리는 미구현(파트 개념 부재)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="분리" /></button>
+                        <button className="obj-del" onClick={() => removeObject(o.id)} title="이 오브젝트를 씬에서 제거">✕</button>
                       </li>
                     ))}
                   </ul>
-                  <label className="slice-support"><input type="checkbox" checked={supportOn} onChange={onToggleSupport} data-testid="support-toggle" /> 서포트 생성</label>
-                  <label className="slice-support"><input type="checkbox" checked={wipeTowerReal} onChange={e => setWipeTowerReal(e.target.checked)} data-testid="wipe-tower-real-toggle" /> 실 와이프타워 <span className="muted">(MM)</span></label>
+                  <label className="slice-support"><input type="checkbox" checked={supportOn} onChange={onToggleSupport} title="오버행 아래에 지지 구조를 생성 (설정 패널의 enable_support 와 동일)" data-testid="support-toggle" /> 서포트 생성</label>
+                  <label className="slice-support"><input type="checkbox" checked={wipeTowerReal} onChange={e => setWipeTowerReal(e.target.checked)} title="멀티머티리얼 툴체인지 시 원본 WipeTower 로 퍼지량을 계산 (끄면 단순 사각 링)" data-testid="wipe-tower-real-toggle" /> 실 와이프타워 <span className="muted">(MM)</span></label>
                 </section>
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}
               {error && <div className="slice-err side-warn" data-testid="slice-err">{error}</div>}
-              {downgradeOffer && <button className="slice-btn" data-testid="downgrade-retry" onClick={retryDowngrade}>간소화 재시도(인필 단순화·절약 모드)</button>}
+              {downgradeOffer && <button className="slice-btn" data-testid="downgrade-retry" onClick={retryDowngrade} title="인필을 단순화하고 밀도를 낮춰 메모리 부담을 줄인 뒤 재시도">간소화 재시도(인필 단순화·절약 모드)</button>}
 
               {/* Preview 컨트롤(뷰타입/슬라이더/범례) */}
               {canvasMode === 'preview' && previewControls && (
@@ -872,19 +1206,22 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
             {/* ⑤ 하단 고정 버튼 바 */}
             <div className="side-bottom">
               <div className="slice-dd">
-                <button className="slice-btn" onClick={() => (plateCount > 1 ? setSliceMenu(v => !v) : onSlice('current'))} disabled={objects.length === 0 || slicing} data-testid="slice-btn">
+                <button className="slice-btn" title={plateCount > 1 ? '슬라이스 대상 선택 (Ctrl+R = 현재 플레이트)' : '현재 플레이트를 슬라이스 (Ctrl+R)'} onClick={() => (plateCount > 1 ? setSliceMenu(v => !v) : onSlice('current'))} disabled={objects.length === 0 || slicing} data-testid="slice-btn">
                   {slicing ? `슬라이싱… ${Math.round(progress * 100)}%` : (plateCount > 1 ? '슬라이스 ▾' : '슬라이스')}
                 </button>
                 {sliceMenu && plateCount > 1 && (
                   <div className="slice-menu" data-testid="slice-menu">
-                    <button onClick={() => onSlice('current')} data-testid="slice-current">현재 플레이트 (P{selectedPlate + 1})</button>
-                    <button onClick={() => onSlice('all')} data-testid="slice-all">전체 플레이트 ({plateCount})</button>
+                    <button onClick={() => onSlice('current')} data-testid="slice-current" title="선택한 플레이트만 슬라이스 (Ctrl+R)">현재 플레이트 (P{selectedPlate + 1})</button>
+                    <button onClick={() => onSlice('all')} data-testid="slice-all" title="모든 플레이트를 차례로 슬라이스 — 결과는 탭 전환으로 조회">전체 플레이트 ({plateCount})</button>
+                    {slicedPlateCount > 0 && (
+                      <button onClick={exportAllGcode} data-testid="export-all" title="슬라이스된 모든 플레이트의 G-code를 각각 파일로 저장">전체 G-code 내보내기 ({slicedPlateCount})</button>
+                    )}
                   </div>
                 )}
               </div>
               {gcodeUrl
-                ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} data-testid="gcode-dl">G-code 내보내기</a>
-                : <button className="export-btn" disabled title="슬라이스 후 활성화">G-code 내보내기</button>}
+                ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="현재 보고 있는 플레이트의 G-code 파일 저장" data-testid="gcode-dl">G-code 내보내기</a>
+                : <button className="export-btn" disabled title="G-code 내보내기 — 슬라이스 후 활성화됩니다">G-code 내보내기</button>}
             </div>
           </aside>
         )}
