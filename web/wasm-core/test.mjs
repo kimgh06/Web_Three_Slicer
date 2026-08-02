@@ -301,7 +301,17 @@ console.log(`  tree spans: top=${treeTop.toFixed(1)} bot=${treeBot.toFixed(1)}  
 ok(treeTop > treeBot + 1.0, `tree_lite tapers: top span ${treeTop.toFixed(1)} > bottom span ${treeBot.toFixed(1)} (위>아래)`)
 ok(treeBot < gridBot - 0.5, `tree_lite narrower than grid at bottom (${treeBot.toFixed(1)} < ${gridBot.toFixed(1)})`)
 ok(tL[0].z < 1.0, `tree_lite grounds near bed (lowest support z=${tL[0].z.toFixed(2)})`)
-ok(typeTotal(rTree, 5) <= typeTotal(rGridS, 5), `tree_lite uses <= grid support material (${typeTotal(rTree, 5)} <= ${typeTotal(rGridS, 5)})`)
+// 33단계: 재료량 비교를 "세그먼트 개수" → "실 경로 길이"로 교정.
+//  개수는 대리 지표로 부정확하다 — 좁은 영역일수록 방향 전환이 잦아 짧은 세그먼트가 늘어,
+//  테이퍼로 재료가 줄어도 개수는 오히려 늘 수 있다(실측: 705 vs 704 로 역전). 길이가 진짜 재료량이다.
+const supPathLen = (r) => (r.layers || []).reduce((a, Ly) => {
+  const p = Ly.paths; if (!p) return a
+  let s = 0
+  for (let i = 0; i < p.length; i += 8) if (p[i+3] === 5 || p[i+3] === 6) s += Math.hypot(p[i+4]-p[i], p[i+5]-p[i+1])
+  return a + s
+}, 0)
+const tLen = supPathLen(rTree), gLen = supPathLen(rGridS)
+ok(tLen <= gLen, `tree_lite uses <= grid support material (경로길이 ${tLen.toFixed(0)}mm <= ${gLen.toFixed(0)}mm)`)
 
 // ⑥ 브리지: 무지지 bottom(오버행 캡 밑면) → type9 + ; bridge. 서포트 없이 테이블. 솔리드 큐브엔 없음.
 const rBridge = Module.slice(new Uint8Array(makeTableSTL()), JSON.stringify(params), () => {})
@@ -372,7 +382,12 @@ const rMM = Module.slice(new Uint8Array(mmStl), JSON.stringify({ ...params, extr
 ok(!rMM.error, `multimaterial slices ok (layers=${rMM.error ? 'ERR' : rMM.stats.layers})`)
 ok(/^T0$/m.test(rMM.gcode) && /^T1$/m.test(rMM.gcode), `MM has tool changes T0 and T1`)
 ok(typeTotal(rMM, 11) > 0, `MM prime tower emitted (type11=${typeTotal(rMM, 11)})`)
-ok(/; prime tower/.test(rMM.gcode), `MM has "; prime tower" marker`)
+// 33단계: 기본값이 실 WipeTower 로 전환 — 실 경로 마커를 기대하고, 폴백(사각링) 마커도 허용하지 않는다.
+ok(/wipe_tower_real: real ported WipeTower/.test(rMM.gcode), `MM uses real WipeTower by default`)
+ok(!/prime tower \(basic/.test(rMM.gcode), `MM does not fall back to the decorative ring`)
+// 명시적 옵트아웃(wipe_tower_real=false)이면 기존 사각링 경로 유지
+const rMMring = Module.slice(new Uint8Array(mmStl), JSON.stringify({ ...params, extruder_count: 2, mm_group_split: mmSplit, wipe_tower_real: false }), () => {})
+ok(/; prime tower \(basic/.test(rMMring.gcode) && typeTotal(rMMring, 11) > 0, `wipe_tower_real=false keeps the ring fallback`)
 const rSingle = Module.slice(new Uint8Array(mmStl), JSON.stringify(params), () => {})
 ok(!/^T[01]$/m.test(rSingle.gcode) && typeTotal(rSingle, 11) === 0, `single-material path unchanged (no T0/T1, no prime tower)`)
 

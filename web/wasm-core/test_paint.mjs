@@ -8,8 +8,12 @@ function trisToSTL(tris){const buf=Buffer.alloc(84+tris.length*50);buf.writeUInt
 const tableSTL=trisToSTL([...boxTris(7,7,0,6,6,10), ...boxTris(0,0,10,20,20,4)])
 const base={layer_height:0.2,first_layer_height:0.2,line_width:0.42,wall_loops:2,infill_density:0.15,nozzle_diameter:0.4,filament_diameter:1.75,flow_ratio:1.0,print_speed:60,first_layer_speed:20,travel_speed:150,nozzle_temp:210,bed_temp:60,top_shell_layers:4,bottom_shell_layers:3,skirt_loops:1,skirt_distance:2,brim_width:0,retract_length:0.8,retract_speed:30,z_hop:0.4,infill_angle:45,
   enable_support:true,support_threshold_angle:30,support_top_z_distance:0.2,support_xy_distance:0.35,support_interface_top_layers:2}
-const countByType=(paths)=>{let n=0;for(let i=0;i<paths.length;i+=8)if(paths[i+3]===5)n++;return n}
-const type5=(r)=>r.layers.reduce((a,L)=>a+countByType(L.paths),0)
+// 33단계: 서포트량 지표를 "세그먼트 개수" → "실 경로 길이(mm)"로 교정.
+//  그리드 스냅 도입 후 영역이 셀 경계로 조각나면서, 서포트가 실제로 줄어도 개수는 늘 수 있다
+//  (실측: 블로커 적용 시 개수 822→880 증가, 길이 8669→7001mm 감소). 길이가 진짜 재료량이다.
+const countByType=(paths)=>{let s=0;for(let i=0;i<paths.length;i+=8)if(paths[i+3]===5)
+  s+=Math.hypot(paths[i+4]-paths[i],paths[i+5]-paths[i+1]);return s}
+const type5=(r)=>Math.round(r.layers.reduce((a,L)=>a+countByType(L.paths),0))
 const M=await createSlicer()
 const slice=(p)=>M.slice(new Uint8Array(tableSTL),JSON.stringify(p),()=>{})
 let fail=0; const ok=(c,m)=>{console.log((c?'  ok: ':'  FAIL: ')+m);if(!c)fail++}
