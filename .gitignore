@@ -64,5 +64,17 @@ web/**/dist/
 web/**/*.gcode
 web/**/*.tsbuildinfo
 
+# ── 커널 개발 부산물 (저장소에 넣지 않는다) ──────────────────
+# 단계별 검증 스크린샷: 문서에 경로만 인용되는 증적이라 소스 저장소에 둘 이유가 없다(6.6MB).
+web/wasm-core/*.png
+web/wasm-core/screenshots/
+# 테스트용 emscripten 산출물: build.sh 로 재생성 가능한 빌드 결과물(6.5MB).
+#  배포되는 커널(packages/engine/src/slicer_core*.js)은 예외로 계속 추적한다.
+web/wasm-core/**/test_*.wasm
+web/wasm-core/**/test_*.js
+# 일회성 조사/재현 스크립트 (회귀 스위트가 아님)
+web/wasm-core/repro_*.mjs
+web/wasm-core/compare_*.mjs
+
 # 참조용 원본 클론 (독립 저장소)
 slicer/
