@@ -224,3 +224,8 @@
 .slice-support { display: flex; align-items: center; gap: 5px; margin: 6px 0; color: #cdd6dd; font-size: 12px; }
 
 .slice-support .muted { font-size: 10px; }
+
+/* 프린터 카드 — 베드 폭×깊이 인라인 편집 */
+.sc-bed { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: #222; }
+.sc-bed input { width: 54px; padding: 1px 4px; font-size: 12px; font-weight: 600; text-align: right;
+  border: 1px solid #ccd0d5; border-radius: 5px; background: #fff; color: #222; }

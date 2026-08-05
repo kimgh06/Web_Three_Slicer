@@ -34,7 +34,13 @@ function bakeLocal(modelPos) {
 }
 
 // 툴패스 색/지오메트리/셰이더는 toolpath_gpu.js(원본 libvgcode 포팅)로 이전 — CPU 리본 빌더 폐기(24단계).
-const PLATE_GAP = 40   // 29단계-2: 플레이트 간 간격(mm). PX_i = i*(bedW+GAP).
+// 플레이트 간격 — 고정 mm. (원본은 폭 비례 1/5 이지만, 베드 크기와 무관하게 일정한 간격을 쓴다)
+const PLATE_GAP = 40
+const plateStep = (edge) => edge + PLATE_GAP
+// 플레이트 정방형 배치 — 원본 PartPlate.hpp compute_colum_count: cols ≈ ceil(sqrt(n)).
+//  i 번째 플레이트 = (col=i%cols)*stepX, (row=i/cols)*stepZ (원본은 -Y 로 증가 → three 에선 +z).
+const MAX_PLATES = 9
+const plateCols = (count) => { const v = Math.sqrt(count), r = Math.round(v); return v > r ? r + 1 : r }
 
 export default function Viewport({ settings = {}, setSettings = () => {}, processPanel = null }) {
   const mountRef = useRef(null)
@@ -85,6 +91,18 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const [layerCount, setLayerCount] = useState(0)
   const [segCount, setSegCount] = useState(0)   // 24단계: 렌더된 세그먼트 수(인스턴스)
   const [plateCount, setPlateCount] = useState(1)       // 29단계-2: 플레이트 수
+  // 플레이트 i 의 three 월드 오프셋 (정방형 그리드 배치)
+  function platePos(i) {
+    const cols = plateCols(plateCountRef.current)
+    return { x: (i % cols) * plateStep(plateBWRef.current), z: Math.floor(i / cols) * plateStep(plateBDRef.current) }
+  }
+  // 월드 (x,z) → 가장 가까운 플레이트 인덱스
+  function plateOfXZ(wx, wz) {
+    const n = plateCountRef.current, cols = plateCols(n)
+    const col = Math.max(0, Math.min(cols - 1, Math.round(wx / plateStep(plateBWRef.current))))
+    const row = Math.max(0, Math.round(wz / plateStep(plateBDRef.current)))
+    return Math.max(0, Math.min(n - 1, row * cols + col))
+  }
   const [selectedPlate, setSelectedPlate] = useState(0) // 선택 플레이트(0-based)
   const [sliceMenu, setSliceMenu] = useState(false)     // [슬라이스 ▾] 드롭다운 열림
   const [showHelp, setShowHelp] = useState(false)       // '?' 단축키 도움말 오버레이
@@ -261,8 +279,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       } else {
         const w = (geo.boundingBox.max.x - geo.boundingBox.min.x) * (scale ? Math.abs(scale.x) : 1)
         if (objectsRef.current.length === 0) placeXRef.current = 0
-        const px = selectedPlateRef.current * (plateBWRef.current + PLATE_GAP)
-        mesh.position.set(px + placeXRef.current + w / 2, 0, 0)
+        const pp = platePos(selectedPlateRef.current)
+        mesh.position.set(pp.x + placeXRef.current + w / 2, 0, pp.z)
         placeXRef.current += w + 8
       }
       mesh.userData = { name }
@@ -290,9 +308,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       rotateSelectedY: (rad) => { if (!selected) return; selected.rotation.y += rad },
       frame: () => frameObjects(),                                   // Z: 전체 오브젝트로 줌
       frameBed: () => {                                              // B: 선택 플레이트로 줌
-        const px = selectedPlateRef.current * (plateBWRef.current + PLATE_GAP)
+        const pp = platePos(selectedPlateRef.current)
         const d = Math.max(plateBWRef.current, plateBDRef.current) * 1.1 + 40
-        orbit.target.set(px, 0, 0); camera.position.set(px + d * 0.55, d * 0.8, d); orbit.update()
+        orbit.target.set(pp.x, 0, pp.z); camera.position.set(pp.x + d * 0.55, d * 0.8, pp.z + d); orbit.update()
       },
       removeObject: (id) => {
         const arr = objectsRef.current
@@ -306,17 +324,16 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         paint(); setStatus(statusText())
       },
       // MM: 익스트루더 오름차순으로 삼각형 정렬 병합 → 그룹0(ext1) 뒤 그룹1(ext2), split 반환.
-      plateX: (i) => i * (plateBWRef.current + PLATE_GAP),   // 29단계-2: 플레이트 i 의 three-x 오프셋
+      platePos: (i) => platePos(i),   // 플레이트 i 의 three (x,z) 오프셋
       plateOfObject: (o) => {                                // 위치 기반 소속 = 가장 가까운 플레이트 중심
-        const step = plateBWRef.current + PLATE_GAP
         o.mesh.updateMatrixWorld(true)
-        const wx = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld).x
-        return Math.max(0, Math.min(plateCountRef.current - 1, Math.round(wx / step)))
+        const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld)
+        return plateOfXZ(wp.x, wp.z)
       },
       // plateIdx!=null 이면 그 플레이트 소속 오브젝트만 + 좌표를 플레이트 로컬(three-x -= PX)로 변환(28단계 계약 유지).
       buildMergedSTL: (plateIdx = null) => {
         let arr = objectsRef.current.filter(o => o.visible !== false)
-        if (plateIdx != null) { const step = plateBWRef.current + PLATE_GAP; arr = arr.filter(o => { o.mesh.updateMatrixWorld(true); const wx = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld).x; return Math.max(0, Math.min(plateCountRef.current - 1, Math.round(wx / step))) === plateIdx }) }
+        if (plateIdx != null) arr = arr.filter(o => { o.mesh.updateMatrixWorld(true); const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld); return plateOfXZ(wp.x, wp.z) === plateIdx })
         if (!arr.length) return null
         const sorted = [...arr].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
         const usedExtruders = new Set(sorted.map(o => o.extruder || 1))
@@ -365,17 +382,27 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       setPlates: (n, bw, bd, sel) => {
         const t = three.current
         plateBWRef.current = bw; plateBDRef.current = bd; plateCountRef.current = n; selectedPlateRef.current = sel
-        for (const p of (t.plateBeds || [])) { t.scene.remove(p.grid); t.scene.remove(p.border); p.grid.geometry.dispose(); p.grid.material.dispose(); p.border.geometry.dispose(); p.border.material.dispose() }
+        for (const p of (t.plateBeds || [])) for (const m of [p.gridThin, p.gridBold, p.border]) { t.scene.remove(m); m.geometry.dispose(); m.material.dispose() }
         t.plateBeds = []
-        const sz = Math.max(bw, bd, 20), step = bw + PLATE_GAP
+        const cols = plateCols(n), sx = plateStep(bw), sz = plateStep(bd)
+        // 격자: 원본 Bed_2D 규칙 — 베드 사각형에 정확히 맞는 직사각 격자, 짧은 변 기준 셀
+        //  간격(<600mm → 10mm …), 코너 원점에서 전개하며 5칸마다 굵은 선(main grid 50mm).
+        const minEdge = Math.min(bw, bd)
+        const cell = minEdge >= 6000 ? 100 : minEdge >= 1200 ? 50 : minEdge >= 600 ? 20 : 10
+        const thin = [], bold = []
+        const x0 = -bw / 2, z0 = -bd / 2
+        for (let i = 0, x = x0; x <= bw / 2 + 1e-6; x = x0 + ++i * cell) (i % 5 ? thin : bold).push(x, 0, z0, x, 0, bd / 2)
+        for (let j = 0, z = z0; z <= bd / 2 + 1e-6; z = z0 + ++j * cell) (j % 5 ? thin : bold).push(x0, 0, z, bw / 2, 0, z)
+        const lineGeo = (a) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return g }
         for (let i = 0; i < n; i++) {
-          const px = i * step
-          const g = new THREE.GridHelper(sz, Math.max(8, Math.round(sz / 16)), i === sel ? 0x00ae42 : 0x2a3138, 0x2a3138)
-          g.position.x = px; t.scene.add(g)
+          const px = (i % cols) * sx, pz = Math.floor(i / cols) * sz
+          const gt = new THREE.LineSegments(lineGeo(thin), new THREE.LineBasicMaterial({ color: 0x232a31 }))
+          const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: 0x39434d }))
+          gt.position.set(px, 0, pz); gb.position.set(px, 0, pz); t.scene.add(gt); t.scene.add(gb)
           const sel_ = i === sel
           const b = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bw, bd)), new THREE.LineBasicMaterial({ color: sel_ ? 0x00ae42 : 0x4a5560, linewidth: sel_ ? 2 : 1 }))
-          b.rotation.x = -Math.PI / 2; b.position.x = px; t.scene.add(b)
-          t.plateBeds.push({ grid: g, border: b })
+          b.rotation.x = -Math.PI / 2; b.position.set(px, 0, pz); t.scene.add(b)
+          t.plateBeds.push({ gridThin: gt, gridBold: gb, border: b })
         }
       },
       setBed: (bw, bd) => { apiRef.current?.setPlates(plateCountRef.current, bw, bd, selectedPlateRef.current) },   // 하위호환
@@ -767,13 +794,21 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     try { await onSlice(off.scope) } finally { downgradeRef.current = false }
   }
   // 플레이트 추가/삭제/선택
-  function addPlate() { setPlateCount(n => Math.min(6, n + 1)) }
+  function addPlate() { setPlateCount(n => Math.min(MAX_PLATES, n + 1)) }
   function deletePlate() {
     setPlateCount(n => { if (n <= 1) return n; const last = n - 1; delete plateResultsRef.current[last]; disposePlateToolpath(last); refreshSlicedCount(); if (selectedPlateRef.current >= last) selectPlate(last - 1); return last })
   }
   function selectPlate(i) {
     selectedPlateRef.current = i; setSelectedPlate(i); placeXRef.current = 0
     if (canvasMode === 'preview') showPlateResult(i)   // Preview 에서 플레이트 전환 → 캐시 결과로 스위치
+  }
+  // 프린터 카드의 베드 폭×깊이 편집 — printable_area 사각형으로 환원(원점 보존). 원형/커스텀은 패널 에디터 담당.
+  function setBedSize(w, d) {
+    if (!(w > 0) || !(d > 0)) return
+    const pa = settingRaw(settings, 'printable_area')
+    const ok = Array.isArray(pa) && pa.length >= 3
+    const x0 = ok ? Math.min(...pa.map(p => p[0])) : 0, y0 = ok ? Math.min(...pa.map(p => p[1])) : 0
+    setSettings(s => ({ ...s, printable_area: [[x0, y0], [x0 + w, y0], [x0 + w, y0 + d], [x0, y0 + d]] }))
   }
   function setObjExtruder(id, e) { apiRef.current?.setObjectExtruder(id, e); setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
 
@@ -1133,7 +1168,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               {Array.from({ length: plateCount }, (_, i) => (
                 <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} title={`플레이트 ${i + 1} 선택 — Preview 에선 이 플레이트 결과로 전환`} data-testid={`plate-${i}`} title={`플레이트 ${i + 1}`}>{i + 1}</button>
               ))}
-              <button className="plate-add" onClick={addPlate} disabled={plateCount >= 6} title="빈 플레이트 추가 (최대 6개) — 플레이트별로 따로 슬라이스·내보내기" data-testid="plate-add">+</button>
+              <button className="plate-add" onClick={addPlate} disabled={plateCount >= MAX_PLATES} title="빈 플레이트 추가 (최대 9개) — 플레이트별로 따로 슬라이스·내보내기" data-testid="plate-add">+</button>
               {plateCount > 1 && <button className="plate-del" onClick={deletePlate} title="마지막 플레이트와 그 슬라이스 결과 삭제" data-testid="plate-del">−</button>}
             </div>
           )}
@@ -1148,7 +1183,19 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               {/* ① 프린터 */}
               <section className="side-card">
                 <div className="sc-head">🖨 프린터</div>
-                <div className="sc-info"><span>베드</span><b>{Math.round(kp.bed_width)} × {Math.round(kp.bed_depth)} mm</b></div>
+                <div className="sc-info"><span>베드</span>
+                  {/* 폭×깊이 직접 편집(사각형). 원점·원형·커스텀 형상은 프로세스 패널의 printable_area 에디터에서. */}
+                  <span className="sc-bed" title="플레이트 크기 — Enter 또는 포커스 아웃으로 적용. 원형/커스텀 형상은 printable_area 옵션에서">
+                    <input type="number" min="1" key={`w${Math.round(kp.bed_width)}`} defaultValue={Math.round(kp.bed_width)}
+                      onBlur={e => setBedSize(+e.target.value, kp.bed_depth)}
+                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }} data-testid="bed-w-card" />
+                    ×
+                    <input type="number" min="1" key={`d${Math.round(kp.bed_depth)}`} defaultValue={Math.round(kp.bed_depth)}
+                      onBlur={e => setBedSize(kp.bed_width, +e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }} data-testid="bed-d-card" />
+                    mm
+                  </span>
+                </div>
                 <div className="sc-info"><span>노즐 Ø</span><b>{nozzleDia} mm</b></div>
               </section>
 

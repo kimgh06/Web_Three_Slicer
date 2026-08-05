@@ -69,3 +69,16 @@
 /* ---- 임베드 변형 (:host 에 sp-embedded — viewer process-card 등 카드 안 전폭 배치) ---- */
 :host(.sp-embedded) .settings-panel { position: static; width: auto; flex: none; border: 0; height: auto; }
 :host(.sp-embedded) .sp-body { padding: 4px 2px 8px; max-height: 460px; }
+
+/* ---- BedShapeEditor (printable_area 커스텀 위젯) ---- */
+.bse { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 220px; }
+.bse-modes { display: flex; gap: 4px; }
+.bse-modes button { border: 1px solid #e0e0e0; background: #fafafa; border-radius: 6px;
+  padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.bse-modes button.on { background: #e6f5ee; color: #0a7d4f; border-color: #b7e2cd; font-weight: 700; }
+.bse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.bse-grid label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; white-space: nowrap; }
+.bse-grid input { width: 56px; padding: 2px 4px; font-size: 12px; }
+.bse-json { width: 100%; font: 11px ui-monospace, monospace; padding: 4px 6px;
+  border: 1px solid #d6d6d6; border-radius: 6px; box-sizing: border-box; }
+.bse-json.err { border-color: #d0435a; background: #fdf3f4; }

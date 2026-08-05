@@ -9,7 +9,15 @@
 import React, { useMemo, useState } from 'react'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from './styles.css?inline'   // Shadow DOM 격리 — 빌드 시 문자열로 내장
+import BedShapeEditor from './BedShapeEditor.jsx'
 import schema from '@three-slicer/data/config-schema.json'
+
+// 커스텀 위젯 레지스트리 — 원본 Tab.cpp 의 라인 위젯 치환(create_bed_shape_widget) 상당.
+//  스키마 구동 위젯으로 부족한 복합 타입은 여기 등록한 에디터가 오버라이드한다.
+//  소비자는 <SettingsPanel customWidgets={{key: Component}}/> 로 추가/교체 가능.
+const CUSTOM_WIDGETS = {
+  printable_area: BedShapeEditor,
+}
 import uiTree from '@three-slicer/data/ui-tree.json'
 import { settingRaw } from '@three-slicer/engine/settings'
 import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
@@ -42,11 +50,13 @@ function widgetFor(def) {
 }
 function ModeBadge({ mode }) { return <span className={`badge mode-${mode ?? 'none'}`}>{mode ?? '—'}</span> }
 
-function EditableWidget({ def, optKey, settings, setSettings, disabled }) {
-  const kind = widgetFor(def)
+function EditableWidget({ def, optKey, settings, setSettings, disabled, customWidgets }) {
   const raw = settingRaw(settings, optKey)
-  const scalar = Array.isArray(raw) ? raw[0] : raw
   const set = v => setSettings(s => ({ ...s, [optKey]: v }))
+  const Custom = customWidgets?.[optKey] ?? CUSTOM_WIDGETS[optKey]
+  if (Custom) return <Custom def={def} value={raw} onChange={set} disabled={disabled} />
+  const kind = widgetFor(def)
+  const scalar = Array.isArray(raw) ? raw[0] : raw
   switch (kind) {
     case 'select':
       return (<select value={scalar ?? ''} onChange={e => set(e.target.value)} disabled={disabled}>
@@ -70,7 +80,7 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled }) {
   }
 }
 
-function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOpen }) {
+function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOpen, customWidgets }) {
   if (optKey.startsWith('<')) return <div className="row custom"><span className="muted">⚙ 커스텀 위젯 {optKey}</span></div>
   const def = schema[optKey]
   const cond = disabled ? disabled[optKey] : undefined
@@ -89,14 +99,14 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOp
       <code className="key">{optKey}</code>
       <ModeBadge mode={def?.mode} />
       <span className="widget-cell">
-        <EditableWidget def={def} optKey={optKey} settings={settings} setSettings={setSettings} disabled={off} />
+        <EditableWidget def={def} optKey={optKey} settings={settings} setSettings={setSettings} disabled={off} customWidgets={customWidgets} />
         {dirty && <button className="reset-btn" onClick={reset} title="기본값으로 리셋" data-testid={`reset-${optKey}`}>↺</button>}
       </span>
     </div>
   )
 }
 
-export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false }) {
+export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false, customWidgets }) {
   const [builder, setBuilder] = useState(MAIN_BUILDERS[0] ?? '')
   const [pageIdx, setPageIdx] = useState(0)
   const [mode, setMode] = useState('all')
@@ -111,7 +121,7 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
       .filter(([k, d]) => k.includes(q) || d.label?.toLowerCase().includes(q) || d.full_label?.toLowerCase().includes(q))
       .slice(0, 60).map(([k]) => k)
   }, [q])
-  const row = (k, i) => <EditableOptionRow key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} />
+  const row = (k, i) => <EditableOptionRow key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets} />
   return (
     <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
