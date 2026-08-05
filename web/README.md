@@ -1,24 +1,24 @@
-# web/ — 브라우저 슬라이싱(SDK) + 추출 산출물
+# web/ — 데모 앱 + 추출 스크립트
 
-원본 OrcaSlicer 소스는 `../slicer/` 에 있고, 이 `web/` 는 그것을 리버스 엔지니어링한 브라우저/WASM
-슬라이싱 커널 + 뷰어다(`../slicer/` 에 대한 빌드·런타임 의존 0). 가이드: [`GUIDE.md`](GUIDE.md), 스펙: [`SPECS.md`](SPECS.md).
+원본 OrcaSlicer 소스는 `../slicer/`, 리버스 엔지니어링된 커널·SDK·컴포넌트는 `../packages/` 에 있다
+(`../slicer/` 에 대한 빌드·런타임 의존 0). 가이드: [`GUIDE.md`](GUIDE.md), 스펙: [`SPECS.md`](SPECS.md).
 
-## 워크스페이스 구조 (33단계 Phase 2)
+## 구조
 
-npm workspaces 루트(`web/package.json`):
-- **`packages/engine/`** — `@three-slicer/engine`: WASM 슬라이싱 커널 SDK. 공개 API + 워커 + 설정 매핑.
-  - 커널 재빌드(`wasm-core/build.sh`)는 34단계에서 **완전 독립화**: 원본 deps(clipper·clipper2·libnest2d·libigl·
+npm workspaces 루트는 **저장소 루트** `package.json` (`packages/*` + `web/viewer`) — 설치는 루트 `npm i` 1회.
+- **`../packages/engine/`** — `@three-slicer/engine`: WASM 슬라이싱 커널 SDK. 공개 API + 워커 + 설정 매핑.
+  - 커널 재빌드(`../packages/wasm-core/build.sh`)는 34단계에서 **완전 독립화**: 원본 deps(clipper·clipper2·libnest2d·libigl·
     admesh 등 deps_src 전량 23M)를 `wasm-core/third_party/` 로 사본화 → `slicer/` 없이도 빌드 성공(실증: slicer 임시
     이름변경 상태에서 build.sh+12스위트 그린). golden byte-identical 유지.
-- **`packages/data/`** — `@three-slicer/data`: 추출 JSON(config-schema/ui-tree/toggle-rules/invalidation-map). `extract_all.py` 가 재생성.
-- **`packages/components/`** — `@three-slicer/components`: 재사용 React 컴포넌트(props 구동, 전역/컨텍스트 결합 0). `<SettingsPanel/>` 제공(사용법: `packages/components/README.md`).
-- **`viewer/`** — 데모 앱. engine(워커·설정) + data + components(`<SettingsPanel/>`) 를 소비. (구조상 apps/demo 역할; 이름 유지)
-- **`apps/independence-check/`** — `<SettingsPanel/>` 를 App/컨텍스트/라우터 없이 단독 렌더·편집해 독립성 증명(자체 install).
+- **`../packages/data/`** — `@three-slicer/data`: 추출 JSON(config-schema/ui-tree/toggle-rules/invalidation-map). `extract_all.py` 가 재생성.
+- **`../packages/components/`** — `@three-slicer/components`: 재사용 React 컴포넌트(props 구동, 전역/컨텍스트 결합 0, Shadow DOM). `<SettingsPanel/>` 제공(사용법: `packages/components/README.md`).
+- **`../packages/viewer/`** — `@three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트(three.js, Shadow DOM).
+- **`viewer/`** — 데모 앱. engine(워커·설정) + data + components + viewer 를 워크스페이스로 소비.
 
 ### `@three-slicer/engine` 사용 (헤드리스/Node)
 
 ```js
-import { createSlicer } from '@three-slicer/engine'        // 예제: web/packages/engine/examples/headless.mjs
+import { createSlicer } from '@three-slicer/engine'        // 예제: packages/engine/examples/headless.mjs
 
 const slicer = await createSlicer()                    // WASM 커널 로드
 // 배치: 전체 결과(gcode + stats + layers)

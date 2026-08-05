@@ -11,7 +11,7 @@ export default defineConfig({
 
   // COOP/COEP → crossOriginIsolated → 워커가 mt 커널(-pthread, 2.2×) 자동 선택. 없어도 st 로 동작.
   server: {
-    fs: { allow: ['..'] },   // web/* (packages, *.json) 접근 허용
+    // fs.allow 불필요 — 루트 package.json 의 workspaces 를 Vite 가 감지해 저장소 전체를 기본 허용
     headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
   },
   preview: {

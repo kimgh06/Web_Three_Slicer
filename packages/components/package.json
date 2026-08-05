@@ -1,0 +1,46 @@
+{
+  "name": "@three-slicer/components",
+  "version": "0.1.0",
+  "description": "Reusable React components for the browser slicer (props-driven, no global/context coupling).",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "exports": {
+    "./SettingsPanel": "./dist/SettingsPanel.js"
+  },
+  "dependencies": {
+    "@three-slicer/data": "^0.1.0",
+    "@three-slicer/engine": "^0.1.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "directory": "packages/components"
+  },
+  "homepage": "https://github.com/kimgh06/Web_Three_Slicer#readme",
+  "keywords": [
+    "3d-printing",
+    "slicer",
+    "gcode",
+    "stl",
+    "wasm",
+    "orcaslicer",
+    "react",
+    "settings"
+  ]
+}

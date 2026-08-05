@@ -1,5 +1,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #222; }
+/* /slice 라우트 컨테이너 — Viewport(shadow) 의 .app-shell(absolute) 이 이 박스를 기준으로 붙는다 */
+.prepare { position: absolute; inset: 0; }
 .app header { display: flex; gap: 16px; align-items: center; padding: 8px 16px;
   border-bottom: 1px solid #ddd; position: sticky; top: 0; background: #fff; z-index: 2; }
 .app header .brand { flex: 0 0 auto; color: #111; font-weight: 700; }
@@ -21,36 +23,40 @@ body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #
 
 section { margin-bottom: 18px; }
 h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px; }
-.row { display: grid; grid-template-columns: 260px 220px 70px 1fr; gap: 8px;
-  align-items: center; padding: 3px 0; border-bottom: 1px dashed #f0f0f0; }
-.row .lbl { color: #222; text-decoration: none; }
-.row .lbl:hover { color: #0a7d4f; text-decoration: underline; }
-.row .key { font-size: 11px; color: #999; overflow: hidden; text-overflow: ellipsis; }
-.row input[type="text"], .row input:not([type]), .row select, .row textarea {
-  width: 100%; max-width: 260px; padding: 2px 6px; }
-.inputwrap { display: inline-flex; align-items: center; gap: 4px; }
-.unit { color: #888; font-size: 12px; white-space: nowrap; }
-.pts { font-size: 11px; color: #666; }
-
-.badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: #fff; text-align: center; }
-.mode-simple { background: #2e9e5b; } .mode-advanced { background: #3673c3; }
-.mode-expert { background: #d9822b; } .mode-develop { background: #c0392b; }
-.mode-none, .mode-undefined { background: #aaa; }
 
 .detail { padding: 16px 24px; max-width: 900px; }
 .detail pre { background: #f7f7f7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
 .tip { color: #555; background: #fbf8e9; padding: 8px 10px; border-radius: 6px; }
-.muted { color: #999; font-weight: 400; font-size: 12px; }
-.row.custom { grid-template-columns: 1fr; }
 
-/* 25단계 S5: toggle-rules 비활성 + dirty/리셋 */
-.row.disabled { opacity: 0.42; }
-.row.disabled input, .row.disabled select, .row.disabled textarea { cursor: not-allowed; background: #f2f2f2; }
-.lbl-cell { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.lbl-cell .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dirty-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #e8873a; box-shadow: 0 0 0 2px #fff3e6; }
-.widget-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.reset-btn { flex: 0 0 auto; border: 1px solid #d8b48a; background: #fbf1e4; color: #b5701f;
-  border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; }
-.reset-btn:hover { background: #f3e2cb; }
+/* ===== 랜딩 (/) — 기능만 단어로 나열. 슬라이서 셸 밖이라 three.js/WASM 을 로드하지 않는다 ===== */
+.landing { position: absolute; inset: 0; overflow-y: auto; background: #0e1216; color: #cdd6dd;
+  font: 15px/1.7 system-ui, -apple-system, sans-serif; }
+.landing > * { max-width: 760px; margin: 0 auto; padding: 0 28px; }
 
+.lp-head { padding-top: 96px; padding-bottom: 56px; }
+.lp-head h1 { margin: 0 0 6px; font-size: 34px; font-weight: 700; color: #e9f1f7; letter-spacing: -.01em; }
+.lp-head p { margin: 0 0 28px; font-size: 16px; color: #8d9daa; }
+.lp-cta { display: flex; gap: 9px; flex-wrap: wrap; }
+.lp-btn { display: inline-block; padding: 10px 22px; border-radius: 8px; text-decoration: none;
+  border: 1px solid #2c353d; color: #cdd6dd; background: #1a2027; font-weight: 600; font-size: 14px; }
+.lp-btn:hover { background: #222a33; }
+.lp-btn.primary { background: #00ae42; border-color: #00ae42; color: #fff; }
+.lp-btn.primary:hover { background: #039b3c; }
+
+/* 라벨 고정폭 + 기능어 흐름. 카드·테두리 없이 행 여백만으로 구분한다. */
+.lp-feat { margin: 0; padding-bottom: 64px; }
+.lp-row { display: flex; gap: 22px; padding: 13px 0; border-top: 1px solid #191f25; }
+.lp-row:first-child { border-top: 0; }
+.lp-feat dt { flex: 0 0 76px; font-size: 13px; font-weight: 600; color: #6f7d89; padding-top: 1px; }
+.lp-feat dd { margin: 0; flex: 1 1 auto; font-size: 14.5px; color: #c2ced8; }
+.lp-dot { font-style: normal; color: #4a555f; margin: 0 8px; }
+
+.lp-foot { border-top: 1px solid #191f25; padding-top: 18px; padding-bottom: 48px;
+  font-size: 12.5px; color: #626e79; }
+
+@media (max-width: 560px) {
+  .lp-head { padding-top: 60px; }
+  .lp-head h1 { font-size: 27px; }
+  .lp-row { flex-direction: column; gap: 5px; }
+  .lp-feat dt { flex: none; }
+}

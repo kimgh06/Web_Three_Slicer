@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Stage-16: link + run the REAL organic TreeSupport pipeline (isolated port tree + adapter driver).
+set -uo pipefail
+export EMSDK_PYTHON=/opt/homebrew/bin/python3.14
+export PATH="/opt/homebrew/opt/emscripten/bin:$PATH"
+cd "$(dirname "$0")/.."
+REPO=/Users/kim/Documents/github/web3d_slicer/packages/wasm-core/third_party
+P=treesupport_port; L=$P/libslic3r
+# -Iarachne_port/cgal_stubs (read-only) FIRST: overrides boost/config/detail/suffix wasm fenv so CGAL 6.x
+# (header-only, brew) compiles under emscripten — same override the main build.sh uses (stage 14/15).
+INC="-Iarachne_port/cgal_stubs -I$P -I$L -I$L/Support -I$REPO/deps_src -I$REPO/deps_src/libnest2d/include -I$REPO/deps_src/libigl -I$REPO/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
+C2=$REPO/deps_src/clipper2/Clipper2Lib
+SRC="
+  $L/Support/SupportCommon.cpp $L/Support/TreeModelVolumes.cpp $L/Support/TreeSupport3D.cpp $L/Support/TreeSupport.cpp
+  $L/Config.cpp $L/PrintConfig.cpp $L/MaterialType.cpp $L/Flow.cpp
+  $L/Point.cpp $L/Line.cpp $L/Polygon.cpp $L/Polyline.cpp $L/MultiPoint.cpp $L/BoundingBox.cpp $L/ExPolygon.cpp
+  $L/ClipperUtils.cpp $L/Surface.cpp $L/EdgeGrid.cpp $L/ArcFitter.cpp $L/Circle.cpp $L/Geometry.cpp $L/libslic3r.cpp
+  $L/Layer.cpp $L/MutablePolygon.cpp $L/BuildVolume.cpp $L/SurfaceCollection.cpp $L/TriangleMesh.cpp $L/TriangleMeshSlicer.cpp $L/Fill/FillLightning.cpp $L/MinimumSpanningTree.cpp $L/ShortestPath.cpp $L/ExtrusionEntity.cpp $L/ExtrusionEntityCollection.cpp $L/Clipper2Utils.cpp
+  $L/Geometry/ConvexHull.cpp $L/Geometry/Circle.cpp $L/Geometry/Voronoi.cpp $L/Geometry/VoronoiUtils.cpp $L/Geometry/VoronoiUtilsCgal.cpp
+  $L/Fill/Lightning/DistanceField.cpp $L/Fill/Lightning/Generator.cpp $L/Fill/Lightning/Layer.cpp $L/Fill/Lightning/TreeNode.cpp
+  $L/Arachne/WallToolPaths.cpp $L/Arachne/SkeletalTrapezoidation.cpp $L/Arachne/SkeletalTrapezoidationGraph.cpp
+  $L/Arachne/BeadingStrategy/BeadingStrategy.cpp $L/Arachne/BeadingStrategy/BeadingStrategyFactory.cpp $L/Arachne/BeadingStrategy/DistributedBeadingStrategy.cpp $L/Arachne/BeadingStrategy/LimitedBeadingStrategy.cpp $L/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.cpp $L/Arachne/BeadingStrategy/RedistributeBeadingStrategy.cpp $L/Arachne/BeadingStrategy/WideningBeadingStrategy.cpp
+  $L/Arachne/utils/ExtrusionLine.cpp $L/Arachne/utils/PolylineStitcher.cpp $L/Arachne/utils/SquareGrid.cpp
+  $L/Fill/FillBase.cpp $L/Fill/FillRectilinear.cpp $L/Fill/FillConcentric.cpp
+  $L/Fill/FillGyroid.cpp $L/Fill/FillHoneycomb.cpp $L/Fill/Fill3DHoneycomb.cpp $L/Fill/FillCrossHatch.cpp
+  $P/localesutils_wasm.cpp $L/clipper.cpp $REPO/deps_src/clipper/clipper_z.cpp
+  $C2/src/clipper.engine.cpp $C2/src/clipper.offset.cpp $C2/src/clipper.rectclip.cpp
+  ${EXTRA:-}
+  $P/test_treesupport.cpp
+"
+# -DNDEBUG: OrcaSlicer ships Release with asserts compiled out. The tree-support/geometry code carries
+# strict debug-only geometric asserts (e.g. MutablePolygon clip_narrow_corner) that production never runs;
+# match that so the pipeline behaves as it ships.
+em++ -O1 -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK $INC $SRC -s ENVIRONMENT=node -s ALLOW_MEMORY_GROWTH=1 -s TOTAL_STACK=64MB -o $P/test_ts.js 2>&1 \
+  | grep -viE "warning:|note:|In file included|macro redefined|previous definition|\^|~|^\s*\|" | grep -iE 'error|undefined' | head -40
+if [ -f $P/test_ts.js ]; then echo "=== LINK OK. RUN ==="; node $P/test_ts.js; rm -f $P/test_ts.js; else echo "=== LINK/COMPILE FAILED ==="; fi

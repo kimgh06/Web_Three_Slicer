@@ -28,7 +28,7 @@ function App() {
 }
 ```
 
-Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see `web/packages/engine/README.md`.
+Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see `packages/engine/README.md`.
 
 ## Repository layout
 
@@ -40,7 +40,7 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see
 cd web/viewer && npm i && npm run dev
 
 # kernel test suite (120+ invariants)
-node web/wasm-core/test.mjs
+node packages/wasm-core/test.mjs
 
 # tarball independence gate (packs all 4, builds Vite+Next consumers outside the repo)
 bash web/pack_check.sh

@@ -16,6 +16,7 @@ CMakeLists.txt.user
 /.cache/
 *.code-workspace
 .init_bundle.ini
+node_modules/
 
 # 도구 디렉토리 (세션/플러그인)
 .omc/
@@ -23,58 +24,25 @@ CMakeLists.txt.user
 .claude/
 .playwright-mcp/
 
-# ── slicer/ (원본 OrcaSlicer — 이동 전 루트 패턴을 slicer/ 접두로 정합) ──
-slicer/Build
-slicer/Build.bat
-slicer/build*/
-slicer/deps/build*
-slicer/deps/build*/*
-slicer/build-linux/*
-slicer/build_*/
-slicer/install_*
-slicer/MYMETA.json
-slicer/MYMETA.yml
-slicer/_build
-slicer/blib
-slicer/xs/buildtmp
-slicer/MANIFEST.bak
-slicer/xs/MANIFEST.bak
-slicer/xs/assertlib*
-slicer/local-lib
-slicer/src/TAGS
-slicer/SVG
-slicer/src/OrcaSlicer-doc/
-slicer/**/process_full/
-slicer/**/machine_full/
-slicer/**/filament_full/
-slicer/deps/DL_CACHE/
-slicer/deps/DL_CACHE
-slicer/**/.flatpak-builder/
-slicer/*.no-debug.yml
-slicer/resources/profiles/user/default
-slicer/deps_src/build/
-slicer/test.js
-slicer/internal_docs/
-slicer/*.flatpak
-slicer/flatpak-repo/
-
-# ── web/ (웹 workspace) ─────────────────────────────────
-web/**/node_modules/
+# ── web/ (데모 앱) + packages/ (npm 워크스페이스) ─────────
 web/**/dist/
 web/**/*.gcode
 web/**/*.tsbuildinfo
+packages/**/dist/
+packages/**/*.gcode
+packages/**/*.tsbuildinfo
 
 # ── 커널 개발 부산물 (저장소에 넣지 않는다) ──────────────────
 # 단계별 검증 스크린샷: 문서에 경로만 인용되는 증적이라 소스 저장소에 둘 이유가 없다(6.6MB).
-web/wasm-core/*.png
-web/wasm-core/screenshots/
+packages/wasm-core/*.png
+packages/wasm-core/screenshots/
 # 테스트용 emscripten 산출물: build.sh 로 재생성 가능한 빌드 결과물(6.5MB).
 #  배포되는 커널(packages/engine/src/slicer_core*.js)은 예외로 계속 추적한다.
-web/wasm-core/**/test_*.wasm
-web/wasm-core/**/test_*.js
+packages/wasm-core/**/test_*.wasm
+packages/wasm-core/**/test_*.js
 # 일회성 조사/재현 스크립트 (회귀 스위트가 아님)
-web/wasm-core/repro_*.mjs
-web/wasm-core/compare_*.mjs
+packages/wasm-core/repro_*.mjs
+packages/wasm-core/compare_*.mjs
 
 # 참조용 원본 클론 (독립 저장소)
 slicer/

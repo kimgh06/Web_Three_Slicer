@@ -8,14 +8,15 @@ import Viewport from '@three-slicer/viewer'
 import SettingsPanel from '@three-slicer/components/SettingsPanel'   // 33단계 Phase 4: 분리된 독립 컴포넌트
 import { settingRaw } from '@three-slicer/engine/settings'
 import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
+import Landing from './Landing.jsx'
 
 // 25단계 S5.2: dirty 판정 — settings 에 값이 있고 스키마 default 와 다르면 변경됨(프리셋 시스템 전이므로 기준=default).
 function isDirty(settings, key) {
   if (!settings || !(key in settings)) return false
-  const d = schema[key]?.default
-  const def = Array.isArray(d) ? d[0] : d
-  const cur = settings[key]
-  return String(cur) !== String(def ?? '')
+  const keyDefault = schema[key]?.default
+  const def = Array.isArray(keyDefault) ? keyDefault[0] : keyDefault
+  const current = settings[key]
+  return String(current) !== String(def ?? '')
 }
 
 const MAIN_BUILDERS = Object.keys(uiTree).filter(b => uiTree[b].length > 0)
@@ -124,7 +125,7 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled }) {
     <div className={'row' + (off ? ' disabled' : '')} title={off ? `비활성 조건: ${cond}` : (def?.tooltip ?? '')} data-testid={`row-${optKey}`}>
       <span className="lbl-cell">
         {dirty && <span className="dirty-dot" title="기본값에서 변경됨" data-testid={`dirty-${optKey}`} />}
-        <Link className="lbl" to={`/option/${optKey}`} title="상세(딥링크)">{def?.label || def?.full_label || optKey}</Link>
+        <Link className="lbl" to={`/slice/option/${optKey}`} title="상세(딥링크)">{def?.label || def?.full_label || optKey}</Link>
       </span>
       <code className="key">{optKey}</code>
       <ModeBadge mode={def?.mode} />
@@ -143,7 +144,7 @@ function OptionRow({ optKey }) {
   const def = schema[optKey]
   return (
     <div className="row" title={def?.tooltip ?? ''}>
-      <Link className="lbl" to={`/option/${optKey}`}>{def?.label || def?.full_label || optKey}</Link>
+      <Link className="lbl" to={`/slice/option/${optKey}`}>{def?.label || def?.full_label || optKey}</Link>
       <code className="key">{optKey}</code>
       <ModeBadge mode={def?.mode} />
       <Widget def={def} />
@@ -253,19 +254,24 @@ function Prepare() {
   return (
     <div className="prepare">
       <Viewport settings={settings} setSettings={setSettings}
-        processPanel={<SettingsPanel settings={settings} setSettings={setSettings}
-          onOptionOpen={key => navigate(`/option/${key}`)} />} />
+        processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings}
+          onOptionOpen={key => navigate(`/slice/option/${key}`)} />} />
     </div>
   )
 }
 
-export const routes = [{
-  path: '/',
-  element: <Layout />,
-  children: [
-    { index: true, element: <Prepare /> },
-    { path: 'tab/:builder', element: <TabView /> },
-    { path: 'option/:key', element: <OptionDetail /> },
-    { path: 'search', element: <Search /> },
-  ],
-}]
+// 랜딩(/)과 슬라이서(/slice)를 분리한다. 랜딩은 Layout(3D 셸) 밖에 두어
+//  three.js/WASM 초기화 없이 뜨게 한다 — 소개만 보러 온 사람에게 커널을 로드시키지 않는다.
+export const routes = [
+  { path: '/', element: <Landing /> },
+  {
+    path: '/slice',
+    element: <Layout />,
+    children: [
+      { index: true, element: <Prepare /> },
+      { path: 'tab/:builder', element: <TabView /> },
+      { path: 'option/:key', element: <OptionDetail /> },
+      { path: 'search', element: <Search /> },
+    ],
+  },
+]

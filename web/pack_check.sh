@@ -3,7 +3,7 @@
 # Vite/Next 소비자 앱을 스캐폴드해 tarball 만으로 빌드가 성공하는지 확인.
 # (런타임 E2E 슬라이스는 별도 — 이 스크립트는 빌드 게이트만. 브라우저 불필요)
 set -euo pipefail
-WEB="$(cd "$(dirname "$0")" && pwd)"
+WEB="$(cd "$(dirname "$0")/.." && pwd)"   # 저장소 루트 (packages/ 는 이제 web/ 의 형제)
 TMP="$(mktemp -d /tmp/three-slicer-packcheck.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 echo "== pack -> $TMP"
@@ -35,7 +35,6 @@ cat > src/main.jsx <<'EOF'
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import Viewport from '@three-slicer/viewer'
-import '@three-slicer/viewer/styles.css'
 import SettingsPanel from '@three-slicer/components/SettingsPanel'
 function App() {
   const [settings, setSettings] = useState({})
@@ -68,7 +67,6 @@ EOF
 cat > pages/index.jsx <<'EOF'
 import dynamic from 'next/dynamic'
 import React, { useState } from 'react'
-import '@three-slicer/viewer/styles.css'
 const Viewport = dynamic(() => import('@three-slicer/viewer'), { ssr: false })
 const SettingsPanel = dynamic(() => import('@three-slicer/components/SettingsPanel'), { ssr: false })
 export default function Home() {
