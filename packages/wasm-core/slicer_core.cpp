@@ -189,6 +189,7 @@ struct Params {
   //  + 시간추정(r.moves 대량 상주) 생략 → G-code 만 스트리밍으로 끝까지 방출. 레이어 싱크가 설정된
   //  스트리밍 경로에서만 유효(기본 false — 배치 경로 무영향).
   bool   economy=false;
+  bool   arachne_dump=false;   // 임시 진단: PASS1 arachne 입력 폴리곤을 stderr 로 덤프
 };
 static size_t jfind_val(const std::string& s, const char* key) {
   std::string k = std::string("\"") + key + "\"";
@@ -341,6 +342,7 @@ static Params parse_params(const std::string& j) {
   p.machine_max_speed_e           = jget(j,"machine_max_speed_e",p.machine_max_speed_e);
   p.time_engine                   = jstr(j,"time_engine",p.time_engine);
   p.economy                       = jbool(j,"economy",p.economy);
+  p.arachne_dump                  = jbool(j,"arachne_dump",p.arachne_dump);
   // 21단계: 피처별 폭 해석 (nozzle 파싱 후). line_width 가 0 이면 원본 auto 로 승격(뷰어는 기본 0.42 전송 → 불변).
   {
     const double noz = p.nozzle_diameter;
@@ -1306,11 +1308,38 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         if (!last.empty()) ld.fill = offset_paths(last, -(w*0.5));
         // 7단계: arachne 모드 → 실제 이식된 WallToolPaths 로 가변폭 벽 생성(벽만 대체, fill 은 classic 유지).
         if (p.wall_generator == "arachne") {
+          // [초고밀도 윤곽 가드] 300만 tri급 모델의 원시 슬라이스 윤곽(레이어당 수만 점)을 그대로 먹이면
+          //  이식 Arachne(SkeletalTrapezoidation)가 와일드 포인터 trap 으로 죽는다(실측: 레이어 0 즉발,
+          //  ASAN 리포트 없는 raw OOB; classic 은 동일 모델 완주). 원본 OrcaSlicer 는 resolution 단순화를
+          //  거친 윤곽을 넘기지만 커널 PASS1 은 생략하므로, 점수 임계 초과 시에만 5µm 톨러런스로 감량.
+          //  임계 미만(골든 픽스처 포함)은 무변경 → golden byte-identical 유지.
+          // [Arachne 입력 위생] 원본은 resolution(0.012mm) 단순화된 strictly-simple 윤곽을 먹지만
+          //  커널 PASS1 은 원시 슬라이스 윤곽을 그대로 넘긴다. 비다양체 모델(셸 겹침·자가접촉)의
+          //  레이어에는 µm 엣지·자가교차·슬리버가 남아 이식 SkeletalTrapezoidation 이 와일드 포인터로
+          //  즉사한다(실측: 300만 tri 모델, 크래시 레이어 입력에 1µm 엣지 10개 + 자가교차 폴리곤).
+          //  원본 규칙에 맞춰 3단 위생: ①10µm Clean(µm 엣지 붕괴) ②재-Simplify(Clean 이 만들 수 있는
+          //  자가교차 해소, strictly-simple 재확립) ③노즐 미만 슬리버(<0.02mm²) 제거.
+          //  정상 윤곽(골든 픽스처 포함)은 3단 모두 무변경 통과.
+          Paths arachneSrc = ld.contour;
+          CleanPolygons(arachneSrc, SCALE * 0.01);
+          arachneSrc = SimplifyPolygons(arachneSrc, pftEvenOdd);
+          { const double minA = 0.02 * SCALE * SCALE;
+            arachneSrc.erase(std::remove_if(arachneSrc.begin(), arachneSrc.end(),
+              [&](const Path& q){ return q.size() < 3 || std::fabs(Area(q)) < minA; }), arachneSrc.end()); }
           std::vector<std::vector<std::pair<double,double>>> polys;
-          for (const Path& pth : ld.contour) {
+          for (const Path& pth : arachneSrc) {
             std::vector<std::pair<double,double>> poly; poly.reserve(pth.size());
             for (const IntPoint& q : pth) poly.push_back({q.x()*INV, q.y()*INV});
             if (poly.size() >= 3) polys.push_back(std::move(poly));
+          }
+          if (p.arachne_dump) {   // 임시 진단: 크래시 직전 입력 캡처(마지막 출력 = 죽는 레이어)
+            fprintf(stderr, "ARACHNE_IN L=%d npolys=%d\n", i, (int)polys.size());
+            for (size_t pi=0; pi<polys.size(); ++pi) {
+              fprintf(stderr, "P%d[%d]:", (int)pi, (int)polys[pi].size());
+              for (auto& q : polys[pi]) fprintf(stderr, " %.6f,%.6f", q.first, q.second);
+              fprintf(stderr, "\n");
+            }
+            fflush(stderr);
           }
           ld.arachneWalls = arachne_bridge::generate_walls(polys, w, p.wall_loops, ld.h);
           ld.thin.clear();   // arachne 가 얇은 영역을 가변폭 벽으로 직접 처리 → classic 씬월 비활성
@@ -1694,6 +1723,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // ---- PASS 2: 솔리드/스파스 인필 분리 + 서포트 + 방출 ----
   for (int i=0;i<N;++i) {
+    // 조기 해제: 방출이 지난 레이어 중 이후 역참조 범위(botSurf ≤ bottom_shell_layers−1,
+    //  supIface ≤ 1) 밖은 즉시 비움 → 방출 단계 힙 상주(전 레이어 L[]) 평탄화, 대형 모델 OOM 완화.
+    //  참조 범위 밖만 비우므로 G-code 불변(golden byte-identical 로 검증).
+    { int old = i - std::max(p.bottom_shell_layers, 1) - 1;
+      if (old >= 0) L[old] = LayerData{}; }
     LayerData& ld = L[i];
     double zE = ld.z + zShift;                                        // 실제 방출 Z (래프트 시프트)
     gw.set_e_per_mm(ld.h, p);

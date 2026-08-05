@@ -11,6 +11,8 @@ set -euo pipefail
 
 export EMSDK_PYTHON=/opt/homebrew/bin/python3.14
 export PATH="/opt/homebrew/opt/emscripten/bin:$PATH"
+# ccache 래핑: 미변경 TU 재사용 → 단일 파일 수정 재빌드가 분 단위 → 수십 초. (brew install ccache)
+command -v ccache >/dev/null && export EM_COMPILER_WRAPPER=ccache
 
 cd "$(dirname "$0")"
 # 34단계: deps 사본을 third_party/ 로 복사 → slicer/ 의존 제거(REPO 삭제)
@@ -101,26 +103,47 @@ TS_UNIQUE_SRC="
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
 "
 TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
+# ---- 병렬 컴파일 헬퍼: 소스별 .o 를 코어 수만큼 동시 컴파일 (기존: em++ 1회 호출 = 순차 컴파일) ----
+#  ccache(EM_COMPILER_WRAPPER)가 헤더 의존 포함 캐싱을 담당하므로 mtime 증분 로직 없이 매번 전체 호출
+#  — 미변경 TU 는 캐시 히트로 ~0.1s. 링크는 소스 나열 순서 그대로 .o 를 넘겨 결정성(golden) 유지.
+NCPU=$(sysctl -n hw.ncpu 2>/dev/null || echo 8)
+pcompile() {  # $1=objdir  $2=컴파일 플래그(문자열)  이후=소스 목록
+  local objdir="$1" flags="$2"; shift 2
+  mkdir -p "$objdir"
+  printf '%s\n' "$@" | OBJDIR="$objdir" CFLAGS="$flags" xargs -P "$NCPU" -I SRC bash -c '
+    em++ $CFLAGS -c "SRC" -o "$OBJDIR/$(printf "%s" "SRC" | tr "/" "_").o"'
+}
+objs() {  # $1=objdir  이후=소스 목록 → 소스 순서 그대로 .o 경로 출력
+  local objdir="$1"; shift; local s
+  for s in "$@"; do printf '%s/%s.o ' "$objdir" "$(printf '%s' "$s" | tr '/' '_')"; done
+}
+
 TS_GROUP_OBJ=/tmp/ts_group.o
-echo "compiling treesupport group (isolated) -> $TS_GROUP_OBJ"
-em++ -O2 -std=c++17 -r -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK $TS_INC $TS_UNIQUE_SRC -o $TS_GROUP_OBJ
+TS_CFLAGS="-O2 -std=c++17 -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK $TS_INC"
+echo "compiling treesupport group (isolated, parallel x$NCPU) -> $TS_GROUP_OBJ"
+pcompile /tmp/ws_obj/ts_st "$TS_CFLAGS" $TS_UNIQUE_SRC
+em++ -O2 -r $(objs /tmp/ws_obj/ts_st $TS_UNIQUE_SRC) -o $TS_GROUP_OBJ
 
 ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 
 # 속도 플래그 실측 (2026-07-29, big_cyl arachne+support): -O3 -msimd128 은 5183ms vs -O2 5149ms —
 #  이득 0.7%(노이즈) 에 크기 +9%(3.43→3.74MB) 라 -O2 유지. -flto 는 wasm-ld SIGSEGV(-r 부분링크 충돌).
 #  -ffast-math 는 금지(golden byte-identical 깨짐). 병목은 스칼라 정수 폴리곤 연산 — 실 레버는 스레딩.
+MAIN_SRC="slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+MAIN_CFLAGS="-O2 --bind -std=c++17 -DCGAL_DISABLE_ROUNDING_MATH_CHECK $ARACHNE_INC"
+echo "compiling main sources (st, parallel x$NCPU)"
+pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 --bind -std=c++17 \
-  -DCGAL_DISABLE_ROUNDING_MATH_CHECK \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s SINGLE_FILE=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
+  -s MAXIMUM_MEMORY=4GB \
+  -s STACK_SIZE=2MB \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
-  $ARACHNE_INC \
   -o ../engine/src/slicer_core.js \
-  slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC $TS_GROUP_OBJ
+  $(objs /tmp/ws_obj/st $MAIN_SRC) $TS_GROUP_OBJ
 
 # webpack 호환: ENVIRONMENT_IS_NODE 가드 안의 동적 import("node:module") 를 webpack 이
 # 정적 해석하다 실패(node: 스킴) → webpackIgnore 매직 코멘트로 제외. 런타임 동작 불변(Vite/Node 무영향).
@@ -132,22 +155,26 @@ ls -la ../engine/src/slicer_core.js
 # ---- 멀티스레드(mt) 빌드: PASS 1 레이어 병렬 (__EMSCRIPTEN_PTHREADS__) ----
 #  별도 산출물 — 기본(st)은 zero-config 유지, mt 는 브라우저에서 COOP/COEP(crossOriginIsolated) 필요.
 #  ALLOW_MEMORY_GROWTH+pthreads 조합은 emscripten 이 성능 경고를 내지만 기능상 유효(측정으로 판단).
-echo "compiling treesupport group (mt) -> /tmp/ts_group_mt.o"
-em++ -O2 -pthread -std=c++17 -r -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK $TS_INC $TS_UNIQUE_SRC -o /tmp/ts_group_mt.o
+echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
+pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
+em++ -O2 -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
 
+echo "compiling main sources (mt, parallel x$NCPU)"
+pcompile /tmp/ws_obj/mt "-pthread $MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 -pthread --bind -std=c++17 \
-  -DCGAL_DISABLE_ROUNDING_MATH_CHECK \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s SINGLE_FILE=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
+  -s MAXIMUM_MEMORY=4GB \
+  -s STACK_SIZE=2MB \
+  -s DEFAULT_PTHREAD_STACK_SIZE=2MB \
   -s MALLOC=mimalloc \
   -s PTHREAD_POOL_SIZE='(typeof navigator!=="undefined"&&navigator.hardwareConcurrency)||4' \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
-  $ARACHNE_INC \
   -o ../engine/src/slicer_core.mt.js \
-  slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC /tmp/ts_group_mt.o
+  $(objs /tmp/ws_obj/mt $MAIN_SRC) /tmp/ts_group_mt.o
 
 sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
 # mt 글루의 pthread 부트스트랩에도 동일 케이스: Node 가드 안의 동적 import("node:worker_threads")
