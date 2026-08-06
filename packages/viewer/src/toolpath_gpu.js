@@ -75,11 +75,11 @@ export function buildSegmentData(layers, defaultLineWidth) {
   }
 
   const nV = vx.length, nSeg = segIdA.length
-  // 텍스처 배열 (RGBA)
+  // 텍스처 배열 (RGBA). 색은 별도 텍스처 대신 hwa.w 에 패킹 — 정점당 texelFetch 1회 절감 + 텍스처 1장 제거.
   const position = new Float32Array(nV * 4)
   const hwa = new Float32Array(nV * 4)
-  const color = new Float32Array(nV * 4)
   let maxAbs = 0, hasNaN = false
+  let bx0 = Infinity, by0 = Infinity, bz0 = Infinity, bx1 = -Infinity, by1 = -Infinity, bz1 = -Infinity   // frustum culling용 bbox
   for (let i = 0; i < nV; i++) {
     const h = vh[i]
     // 원본: position.z -= 0.5*height (다이아몬드 중심을 비드 중앙에 배치)
@@ -95,9 +95,12 @@ export function buildSegmentData(layers, defaultLineWidth) {
       angle = Math.atan2(pdx * tdy - pdy * tdx, pdx * tdx + pdy * tdy + pdz * tdz)
     }
     hwa[i * 4] = h; hwa[i * 4 + 1] = vw[i]; hwa[i * 4 + 2] = angle
-    color[i * 4] = packColor(TYPE_COLOR[vtype[i]] || TYPE_COLOR[1])
+    hwa[i * 4 + 3] = packColor(TYPE_COLOR[vtype[i]] || TYPE_COLOR[1])   // .w = packed color (f32 로 <2^24 정확)
     if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz) || !Number.isFinite(angle)) hasNaN = true
     maxAbs = Math.max(maxAbs, Math.abs(px), Math.abs(py), Math.abs(pz))
+    if (px < bx0) bx0 = px; if (px > bx1) bx1 = px
+    if (py < by0) by0 = py; if (py > by1) by1 = py
+    if (pz < bz0) bz0 = pz; if (pz > bz1) bz1 = pz
   }
   // 세그먼트 인덱스 (레이어 순서) + 레이어별 누적 프리픽스(가시범위 O(1))
   //  .r=id_a, .g=레이어(이중 슬라이더의 하한 컷을 셰이더가 O(1) 판정 → 텍스처 재업로드 불필요)
@@ -112,10 +115,17 @@ export function buildSegmentData(layers, defaultLineWidth) {
   const nTrav = travelLayer.length
   const travelPos = new Float32Array(nTrav * 6)
   for (let i = 0; i < travelPos.length; i++) travelPos[i] = travel[i]
+  for (let i = 0; i < travelPos.length; i += 3) {   // 트래블도 bbox 에 포함(같은 sphere 로 컬링)
+    const x = travelPos[i], y = travelPos[i + 1], z = travelPos[i + 2]
+    if (x < bx0) bx0 = x; if (x > bx1) bx1 = x
+    if (y < by0) by0 = y; if (y > by1) by1 = y
+    if (z < bz0) bz0 = z; if (z > bz1) bz1 = z
+  }
   const travelPrefix = new Int32Array(L + 1)
   { let s = 0; for (let n = 0; n < L; n++) { while (s < nTrav && travelLayer[s] === n) s++; travelPrefix[n + 1] = s } }
 
-  return { position, hwa, color, segIndex, nV, nSeg, layerSegPrefix, travelPos, travelPrefix, nTrav, layerCount: L, maxAbs, hasNaN, meta, typeLengths }
+  const bbox = nV + nTrav > 0 ? { min: [bx0, by0, bz0], max: [bx1, by1, bz1] } : null
+  return { position, hwa, segIndex, nV, nSeg, layerSegPrefix, travelPos, travelPrefix, nTrav, layerCount: L, maxAbs, hasNaN, meta, typeLengths, bbox }
 }
 
 // S6.3: 역할별 비율 범례 데이터 — 타입별 길이 % (시간은 커널이 role별 미노출 → 길이 비율로 근사, 문서화).
@@ -211,11 +221,11 @@ uniform mat4 projection_matrix;
 uniform vec3 camera_position;
 uniform sampler2D position_tex;
 uniform sampler2D height_width_angle_tex;
-uniform sampler2D color_tex;
-uniform usampler2D segment_index_tex;
 uniform int layer_lo;   // 25단계: 이중 슬라이더 하한(레이어). 범위 밖 세그먼트는 셰이더가 O(1) 클립.
 uniform int layer_hi;   //          상한은 instanceCount 로 컷(레이어 순 정렬).
 in float vertex_id_float;
+in uint seg_id_a_u;     // 인스턴스 어트리뷰트(구 segment_index_tex.r) — 어트리뷰트 fetch 가 texelFetch 보다 쌈
+in uint seg_layer_u;    // 인스턴스 어트리뷰트(구 segment_index_tex.g)
 out vec3 color;
 vec3 decode_color(float col) {
   int c = int(round(col));
@@ -235,16 +245,11 @@ ivec2 tex_coord(sampler2D sampler, int id) {
   ivec2 tex_size = textureSize(sampler, 0);
   return (tex_size.y == 1) ? ivec2(id, 0) : ivec2(id % tex_size.x, id / tex_size.x);
 }
-ivec2 tex_coord_u(usampler2D sampler, int id) {
-  ivec2 tex_size = textureSize(sampler, 0);
-  return (tex_size.y == 1) ? ivec2(id, 0) : ivec2(id % tex_size.x, id / tex_size.x);
-}
 void main() {
   int vertex_id = int(vertex_id_float);
-  uvec4 seg_texel = texelFetch(segment_index_tex, tex_coord_u(segment_index_tex, gl_InstanceID), 0);
-  int seg_layer = int(seg_texel.g);
+  int seg_layer = int(seg_layer_u);
   if (seg_layer < layer_lo || seg_layer > layer_hi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // 범위 밖 → 클립
-  int id_a = int(seg_texel.r);
+  int id_a = int(seg_id_a_u);
   int id_b = id_a + 1;
   vec3 pos_a = texelFetch(position_tex, tex_coord(position_tex, id_a), 0).xyz;
   vec3 pos_b = texelFetch(position_tex, tex_coord(position_tex, id_b), 0).xyz;
@@ -270,7 +275,8 @@ void main() {
     );
   int id = vertex_id < 4 ? id_a : id_b;
   vec3 endpoint_pos = vertex_id < 4 ? pos_a : pos_b;
-  vec3 height_width_angle = texelFetch(height_width_angle_tex, tex_coord(height_width_angle_tex, id), 0).xyz;
+  vec4 hwa_color = texelFetch(height_width_angle_tex, tex_coord(height_width_angle_tex, id), 0);   // .xyz=h/w/angle, .w=packed color
+  vec3 height_width_angle = hwa_color.xyz;
 #ifdef FIX_TWISTING
   int closer_id = (dot(camera_position - pos_a, camera_position - pos_a) < dot(camera_position - pos_b, camera_position - pos_b)) ? id_a : id_b;
   vec3 closer_pos = (closer_id == id_a) ? pos_a : pos_b;
@@ -310,7 +316,7 @@ void main() {
   }
   vec3 eye_position = (view_matrix * vec4(pos, 1.0)).xyz;
   vec3 eye_normal = (view_matrix * vec4(normalize(pos - endpoint_pos), 0.0)).xyz;
-  vec3 color_base = decode_color(texelFetch(color_tex, tex_coord(color_tex, id), 0).r);
+  vec3 color_base = decode_color(hwa_color.w);
   color = color_base * lighting(eye_position, eye_normal);
   gl_Position = projection_matrix * vec4(eye_position, 1.0);
 }
@@ -336,21 +342,19 @@ export function makeToolpath(THREE, data) {
     t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true
     return t
   }
-  const uintTex = (arr, count) => {
-    const W = Math.min(2048, Math.max(1, count)), H = Math.max(1, Math.ceil(count / W))
-    const buf = new Uint32Array(W * H * 4); buf.set(arr.subarray(0, Math.min(arr.length, W * H * 4)))
-    const t = new THREE.DataTexture(buf, W, H, THREE.RGBAIntegerFormat, THREE.UnsignedIntType)
-    t.internalFormat = 'RGBA32UI'; t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true
-    return t
-  }
   const posTex = floatTex(data.position, data.nV)
-  const hwaTex = floatTex(data.hwa, data.nV)
-  const colTex = floatTex(data.color, data.nV)
-  const segTex = uintTex(data.segIndex, Math.max(1, data.nSeg))
+  const hwaTex = floatTex(data.hwa, data.nV)   // .w = packed color
 
   const geo = new THREE.InstancedBufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(VERTEX_DATA.length * 3), 3))  // 더미(드로우 카운트=24)
-  geo.setAttribute('vertex_id_float', new THREE.BufferAttribute(new Float32Array(VERTEX_DATA), 1))
+  // 원본 SegmentTemplate 방식 복원: 8정점 + 24인덱스(VERTEX_DATA). 비인덱스 24정점 전개 대비
+  //  정점 셰이더 실행이 인스턴스당 24→8회 — 같은 삼각형·같은 순서라 픽셀 동일.
+  geo.setIndex(VERTEX_DATA)
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(8 * 3), 3))   // 더미(정점 8개)
+  geo.setAttribute('vertex_id_float', new THREE.BufferAttribute(new Float32Array([0, 1, 2, 3, 4, 5, 6, 7]), 1))
+  // 세그먼트 인덱스는 텍스처 대신 인스턴스 어트리뷰트 — segIndex(Uint32 [id_a,layer,0,0]) 배열을 그대로 인터리브.
+  const segBuf = new THREE.InstancedInterleavedBuffer(data.segIndex, 4)
+  geo.setAttribute('seg_id_a_u', new THREE.InterleavedBufferAttribute(segBuf, 1, 0))
+  geo.setAttribute('seg_layer_u', new THREE.InterleavedBufferAttribute(segBuf, 1, 1))
   geo.instanceCount = 0
 
   const mat = new THREE.RawShaderMaterial({
@@ -361,8 +365,6 @@ export function makeToolpath(THREE, data) {
       camera_position: { value: new THREE.Vector3() },
       position_tex: { value: posTex },
       height_width_angle_tex: { value: hwaTex },
-      color_tex: { value: colTex },
-      segment_index_tex: { value: segTex },
       layer_lo: { value: 0 },
       layer_hi: { value: data.layerCount },
     },
@@ -371,7 +373,17 @@ export function makeToolpath(THREE, data) {
   })
 
   const mesh = new THREE.Mesh(geo, mat)
-  mesh.frustumCulled = false
+  // 플레이트 단위 frustum culling — 더미 position 이라 자동 계산 불가, buildSegmentData bbox 로 수동 설정.
+  //  화면 밖 플레이트만 스킵하므로 시각 변화 0 (실측: 다중 플레이트 줌인 24→110fps).
+  let sphere = null
+  if (data.bbox) {
+    const { min, max } = data.bbox
+    const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2)
+    const r = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2 + 2   // +2mm: 비드 반폭 여유
+    sphere = new THREE.Sphere(c, r)
+  }
+  mesh.frustumCulled = !!sphere
+  if (sphere) geo.boundingSphere = sphere
   const _inv = new THREE.Matrix4(), _cw = new THREE.Vector3()
   mesh.onBeforeRender = (renderer, scene, camera) => {
     mat.uniforms.projection_matrix.value.copy(camera.projectionMatrix)
@@ -386,7 +398,8 @@ export function makeToolpath(THREE, data) {
   travGeo.setAttribute('position', new THREE.BufferAttribute(data.travelPos, 3))
   travGeo.setDrawRange(0, 0)
   const travLines = new THREE.LineSegments(travGeo, new THREE.LineBasicMaterial({ color: 0x6b727a }))
-  travLines.frustumCulled = false; travLines.visible = false
+  travLines.frustumCulled = !!sphere; travLines.visible = false
+  if (sphere) travGeo.boundingSphere = sphere
 
   let travelOn = false, visLo = 0, visHi = data.layerCount - 1
   const applyTravelRange = () => {
@@ -403,10 +416,14 @@ export function makeToolpath(THREE, data) {
   }
   const setVisibleLayers = (n) => setLayerRange(0, (n | 0) - 1)   // 하위호환: 하위 n 레이어 표시
   const setTravelVisible = (v) => { travelOn = !!v; travLines.visible = travelOn; applyTravelRange() }
-  // 뷰 타입 색 재계산 결과 업로드(color 텍스처만 교체 — §7 구조).
-  const setColors = (arr) => { const d = colTex.image.data; d.set(arr.subarray(0, Math.min(arr.length, d.length))); colTex.needsUpdate = true }
+  // 뷰 타입 색 재계산 결과 업로드 — packed color 를 hwa.w 로 (computeColors 반환 포맷 [i*4]=packed 은 불변).
+  const setColors = (arr) => {
+    const d = hwaTex.image.data, n = Math.min(arr.length, d.length) / 4
+    for (let i = 0; i < n; i++) d[i * 4 + 3] = arr[i * 4]
+    hwaTex.needsUpdate = true
+  }
   const dispose = () => {
-    geo.dispose(); mat.dispose(); posTex.dispose(); hwaTex.dispose(); colTex.dispose(); segTex.dispose()
+    geo.dispose(); mat.dispose(); posTex.dispose(); hwaTex.dispose()
     travGeo.dispose(); travLines.material.dispose()
   }
   return { mesh, travLines, setVisibleLayers, setLayerRange, setTravelVisible, setColors, dispose, nSeg: data.nSeg, layerCount: data.layerCount }

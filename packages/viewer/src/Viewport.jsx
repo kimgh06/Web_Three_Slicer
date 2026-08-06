@@ -164,6 +164,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
 
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.target.set(0, 22, 0); orbit.enableDamping = false; orbit.update()   // 관성 없음 — 데스크톱 슬라이서 관례(릴리즈 즉시 정지, 글라이드 꼬리 버벅임 원천 제거)
+    orbit.rotateSpeed = 1.6; orbit.panSpeed = 1.6   // 마우스 회전·팬 반응 속도(기본 1.0 이 둔해 상향)
     const transform = new TransformControls(camera, renderer.domElement)
     transform.setMode('translate'); transform.setSize(0.8)
     // 29단계-1: 변환 커밋(드래그 종료)마다 바닥 재안착 — 데스크톱 GLCanvas3D::do_move/rotate/scale 의
@@ -172,11 +173,21 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     //  음수 z 슬라이스 불가라 싱킹 미지원 → minZ≠0 이면 방향 무관 0 으로 스냅(위든 아래든). 월드 bbox minY(three 높이)→0.
     const _seatBox = new THREE.Box3()
     const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const minY = _seatBox.min.y; if (Number.isFinite(minY) && Math.abs(minY) > 1e-4) { m.position.y -= minY; m.updateMatrixWorld(true) } }
-    transform.addEventListener('dragging-changed', e => { orbit.enabled = !e.value; if (!e.value) seatMesh(transform.object) })
+    transform.addEventListener('dragging-changed', e => { orbit.enabled = !e.value; if (!e.value) seatMesh(transform.object); three.current.invalidate?.() })
     scene.add(transform)
 
     three.current = { scene, camera, renderer, orbit, transform, objectsGroup, toolpathGroup, plateBeds: [] }
     if (typeof window !== 'undefined') { window.__vpThree = three.current; window.__vpApi = () => apiRef.current }   // dev/test aid
+
+    // 렌더 온 디맨드(원본 데스크톱 관례) — 정지 화면을 매 프레임 다시 그리지 않아 지속 GPU 부하·서멀 스로틀 제거.
+    //  씬이 바뀔 수 있는 모든 경로가 invalidate() 를 부른다: orbit/기즈모 change·포인터·키·리사이즈·React 재렌더.
+    //  ponytail: 놓친 경로 대비 500ms 하트비트 렌더(2fps) — 스테일 화면 방지 안전판.
+    let renderPending = true
+    const invalidate = () => { renderPending = true }
+    three.current.invalidate = invalidate
+    orbit.addEventListener('change', invalidate)
+    transform.addEventListener('change', invalidate)
+    renderer.domElement.addEventListener('pointermove', invalidate)
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
     let hovered = null, selected = null, objIdCounter = 0   // 배치 커서는 placeXRef(플레이트 상대)
@@ -409,13 +420,16 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     }
 
     // 단축키 본체는 컴포넌트 스코프(keyRef — 매 렌더 최신 상태/함수 캡처). 이펙트는 포워딩만.
-    const onKey = e => keyRef.current?.(e)
+    const onKey = e => { keyRef.current?.(e); invalidate() }
     window.addEventListener('keydown', onKey)
-    const ro = new ResizeObserver(() => { w = mount.clientWidth || w; h = mount.clientHeight || h; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h) })
+    const ro = new ResizeObserver(() => { w = mount.clientWidth || w; h = mount.clientHeight || h; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); invalidate() })
     ro.observe(mount)
     setStatus(statusText())
-    let raf = 0
-    const loop = () => { raf = requestAnimationFrame(loop); orbit.update(); renderer.render(scene, camera) }
+    let raf = 0, lastRender = 0
+    const loop = (now = 0) => {
+      raf = requestAnimationFrame(loop); orbit.update()
+      if (renderPending || now - lastRender > 500) { renderPending = false; lastRender = now; renderer.render(scene, camera) }
+    }
     loop()
 
     return () => {
@@ -679,6 +693,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       m.renderOrder = 999; t.objectsGroup.add(m); return m
     }
     paintOverlayRef.current = { enf: mk(enfArr, 0x2b6cff), blk: mk(blkArr, 0xe23b3b) }  // enforcer=파랑, blocker=빨강
+    three.current.invalidate?.()   // worker 메시지 경로(React 재렌더 없이 씬 변경)
   }
   function clearPaintOverlay() {
     const t = three.current, ov = paintOverlayRef.current
@@ -1020,6 +1035,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     else if (k === '?')             { stop(); setShowHelp(v => !v) }
   }
   const nozzleDia = kp.nozzle_diameter || settingRaw(settings, 'nozzle_diameter') || '0.4'
+  three.current.invalidate?.()   // 렌더 온 디맨드: React 재렌더(슬라이더·토글·상태 변화)마다 1프레임 무효화
 
   // Preview 컨트롤(뷰 타입 + 이중 슬라이더 + 범례) — 사이드바에 배치
   const previewControls = layerCount > 0 && (

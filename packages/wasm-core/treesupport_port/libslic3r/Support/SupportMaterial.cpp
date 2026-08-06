@@ -16,6 +16,7 @@
 
 #include <tbb/parallel_for.h>
 #include <tbb/spin_mutex.h>
+#include <tbb/stub_parallel.h>   // [결정성] toolpaths 직렬 스코프
 #include <tbb/task_group.h>
 
 #define SUPPORT_USE_AGG_RASTERIZER
@@ -553,7 +554,12 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 #endif /* SLIC3R_DEBUG */
 
     // Generate the actual toolpaths and save them into each layer.
-    generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
+    // [결정성] generate_support_toolpaths 는 병렬 실행 시 바이모달 출력(실측: entities 12836↔12448,
+    //  上 6개 페이즈 체크섬은 4런 동일 → 이 페이즈 내부의 레인지/타이밍 의존). 직렬로도 0.2s(서포트의 ~4%)라
+    //  결정성 확보가 압도적 이득 → 이 페이즈만 병렬 비활성. 근본 원인(idx_layer_* 레인지 스캔 or 공유 상태)은 후속.
+    { bool __was = tbb_stub::enabled().exchange(false);
+      generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
+      tbb_stub::enabled().store(__was); }
 
 #ifdef SLIC3R_DEBUG
     {
