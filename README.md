@@ -2,14 +2,20 @@
 
 A 3D-printing slicer that runs entirely in the browser — reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) into a WASM kernel + npm packages. STL/OBJ/3MF/AMF/PLY in, G-code out; no server, no install.
 
-## Packages (`web/`, npm workspaces)
+## Links
+
+- Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
+- npm package: [three-slicer](https://www.npmjs.com/package/three-slicer)
+- Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer)
+
+## Package (`packages/`, npm workspace)
 
 | Package | What it is |
 |---|---|
 | `three-slicer` | WASM slicing kernel SDK — batch/streaming slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
-| `@three-slicer/data` | Extracted OrcaSlicer metadata: config schema (907 options), UI tree, toggle rules, invalidation map |
-| `three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only |
-| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview (libvgcode port) |
+| `three-slicer/data` | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map |
+| `three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only, Shadow DOM isolated |
+| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview, Shadow DOM isolated |
 
 Quick taste:
 
@@ -17,7 +23,6 @@ Quick taste:
 import { useState } from 'react'
 import Viewport from 'three-slicer/viewer'
 import SettingsPanel from 'three-slicer/components'
-import 'three-slicer/viewer/styles.css'
 
 function App() {
   const [settings, setSettings] = useState({})       // OrcaSlicer schema keys, sparse
@@ -28,11 +33,12 @@ function App() {
 }
 ```
 
-Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see `packages/engine/README.md`.
+Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see [`packages/README.md`](packages/README.md).
 
 ## Repository layout
 
-- **`web/`** — everything above + demo viewer app + WASM kernel C++ sources (`wasm-core/`). Self-contained: builds, tests, and runs without `slicer/`.
+- **`packages/`** — published npm package `three-slicer`, extracted data, React components/viewer, and WASM kernel sources. Self-contained: builds, tests, and runs without `slicer/`.
+- **`web/`** — demo viewer app that consumes `three-slicer` through the workspace package name.
 - **`slicer/`** — upstream OrcaSlicer, kept as an untracked reference clone (its own git remote). Used only as the extraction/porting source.
 
 ```bash
@@ -42,8 +48,8 @@ cd web/viewer && npm i && npm run dev
 # kernel test suite (120+ invariants)
 node packages/wasm-core/test.mjs
 
-# tarball independence gate (packs all 4, builds Vite+Next consumers outside the repo)
-bash web/pack_check.sh
+# tarball independence gate (packs three-slicer, builds Vite+Next consumers outside the repo)
+bash packages/pack_check.sh
 ```
 
 Korean development docs: [`web/README.md`](web/README.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
