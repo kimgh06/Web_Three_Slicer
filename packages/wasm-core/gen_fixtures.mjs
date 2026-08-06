@@ -15,7 +15,7 @@ mkdirSync('fixtures', { recursive: true })
 let obj = '# cube20 z-up\n'
 for (const v of V) obj += `v ${v[0]} ${v[1]} ${v[2]}\n`
 for (const f of F) obj += `f ${f[0]+1} ${f[1]+1} ${f[2]+1}\n`
-writeFileSync('fixtures/cube.obj', obj)
+writeFileSync('testing_files/cube.obj', obj)
 
 // PLY (ascii, z-up).
 let ply = 'ply\nformat ascii 1.0\n'
@@ -23,7 +23,7 @@ ply += `element vertex ${V.length}\nproperty float x\nproperty float y\nproperty
 ply += `element face ${F.length}\nproperty list uchar int vertex_index\nend_header\n`
 for (const v of V) ply += `${v[0]} ${v[1]} ${v[2]}\n`
 for (const f of F) ply += `3 ${f[0]} ${f[1]} ${f[2]}\n`
-writeFileSync('fixtures/cube.ply', ply)
+writeFileSync('testing_files/cube.ply', ply)
 
 // AMF (XML, millimeter, z-up). 단일 object/volume.
 let amf = `<?xml version="1.0" encoding="UTF-8"?>\n<amf unit="millimeter" version="1.1">\n <object id="0">\n  <mesh>\n   <vertices>\n`
@@ -31,7 +31,7 @@ for (const v of V) amf += `    <vertex><coordinates><x>${v[0]}</x><y>${v[1]}</y>
 amf += `   </vertices>\n   <volume>\n`
 for (const f of F) amf += `    <triangle><v1>${f[0]}</v1><v2>${f[1]}</v2><v3>${f[2]}</v3></triangle>\n`
 amf += `   </volume>\n  </mesh>\n </object>\n</amf>\n`
-writeFileSync('fixtures/cube.amf', amf)
+writeFileSync('testing_files/cube.amf', amf)
 
 // 3MF (zip: [Content_Types].xml + _rels/.rels + 3D/3dmodel.model). millimeter, z-up.
 let verts = ''; for (const v of V) verts += `<vertex x="${v[0]}" y="${v[1]}" z="${v[2]}"/>`
@@ -57,6 +57,6 @@ const zip = zipSync({
   '_rels/.rels': strToU8(rels),
   '3D/3dmodel.model': strToU8(model),
 })
-writeFileSync('fixtures/cube.3mf', Buffer.from(zip))
+writeFileSync('testing_files/cube.3mf', Buffer.from(zip))
 
-console.log('wrote fixtures/cube.{obj,ply,amf,3mf} (20mm cube, z-up)')
+console.log('wrote testing_files/cube.{obj,ply,amf,3mf} (20mm cube, z-up)')

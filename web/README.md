@@ -744,7 +744,7 @@ slicer.dispose()
   방지), 3MF/AMF 내 복수 오브젝트 개별 등록. 목록/선택/기즈모/T1·T2/삭제/페인팅 전 포맷 동작.
 - **검증(PASS)**: ① 데모 잔재 grep **0** ② `wasm-core/test_loaders.mjs`(node: STL/OBJ/PLY 로드→STL→커널 슬라이스, 12삼각형·20mm
   z-up·99레이어·동일 G-code) + **브라우저 5포맷 전부**(STL/OBJ/PLY/AMF/3MF) 로드→슬라이스 = **동일 99레이어·8147세그먼트·1194.1mm**
-  (3MF/AMF 는 DOMParser 필요 → 브라우저서만). 픽스처: `wasm-core/gen_fixtures.mjs`(fflate 로 3MF zip 조립) → `fixtures/cube.{obj,ply,amf,3mf}`.
+  (3MF/AMF 는 DOMParser 필요 → 브라우저서만). 픽스처: `wasm-core/gen_fixtures.mjs`(fflate 로 3MF zip 조립) → `testing_files/cube.{obj,ply,amf,3mf}`.
   ③ 이종 2포맷(OBJ 큐브+STL 실린더) 동시 로드→나란히 배치(x=10/38, 무겹침)→병합 슬라이스 `wasm-core/s26_merge.png`(2오브젝트·15246
   세그먼트) ④ 드래그앤드롭 playwright(DataTransfer 주입: dragover→오버레이 표시 `s26_dragover.png`, drop→로드 objs 0→1) ⑤ 콘솔
   에러 0 ⑥ 커널 무변경→golden byte-identical·120·WIDTH·GPU·VIEW·LOADERS PASS ⑦ 빈 씬 오버레이 `s26_empty.png`.
@@ -788,7 +788,7 @@ slicer.dispose()
 - **golden(재베이스라인 불요)**: 하니스가 "베드 중앙 배치 좌표"를 보내도록 수정(`golden.mjs centerTris` — 뷰어 bakeLocal 과
   동일). 중앙배치+auto_center=false = 레거시 재정렬과 **동일 G-code** → **golden byte-identical(523965B, 0줄 차이)**, 재베이스라인
   불필요(사유 기록). 커널 재빌드 후 120·WIDTH·GPU·VIEW·LOADERS·TREE·PAINT 전부 그린.
-- **P5 회귀 게이트**: `wasm-core/gen_benchy.mjs`→`fixtures/pseudo_benchy.stl`(off-center·minz=5·직립·arm 오버행·밀폐 공동;
+- **P5 회귀 게이트**: `wasm-core/gen_benchy.mjs`→`testing_files/pseudo_benchy.stl`(off-center·minz=5·직립·arm 오버행·밀폐 공동;
   3DBenchy 는 CC-BY-ND·저장소엔 .drc 뿐이라 프로그램 생성). `wasm-core/test_coords.mjs` 불변식: ① minZ=0 안착 ② 툴패스 XY
   bbox≈모델 XY(<1mm) ③ off-center 추종 ④ over_bed ⑤ auto_center=true 레거시 ⑥ 서포트∩솔리드=0.
 - **검증(브라우저)**: 동일 카메라 Prepare 모델↔Preview 툴패스 겹침(`wasm-core/s28_prepare.png`/`s28_preview.png`), 서포트
@@ -866,7 +866,7 @@ slicer.dispose()
   슬라이스 시 "memory access out of bounds" 재발 → 폐기. 보더를 옮기는 편이 좌표를 작게 유지해 안전.)
 - **검증**: 신규 `wasm-core/test_tree_symmetry.mjs` 불변식 — 대칭 픽스처 좌/우 type5 비율 **[0.7,1.3]** 및 양측>0:
   centered L/R=**0.92**(좌7365·우7969), off-center(+40) L/R=**0.92**, tree_lite 대조 1.00. **tree→tree_lite 무크래시**
-  확인(v1 회귀 해소). 브라우저 vase형(`fixtures/sym_ears.stl`, `window.__vpForceTree`) → **좌우 귀 모두 서포트 렌더**
+  확인(v1 회귀 해소). 브라우저 vase형(`testing_files/sym_ears.stl`, `window.__vpForceTree`) → **좌우 귀 모두 서포트 렌더**
   (`wasm-core/s31_tree_symmetric.png`, 149층·서포트 19%·콘솔 0). **회귀 게이트**: 10 스위트
   (test/width/gpu/viewtypes/loaders/ts_verify/paint/coords/golden_stream/test_tree_symmetry) + batch golden
   **523965B byte-identical** 전부 그린(커널 슬라이싱 로직·golden 무변경).

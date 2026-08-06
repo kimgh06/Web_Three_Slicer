@@ -21,8 +21,8 @@ ok(SUPPORTED_EXT.join(',') === 'stl,obj,3mf,amf,ply', `supported: ${SUPPORTED_EX
 
 const cases = [
   ['stl', 'cube20.stl', readFileSync('cube20.stl')],
-  ['obj', 'cube.obj', readFileSync('fixtures/cube.obj')],
-  ['ply', 'cube.ply', readFileSync('fixtures/cube.ply')],
+  ['obj', 'cube.obj', readFileSync('testing_files/cube.obj')],
+  ['ply', 'cube.ply', readFileSync('testing_files/cube.ply')],
 ]
 for (const [ext, name, data] of cases) {
   const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)

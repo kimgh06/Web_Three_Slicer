@@ -28,7 +28,7 @@ const OFF = [62, 46, 5]
 const buf = Buffer.alloc(84 + tris.length * 50); buf.writeUInt32LE(tris.length, 80)
 let off = 84
 for (const t of tris) { off += 12; for (const p of t) { buf.writeFloatLE(p[0]+OFF[0], off); buf.writeFloatLE(p[1]+OFF[1], off+4); buf.writeFloatLE(p[2]+OFF[2], off+8); off += 12 } buf.writeUInt16LE(0, off); off += 2 }
-writeFileSync('fixtures/pseudo_benchy.stl', buf)
+writeFileSync('testing_files/pseudo_benchy.stl', buf)
 
 // bbox 요약
 let mn = [1e9,1e9,1e9], mx = [-1e9,-1e9,-1e9]
