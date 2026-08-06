@@ -205,6 +205,9 @@ struct Params {
   //  + 시간추정(r.moves 대량 상주) 생략 → G-code 만 스트리밍으로 끝까지 방출. 레이어 싱크가 설정된
   //  스트리밍 경로에서만 유효(기본 false — 배치 경로 무영향).
   bool   economy=false;
+  // G003 증분: 뷰어(invalidation-map)가 판정해 지시. 0=풀, 1=지오메트리(tris) 재사용, 2=서포트까지(L[]) 재사용.
+  int    reuse_stages=0;
+  bool   keep_stages=false;                             // 슬라이스 후 스테이지를 캐시에 보관(조기 해제 생략 — 메모리 트레이드)
   bool   arachne_dump=false;   // 임시 진단: PASS1 arachne 입력 폴리곤을 stderr 로 덤프
 };
 static size_t jfind_val(const std::string& s, const char* key) {
@@ -371,6 +374,8 @@ static Params parse_params(const std::string& j) {
   p.machine_max_speed_e           = jget(j,"machine_max_speed_e",p.machine_max_speed_e);
   p.time_engine                   = jstr(j,"time_engine",p.time_engine);
   p.economy                       = jbool(j,"economy",p.economy);
+  p.reuse_stages                  = (int)jget(j,"reuse_stages",p.reuse_stages);
+  p.keep_stages                   = jbool(j,"keep_stages",p.keep_stages);
   p.arachne_dump                  = jbool(j,"arachne_dump",p.arachne_dump);
   // 21단계: 피처별 폭 해석 (nozzle 파싱 후). line_width 가 0 이면 원본 auto 로 승격(뷰어는 기본 0.42 전송 → 불변).
   {
@@ -1009,6 +1014,7 @@ struct GW {
 // 세그먼트별 폭 추적(7단계 가변폭 벽용). g_seg_w 가 설정돼 있으면 push_seg 마다 현재 폭을 병렬 배열에 기록.
 //  (기존 paths 포맷 stride 8 불변 → 88개 테스트 무영향. widths 는 세그먼트당 1개 추가 배열, 옵션.)
 // G003: 병렬 작가(레이어별 GW)가 각자 widths 를 기록하도록 thread_local — st/직렬 경로 의미 불변.
+static bool g_keep_island = false;   // G003: 캐시 보존 시 emit 이 island 를 move 대신 복사(캐시 반복 재사용)
 static thread_local std::vector<float>* g_seg_w = nullptr;
 static thread_local float g_seg_w_cur = 0.42f;
 static inline void push_seg(std::vector<float>& v,double x0,double y0,double x1,double y1,double z,float type){
@@ -1506,7 +1512,7 @@ static void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& w
   gw.set_e_per_mm(ld.h, p);
   gw.z = zE;
   gw.pe_reset();
-  if (!gw.dry) gw.island = std::move(ld.island);   // 드라이런은 가드 미사용 → 작가 몫으로 보존
+  if (!gw.dry) gw.island = g_keep_island ? ld.island : std::move(ld.island);   // G003: 캐시 보존 시 복사
   seamCtx.rng = 2654435761u * (uint32_t)(i+1);
   g_seg_w = gw.dry ? nullptr : &widths; g_seg_w_cur = (float)w;
   char cm[72];
@@ -1535,34 +1541,74 @@ static void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& w
   emit_layer_full(gw, tp, widths, i, ld, pre, p, zE, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, seamCtx);
 }
 
+// G003 증분 재슬라이스: 슬라이스 간 스테이지 캐시. keep_stages 로 채우고 reuse_stages 로 재사용.
+//  유효성은 뷰어(지오메트리 다이제스트 + invalidation-map)가 1차 판정, 커널은 layerKey(레이어링·서포트
+//  파라미터 스냅샷) 불일치 시 재사용 거부로 2차 방어. 캐시 상주는 메모리 트레이드(간소화 후 수십 MB 급).
+static struct StageCache {
+  bool valid = false;
+  std::vector<Tri> tris; double height = 0, cx = 0, cy = 0; bool over_bed = false;
+  int N = 0; std::string layerKey;
+  int treeSupLayers = 0; double treeZMaxResid = -1.0;   // 프리앰블 진단 라인 재현용
+  std::vector<LayerData> L;
+} g_scache;
+static std::string make_layer_key(const Params& p) {
+  char k[512];
+  std::snprintf(k, sizeof k, "%.6f|%.6f|%.6f|%d|%d|%s|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%s|%s|%.3f|%d|%.4f|%d",
+    p.layer_height, p.first_layer_height, p.line_width, p.wall_loops, (int)p.enable_support,
+    p.support_style.c_str(), (int)p.support_auto, p.support_threshold_angle, p.support_top_z_distance,
+    p.support_xy_distance, p.support_density, p.support_interface_top_layers, p.raft_layers,
+    p.wall_generator.c_str(), p.sparse_infill_pattern.c_str(), p.infill_density,
+    (int)p.auto_center, p.gcode_resolution, (int)p.spiral_mode);
+  return std::string(k);
+}
+
 // slice(Uint8Array stl, string paramsJson, function onProgress) → { gcode, stats, layers[] }
 // =============================================================================
 em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   auto report = [&](int done, int total){ if (!onProgress.isUndefined() && !onProgress.isNull()) onProgress(done, total); };
   Params p = parse_params(params_json);
   if (p.spiral_mode) p.wall_loops = 1;                 // vase: 단일 외벽
-  std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
-  std::vector<Tri> tris = parse_stl(bytes);
+  // G002: 취소 플래그 — UI 가 SAB 로 1 기입. 진입 시 0 리셋, 루프들이 반복 단위 폴링.
+  auto* cxp = (std::atomic<unsigned>*)(uintptr_t)treesupport_bridge::cancel_addr();
+  cxp->store(0);
+  auto CX = [cxp]{ return cxp->load(std::memory_order_relaxed) != 0; };
+  // G003 증분: 재사용 판정(뷰어 1차 + layerKey 2차 방어). MM 은 미지원.
+  const std::string lk = make_layer_key(p);
+  const bool reuseGeom = p.reuse_stages >= 1 && g_scache.valid && p.extruder_count < 2;
+  const bool reuseSup  = p.reuse_stages >= 2 && g_scache.valid && g_scache.layerKey == lk && p.extruder_count < 2;
+  std::vector<Tri> trisOwn;
+  if (!reuseGeom) {
+    std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
+    trisOwn = parse_stl(bytes);
+  }
+  std::vector<Tri>& tris = reuseGeom ? g_scache.tris : trisOwn;
 
   em::val result = em::val::object();
   if (tris.empty()) { result.set("error", std::string("STL 파싱 실패 또는 삼각형 0개")); return result; }
 
-  // 모델을 XY원점 중심·minZ=0 이동
+  // 모델을 XY원점 중심·minZ=0 이동 (reuseGeom 이면 캐시본이 이미 정규화됨)
   double minx=1e18,miny=1e18,minz=1e18,maxx=-1e18,maxy=-1e18,maxz=-1e18;
+  if (reuseGeom) { minx=miny=minz=0; maxx=maxy=maxz=0; }
+  else
   for (auto& t:tris) for (int k=0;k<3;++k){
     minx=std::min(minx,(double)t.v[k].x);maxx=std::max(maxx,(double)t.v[k].x);
     miny=std::min(miny,(double)t.v[k].y);maxy=std::max(maxy,(double)t.v[k].y);
     minz=std::min(minz,(double)t.v[k].z);maxz=std::max(maxz,(double)t.v[k].z); }
   double cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  if (reuseGeom) { cx = g_scache.cx; cy = g_scache.cy; }
   // 28단계 P2: auto_center=true 면 결합 bbox 를 원점 재정렬(레거시). false(기본)=XY 뷰어 좌표 그대로, Z 만 안착.
-  if (p.auto_center) { for (auto& t:tris) for (int k=0;k<3;++k){ t.v[k].x-=cx; t.v[k].y-=cy; t.v[k].z-=minz; } }
-  else               { for (auto& t:tris) for (int k=0;k<3;++k){ t.v[k].z-=minz; } }
-  double height = maxz - minz;
+  //  G003: reuseGeom 이면 캐시 tris 가 이미 정규화됨 — 재이동 금지(이중 이동 방지).
+  if (!reuseGeom) {
+    if (p.auto_center) { for (auto& t:tris) for (int k=0;k<3;++k){ t.v[k].x-=cx; t.v[k].y-=cy; t.v[k].z-=minz; } }
+    else               { for (auto& t:tris) for (int k=0;k<3;++k){ t.v[k].z-=minz; } }
+  }
+  double height = reuseGeom ? g_scache.height : (maxz - minz);
   double modelW = maxx - minx, modelD = maxy - miny;
   // over_bed: 크기 초과 || (뷰어 좌표 모드) G-code(+bed/2) 가 베드[0,bed]를 벗어나는 위치(원좌표 [-bed/2,bed/2] 밖)
   bool over_bed = (modelW > p.bed_width) || (modelD > p.bed_depth);
   if (!p.auto_center) over_bed = over_bed || maxx > p.bed_width*0.5 || minx < -p.bed_width*0.5
                                           || maxy > p.bed_depth*0.5 || miny < -p.bed_depth*0.5;
+  if (reuseGeom) over_bed = g_scache.over_bed;
 
   const double w = p.line_width;
   const double sparse_spacing  = (p.infill_density > 1e-4) ? (w / p.infill_density) : 0.0;
@@ -1584,7 +1630,18 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   // ---- PASS 1: 레이어별 윤곽·벽·인필영역 ----
   //  레이어 간 의존 0 (읽기: tris/p 공유 불변, 쓰기: L[i] 독립) → -pthread 빌드에서 레이어 병렬.
   //  z 는 기존 누적 루프(z+=layer_height)와 동일하게 직렬 선계산 — FP 누적 순서 보존(golden 안전).
-  std::vector<LayerData> L(N);
+  const bool keepStages = (p.keep_stages || reuseSup) && p.extruder_count < 2;
+  g_keep_island = keepStages;
+  double treeZMaxResid = -1.0; int treeSupLayers = 0;   // 19단계: 트리 서포트 z 정합 진단 (G003: 호이스트)
+  std::vector<LayerData> Lown;
+  if (!reuseSup) Lown.resize(N);
+  std::vector<LayerData>& L = reuseSup ? g_scache.L : Lown;
+  if (reuseSup) {
+    // G003: 지오메트리·서포트 설정 불변 — PASS1/표면/서포트 전부 캐시 재사용, 방출만 재실행.
+    tw_p1 = tw_p15 = emscripten_get_now();
+    treeSupLayers = g_scache.treeSupLayers; treeZMaxResid = g_scache.treeZMaxResid;
+    report(N, total); report(N+1, total);
+  } else {
   { std::vector<double> zsv; zsv.reserve(N);
     for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) zsv.push_back(z);
     // [facet-major 세그 수집 — 원본 정합] 원본 slice_facet_at_zs(TriangleMeshSlicer.cpp:476)처럼
@@ -1707,17 +1764,18 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       std::atomic<unsigned> p1done{0};
       auto* p1prog = (std::atomic<unsigned>*)(uintptr_t)treesupport_bridge::progress_addr();
       p1prog->store(0);
-      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) { computeLayer(i);
+      auto workfn = [&]{ int i; while (!CX() && (i = nextIdx.fetch_add(1)) < N) { computeLayer(i);
         unsigned d = p1done.fetch_add(1) + 1; p1prog->store((unsigned)((unsigned long long)d * 1000u / (unsigned)N)); } };
       std::vector<std::thread> ths; ths.reserve(nt-1);
       for (unsigned t=1; t<nt; ++t) ths.emplace_back(workfn);
       workfn();                                  // 메인 스레드도 참여
       for (auto& th : ths) th.join();
       p1prog->store(0);                          // 서포트 밴드 오염 방지(ParallelScope 리셋 전 잔존값 제거)
+      if (CX()) { em::val r=em::val::object(); r.set("error", std::string("canceled")); return r; }   // G002
       report(N, total);                          // JS 콜백은 메인 스레드 전용 → 코스 단위 보고
     }
 #else
-    for (int i=0;i<N;++i){ computeLayer(i); report(i+1, total); }
+    for (int i=0;i<N;++i){ if (CX()) { em::val r=em::val::object(); r.set("error", std::string("canceled")); return r; } computeLayer(i); report(i+1, total); }
 #endif
   }
 
@@ -1751,7 +1809,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   report(N+1, total);                            // 표면 검출 완료 틱 (서포트 생성 진입 표시)
 
   // ---- PASS 1.6: 서포트 (오버행 검출 → 수직 투영 → iface/base) ----
-  double treeZMaxResid = -1.0; int treeSupLayers = 0;   // 19단계: 트리 서포트 z 정합 진단(오브젝트 z 그리드와 오차)
+  // (G003: 스킵 블록 밖 preamble 에서 사용 → 위로 호이스트됨)
   if (p.enable_support) {
    // WP2: "grid"/"snug" 도 이제 원본 포트(PrintObjectSupportMaterial) 경로 — 자체 재구현은 tree_lite
    //  (및 명시적 "grid_kernel" 폴백)만 사용한다. tree 와 동일한 파사드/좌표 변환/rebind 를 공유한다.
@@ -2026,6 +2084,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   // ---- 프리앰블 ----
+  }                                              // G003: reuseSup 스킵 블록 끝 (PASS1~1.6 만 스킵 — 프리앰블·래프트·방출은 공용)
+
   GW gw; gw.s.reserve(1<<17);
   gw.retract_len = p.retract_length;
   gw.retract_min_travel = p.retraction_minimum_travel;
@@ -2174,6 +2234,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   tw_sup = emscripten_get_now();
+  if (CX()) { em::val r=em::val::object(); r.set("error", std::string("canceled")); return r; }   // G002 (이 지점까지 스레드 없음)
   report(N+2, total);                            // 서포트 생성 완료 틱
 
   // ---- PASS 2 사전계산: 레이어별 기하 분리·인필 라인 생성 (아래 방출 루프에서 분리) ----
@@ -2372,13 +2433,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         sink(zk, k, J.gcode, paths, wid);
       }
       J.gcode = std::string(); J.tp = {}; J.widths = {}; J.pre = EmitPre{};
-      { int old = k - std::max(p.bottom_shell_layers, 1) - 1 - FW;   // 작가·드라이 참조범위 밖만 해제(창 여유 포함)
+      if (!keepStages) { int old = k - std::max(p.bottom_shell_layers, 1) - 1 - FW;   // 작가·드라이 참조범위 밖만 해제
         if (old >= 0) L[old] = LayerData{}; }
       report(N+2+k+1, total);
     };
     gw.dry = true;
+    bool __cxAborted = false;
     std::vector<float> dtp, dwv;   // 드라이 더미(미기록)
     for (int i = 0; i < N; ++i) {
+      if (CX()) { __cxAborted = true; break; }   // G002: 신규 디스패치 중단 → 기존 셧다운 경로로 합류
       EmitPre pre;
       { std::unique_lock<std::mutex> lk(pmu);
         cv_done.wait(lk, [&]{ return preDone[i] != 0; });
@@ -2388,7 +2451,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       LayerData& ld = L[i];
       EmitJob& J = *jobs[i];
       J.entry = { gw.px, gw.py, gw.curF, gw.lastFan, seamCtx };
-      J.island = std::move(ld.island);
+      J.island = g_keep_island ? ld.island : std::move(ld.island);   // G003
       emit_layer_any(gw, dtp, dwv, i, ld, pre, p, ld.z + zShift, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, seamCtx);
       J.pre = std::move(pre);
       { std::lock_guard<std::mutex> lk(emu); dispatched = i + 1; J.jst.store(1); }
@@ -2396,14 +2459,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       if (i - FW >= fl) { flushJob(fl); ++fl; }
     }
     gw.dry = false;
-    while (fl < N) { flushJob(fl); ++fl; }
+    while (!__cxAborted && fl < N) { flushJob(fl); ++fl; }   // G002: 취소 시 미디스패치 잡 대기 금지(데드락 방지)
     { std::lock_guard<std::mutex> lk(emu); wNext = std::max(wNext, N); dispatched = N; }
     ecv.notify_all();
     for (auto& th : wths) th.join();
   } else
 #endif
   for (int i=0;i<N;++i) {
-    { int old = i - std::max(p.bottom_shell_layers, 1) - 1;
+    if (CX()) break;   // G002
+    if (!keepStages) { int old = i - std::max(p.bottom_shell_layers, 1) - 1;
       if (old >= 0) L[old] = LayerData{}; }
     EmitPre pre;
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -2422,7 +2486,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     if (p.spiral_mode && !ld.contour.empty()) {
       // ===== 스파이럴(vase): 단일 외벽 z-램프 — 병렬 제외, 기존 인라인 유지 =====
       gw.set_e_per_mm(ld.h, p); gw.z = zE; gw.pe_reset();
-      gw.island = std::move(ld.island);
+      gw.island = g_keep_island ? ld.island : std::move(ld.island);   // G003
       seamCtx.rng = 2654435761u * (uint32_t)(i+1);
       g_seg_w = &widths; g_seg_w_cur = (float)w;
       char cm[72];
@@ -2443,6 +2507,14 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   for (auto& th : preThs) th.join();
 #endif
   g_seg_w = nullptr;   // 7단계: 폭 추적 종료(로컬 widths 수명 종료)
+  if (CX()) {          // G002: 모든 스레드 조인 완료 — 피더만 정리하고 취소 반환
+#ifdef __EMSCRIPTEN_PTHREADS__
+    if (streamTime || overlapBatch) (void)feeder.finish();
+#else
+    if (streamTime) (void)gcodeproc_bridge::estimate_end();
+#endif
+    em::val r = em::val::object(); r.set("error", std::string("canceled")); return r;
+  }
 
   // ---- 종료 ----
   gw.raw("; end"); gw.raw("M104 S0"); gw.raw("M140 S0"); gw.raw("M107");
@@ -2518,6 +2590,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   stats.set("streamed", streaming);                          // 30단계: true 면 g-code/layers 는 콜백으로 방출됨(result 에 없음)
   stats.set("economy", economy);                             // 30단계: 절약 모드(툴패스·시간추정 생략)로 완주했는지
   result.set("stats", stats);
+  // G003: 스테이지 캐시 갱신 — keep 이면 보관(다음 슬라이스 재사용), 아니면 새 지오메트리로 낡은 캐시 무효.
+  if (keepStages && !CX()) {
+    if (!reuseSup) {
+      if (!reuseGeom) g_scache.tris = std::move(trisOwn);
+      g_scache.height = height; g_scache.cx = cx; g_scache.cy = cy; g_scache.over_bed = over_bed;
+      g_scache.N = N; g_scache.layerKey = lk; g_scache.L = std::move(Lown);
+      g_scache.treeSupLayers = treeSupLayers; g_scache.treeZMaxResid = treeZMaxResid;
+    }
+    g_scache.valid = true;
+  } else if (!reuseSup && !reuseGeom) g_scache.valid = false;
   if (!streaming) { result.set("gcode", gw.s); result.set("layers", layersArr); }  // 스트리밍은 상주분 방출 안 함
   return result;
 }
@@ -2575,6 +2657,8 @@ EMSCRIPTEN_BINDINGS(slicer) {
     return (double)treesupport_bridge::progress_addr(); });
   em::function("sup_progress_view", +[]() -> em::val {       // 같은 카운터의 Uint32Array 뷰 — .buffer 로 SAB 획득
     return em::val(em::typed_memory_view((size_t)1, (const unsigned int*)(uintptr_t)treesupport_bridge::progress_addr())); });
+  em::function("cancel_flag_view", +[]() -> em::val {        // G002: 취소 플래그(u32) 뷰 — UI 가 SAB 로 직접 기입
+    return em::val(em::typed_memory_view((size_t)1, (const unsigned int*)(uintptr_t)treesupport_bridge::cancel_addr())); });
   em::function("config_option_count", &config_option_count);
   em::function("config_option_default", &config_option_default);
   em::function("cgal_planar_check_count", &arachne_bridge::cgal_planar_check_count); // 14단계: 실 CGAL 평면성 검사 호출 수

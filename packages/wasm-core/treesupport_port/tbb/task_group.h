@@ -12,9 +12,10 @@ public:
   // 1차: task_group 은 인라인 유지(스레딩 비활성). 대형 모델 mt abort 조사 중 — 병목의 ~85%
   //  (top_contacts 18.4s/base 7.2s/trim 3.5s, sup-prof 실측)는 parallel_for 쪽이라 이득 손실 미미.
   //  task_group 병렬 재활성은 크래시 원인 확정 후. (스레드 버전은 git 이력 참조)
-  // G002 실측: 스레딩 재활성 시 774k tri 모델이 bottom_contacts 첫 task_group 에서 abort 재현
-  //  (top_contacts 체크섬까지 정상 출력 후 사망 — 3/3). 인라인 유지, 원인은 ASAN(dlmalloc 빌드)으로 추적.
+  // [확정] task_group 스레딩은 조기 단순화(힙 4×↓) 이후에도 774k tri 에서 abort 재현(3/3, 2차 소크)
+  //  → 원인은 메모리 압박이 아니라 포트 내부 레이스/UB. 인라인 영구 고정. (스레드 버전은 git 이력)
   template<class F> void run(F&& f){ f(); tbb_stub::prog().fetch_add(1); }   // 실진행 틱(UI 폴링용)
+
   void wait(){ for (auto& t : ths) t.join(); ths.clear(); }
   ~task_group(){ wait(); }
 };

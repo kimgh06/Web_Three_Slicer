@@ -14,10 +14,13 @@
 //  포트)을 구동한다. 파사드 구성은 build_facade() 로 공용화(tree/normal 이 config 의 type/style 만 다름).
 #include "../../treesupport_bridge.h"   // file-relative -> wasm-core/treesupport_bridge.h (plain types)
 #include <tbb/stub_parallel.h>          // (WP-tbb) generate_normal 한정 병렬 허용 스코프 + 실진행 카운터
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 #include <cstdint>
 
 namespace treesupport_bridge {
 unsigned long progress_addr() { return (unsigned long)(uintptr_t)&tbb_stub::prog(); }
+unsigned long cancel_addr() { return (unsigned long)(uintptr_t)&tbb_stub::cancel(); }
 }
 
 #include "Print.hpp"
@@ -290,7 +293,12 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
     //  · raw_slices (sharp-tail 검출), · slices 의 stTop (bottom contact 검출) / stBottom / stInternal 파티션.
     //  perimeters/unsupported_bridge_edges 는 미공급 → bridge_no_support 의 브리지 검출은 no-op (문서화된 근사;
     //  커널 페리미터를 ExtrusionEntity 로 재구성하는 어댑터가 생기면 승격).
-    for (size_t i = 0; i < N; ++i) {
+    // (WP-tbb) grid/snug 원본 서포트만 tbb 스텁 실병렬 허용(tree 는 concurrent_* 스텁 비안전으로 직렬).
+    //  스코프를 표면 주입 루프 앞으로 확장 — facade 구축도 병렬 수혜.
+    tbb_stub::ParallelScope par;
+    // [병렬] 표면 파티션은 레이어 독립(자기 Layer/LayerRegion 만 쓰기) — facade 0.43s 실측의 주성분.
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, N), [&](const tbb::blocked_range<size_t>& __r) {
+    for (size_t i = __r.begin(); i < __r.end(); ++i) {
         Layer *L = po.get_layer(int(i));
         LayerRegion *lr = L->get_region(0);
         lr->raw_slices = L->lslices;
@@ -308,11 +316,9 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
         for (ExPolygon &e : rest) ss.emplace_back(stInternal, std::move(e));
         lr->slices.set(std::move(ss));
     }
+    });
 
     PrintObjectSupportMaterial sm(&po, po.m_slicing_params);
-    // (WP-tbb) grid/snug 원본 서포트 생성만 tbb 스텁 실병렬 허용 — tree 경로는 concurrent_* 스텁이
-    //  비스레드안전(std alias)이라 직렬 유지. 실측: 774k tri 모델에서 서포트 40.1s/전체 51s(79%)가 여기.
-    tbb_stub::ParallelScope par;
     sm.generate(po);
     return collect_output(po);
 }

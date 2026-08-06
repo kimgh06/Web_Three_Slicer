@@ -12,6 +12,10 @@ namespace tbb_stub {
 
 inline std::atomic<bool>& enabled() { static std::atomic<bool> v{false}; return v; }
 
+// 슬라이스 취소 플래그 — UI 스레드가 SAB 로 직접 기입(워커/wasm 은 블록 중이어도 관찰 가능).
+//  커널 루프·포트 canceled() 가 반복 단위로 폴링. slice() 진입 시 0 리셋.
+inline std::atomic<unsigned>& cancel() { static std::atomic<unsigned> v{0}; return v; }
+
 inline std::atomic<int>& budget() {
   // 폭 hw-1 — 초기 크래시는 task_group 스레딩 비활성화로 해소됐고(대형 모델 st==mt byte-identical),
   //  parallel_for 단독 전폭 구성은 golden + 대형 모델 gcode 대조로 검증한다.

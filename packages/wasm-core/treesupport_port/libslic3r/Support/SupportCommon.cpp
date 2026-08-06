@@ -1557,30 +1557,28 @@ void generate_support_toolpaths(
         size_t idx_layer_interface        = size_t(-1);
         size_t idx_layer_base_interface   = size_t(-1);
         const auto fill_type_first_layer  = ipRectilinear;
-        auto filler_interface       = std::unique_ptr<Fill>(Fill::new_from_type(support_params.contact_fill_pattern));
-        // Filler for the 1st layer interface, if different from filler_interface.
-        auto filler_first_layer_ptr = std::unique_ptr<Fill>(range.begin() == 0 && support_params.contact_fill_pattern != fill_type_first_layer ? Fill::new_from_type(fill_type_first_layer) : nullptr);
-        // Pointer to the 1st layer interface filler.
-        auto filler_first_layer     = filler_first_layer_ptr ? filler_first_layer_ptr.get() : filler_interface.get();
-        // Filler for the 1st layer interface, if different from filler_interface.
-        auto filler_raft_contact_ptr = std::unique_ptr<Fill>(range.begin() == n_raft_layers && config.support_interface_top_layers.value == 0 ?
-            Fill::new_from_type(support_params.raft_interface_fill_pattern) : nullptr);
-        // Pointer to the 1st layer interface filler.
-        auto filler_raft_contact     = filler_raft_contact_ptr ? filler_raft_contact_ptr.get() : filler_interface.get();
-        // Filler for the base interface (to be used for soluble interface / non soluble base, to produce non soluble interface layer below soluble interface layer).
-        auto filler_base_interface  = std::unique_ptr<Fill>(base_interface_layers.empty() ? nullptr :
-            Fill::new_from_type(support_params.top_interface_density > 0.95 || support_params.with_sheath ? ipRectilinear : ipSupportBase));
-        auto filler_support         = std::unique_ptr<Fill>(Fill::new_from_type(support_params.base_fill_pattern));
-        filler_interface->set_bounding_box(bbox_object);
-        if (filler_first_layer_ptr)
-            filler_first_layer_ptr->set_bounding_box(bbox_object);
-        if (filler_raft_contact_ptr)
-            filler_raft_contact_ptr->set_bounding_box(bbox_object);
-        if (filler_base_interface)
-            filler_base_interface->set_bounding_box(bbox_object);
-        filler_support->set_bounding_box(bbox_object);
         for (size_t support_layer_id = range.begin(); support_layer_id < range.end(); ++ support_layer_id)
         {
+            // [결정성] 필러를 레이어당 생성 — 레인지당 공유 필러의 상태 이월이 파티션 의존 출력
+            //  (바이모달 실측)의 원인이었다. 레이어당 생성으로 파티션 무관 결정적 → 병렬 복원 가능.
+            //  (구 레인지 조건 range.begin()==0/==n_raft 는 생성 회피 최적화 — 사용처의 레이어 조건이 선택을 담당)
+            auto filler_interface       = std::unique_ptr<Fill>(Fill::new_from_type(support_params.contact_fill_pattern));
+            auto filler_first_layer_ptr = std::unique_ptr<Fill>(support_params.contact_fill_pattern != fill_type_first_layer ? Fill::new_from_type(fill_type_first_layer) : nullptr);
+            auto filler_first_layer     = filler_first_layer_ptr ? filler_first_layer_ptr.get() : filler_interface.get();
+            auto filler_raft_contact_ptr = std::unique_ptr<Fill>(config.support_interface_top_layers.value == 0 ?
+                Fill::new_from_type(support_params.raft_interface_fill_pattern) : nullptr);
+            auto filler_raft_contact     = filler_raft_contact_ptr ? filler_raft_contact_ptr.get() : filler_interface.get();
+            auto filler_base_interface  = std::unique_ptr<Fill>(base_interface_layers.empty() ? nullptr :
+                Fill::new_from_type(support_params.top_interface_density > 0.95 || support_params.with_sheath ? ipRectilinear : ipSupportBase));
+            auto filler_support         = std::unique_ptr<Fill>(Fill::new_from_type(support_params.base_fill_pattern));
+            filler_interface->set_bounding_box(bbox_object);
+            if (filler_first_layer_ptr)
+                filler_first_layer_ptr->set_bounding_box(bbox_object);
+            if (filler_raft_contact_ptr)
+                filler_raft_contact_ptr->set_bounding_box(bbox_object);
+            if (filler_base_interface)
+                filler_base_interface->set_bounding_box(bbox_object);
+            filler_support->set_bounding_box(bbox_object);
             SupportLayer &support_layer = *support_layers[support_layer_id];
             LayerCache   &layer_cache   = layer_caches[support_layer_id];
             const float   support_interface_angle = (config.support_interface_pattern == smipRectilinearInterlaced) ?
