@@ -7,49 +7,77 @@
   "exports": {
     ".": {
       "types": "./engine/index.d.ts",
-      "import": "./engine/index.js"
+      "default": "./engine/index.js"
     },
-    "./settings": "./engine/src/settings.js",
-    "./toggle": "./engine/src/toggle_eval.js",
-    "./worker": "./engine/src/slicer.worker.js",
-    "./wasm": "./engine/src/slicer_core.js",
-    "./wasm-mt": "./engine/src/slicer_core.mt.js",
-    "./viewer": "./viewer/dist/Viewport.js",
-    "./viewer/toolpath": "./viewer/dist/toolpath_gpu.js",
-    "./viewer/loaders": "./viewer/dist/model_loaders.js",
-    "./components": "./components/dist/SettingsPanel.js",
-    "./data/*": "./data/*"
+    "./settings": {
+      "types": "./types/settings.d.ts",
+      "default": "./engine/src/settings.js"
+    },
+    "./toggle": {
+      "types": "./types/toggle.d.ts",
+      "default": "./engine/src/toggle_eval.js"
+    },
+    "./worker": {
+      "types": "./types/worker.d.ts",
+      "default": "./engine/src/slicer.worker.js"
+    },
+    "./wasm": {
+      "types": "./types/wasm.d.ts",
+      "default": "./engine/src/slicer_core.js"
+    },
+    "./wasm-mt": {
+      "types": "./types/wasm.d.ts",
+      "default": "./engine/src/slicer_core.mt.js"
+    },
+    "./viewer": {
+      "types": "./types/viewer.d.ts",
+      "default": "./viewer/dist/Viewport.js"
+    },
+    "./viewer/toolpath": {
+      "types": "./types/viewer-toolpath.d.ts",
+      "default": "./viewer/dist/toolpath_gpu.js"
+    },
+    "./viewer/loaders": {
+      "types": "./types/viewer-loaders.d.ts",
+      "default": "./viewer/dist/model_loaders.js"
+    },
+    "./components": {
+      "types": "./types/components.d.ts",
+      "default": "./components/dist/SettingsPanel.js"
+    },
+    "./data": {
+      "types": "./types/data.d.ts",
+      "default": "./engine/src/data.js"
+    },
+    "./data/*": {
+      "types": "./types/data/*.d.ts",
+      "default": "./data/*"
+    }
   },
   "scripts": {
-    "build": "vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js"
+    "build": "node types/gen_settings_types.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js",
+    "check": "bash pack_check.sh"
   },
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18",
     "three": "^0.160.0"
   },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    },
-    "three": {
-      "optional": true
-    }
-  },
   "devDependencies": {
+    "typescript": "^5.6.0",
     "vite": "^5.4.11"
   },
   "files": [
     "engine",
+    "types",
     "components/dist",
     "viewer/dist",
-    "viewer/src",
     "viewer/styles.css",
     "components/styles.css",
-    "data/*.json",
+    "data/config-schema.json",
+    "data/ui-tree.json",
+    "data/toggle-rules.json",
+    "data/invalidation-map.json",
     "README.md",
     "LICENSE.txt"
   ],

@@ -34,16 +34,23 @@ bash packages/wasm-core/build.sh
 # 추출 JSON 재생성 (slicer/ 소스 → packages/data/)
 python3 web/extract_all.py
 
-# 타르볼 독립 검증 (npm pack → Vite/Next 소비자 빌드)
-bash web/pack_check.sh
+# 설정 키 타입 재생성 (config-schema.json → types/settings-keys.d.ts, 907키). build 가 자동 실행
+node packages/types/gen_settings_types.mjs
+
+# 타르볼 독립 검증 (Node/타입/Vite/Next 4종 소비자) — packages/ 안에 있어야 한다
+bash packages/pack_check.sh
 ```
 
 ## 구조
 
 `packages/` 전체가 **단일 npm 패키지 `three-slicer`** (subpath exports로 분리 소비):
 - `packages/engine/` — 진입점 `three-slicer` (+`/settings` `/toggle` `/worker` `/wasm`): WASM 커널 SDK
-- `packages/data/` — `three-slicer/data/*.json`: 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map)
+- `packages/data/` — 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map).
+  소비는 `three-slicer/data` (named export, import attribute 포함) 권장 — 원시 `three-slicer/data/*.json` 도 열려 있다.
+  **JSON 을 새로 import 할 때는 반드시 `engine/src/data.js` 에 추가할 것**: Vite/esbuild 가 번들 출력에서
+  `with { type: 'json' }` 을 떼어내므로, import 지점이 둘 이상이면 소비자 번들러가 attribute 불일치로 경고한다.
 - `packages/components/` — `three-slicer/components`: React `<SettingsPanel/>` (전역 결합 0, Shadow DOM)
 - `packages/viewer/` — `three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트 (three.js, Shadow DOM)
+- `packages/types/` — `.d.ts` 전량. 손으로 쓰되 `settings-keys.d.ts`(907키)만 `gen_settings_types.mjs` 가 생성
 - `packages/wasm-core/` — 커널 C++ 소스 + `third_party/` (deps 사본, 독립 빌드용) — npm 미배포, 산출물은 `packages/engine/src/`
 - `web/viewer/` — 데모 앱 (Vite + React) — 워크스페이스 멤버, 패키지를 이름으로 참조

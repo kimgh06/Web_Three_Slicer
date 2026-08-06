@@ -1,6 +1,6 @@
 # three-slicer/components
 
-Reusable React components for the browser slicer. Props-driven — no global state, no React context, no router coupling (proven standalone by the tarball consumer gate `web/pack_check.sh`).
+Reusable React components for the browser slicer. Props-driven — no global state, no React context, no router coupling (proven standalone by the tarball consumer gate `packages/pack_check.sh`).
 
 ## `<SettingsPanel/>`
 
