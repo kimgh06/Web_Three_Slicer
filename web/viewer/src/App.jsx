@@ -157,94 +157,6 @@ function Layout() {
   return <div className="app"><Outlet /></div>
 }
 
-function TabView() {
-  const { builder } = useParams()
-  const [sp, setSp] = useSearchParams()
-  const mode = sp.get('mode') ?? 'all'
-  const pages = uiTree[builder] ?? []
-  const [pageIdx, setPageIdx] = useState(0)
-  // 빌더가 바뀌면 페이지 인덱스를 0으로 리셋 (state가 라우트 전환에도 유지되므로)
-  const [lastBuilder, setLastBuilder] = useState(builder)
-  if (builder !== lastBuilder) { setLastBuilder(builder); setPageIdx(0) }
-  const page = pages[Math.min(pageIdx, pages.length - 1)]
-  const show = k => passesMode(k, mode)
-  if (!pages.length) return <p className="muted">빌더 없음: {builder}</p>
-  return (
-    <div className="tab">
-      <aside>
-        {pages.map((p, i) => (
-          <button key={p.page + i} className={i === pageIdx ? 'on' : ''} onClick={() => setPageIdx(i)}>
-            {p.page}
-          </button>
-        ))}
-        <div className="modes">
-          {MODES.map(m => (
-            <button key={m} className={mode === m ? 'on' : ''} onClick={() => setSp({ mode: m })}>{m}</button>
-          ))}
-        </div>
-      </aside>
-      <main>
-        <h2>{page.page} <span className="muted">Tab.cpp:{page.line}</span></h2>
-        {page.groups.map(g => {
-          const opts = g.options.filter(show)
-          if (!opts.length) return null
-          return (
-            <section key={g.group + g.line}>
-              <h3>{g.group || '(무제 그룹)'} <span className="muted">:{g.line}</span></h3>
-              {opts.map((k, i) => <OptionRow key={k + i} optKey={k} />)}
-            </section>
-          )
-        })}
-      </main>
-    </div>
-  )
-}
-
-function OptionDetail() {
-  const { key } = useParams()
-  const def = schema[key]
-  const rules = useMemo(() =>
-    Object.entries(toggles).flatMap(([fn, v]) =>
-      v.rules.filter(r => r.fields.includes(key)).map(r => ({ ...r, fn }))), [key])
-  const inval = useMemo(() =>
-    ['Print', 'PrintObject'].flatMap(scope =>
-      (invalidation[scope] ?? []).filter(b => b.keys.includes(key)).map(b => ({ ...b, scope }))), [key])
-  if (!def) return <p className="muted">스키마에 없는 키: {key}</p>
-  return (
-    <div className="detail">
-      <h2>{def.label ?? key} <code>{key}</code> <ModeBadge mode={def.mode} /></h2>
-      {def.tooltip && <p className="tip">{def.tooltip}</p>}
-      <h3>스키마 (PrintConfig.cpp:{def.line})</h3>
-      <pre>{JSON.stringify(def, null, 2)}</pre>
-      <h3>활성/비활성 규칙 ({rules.length})</h3>
-      {rules.length === 0 ? <p className="muted">없음 — 항상 활성</p> : (
-        <ul>{rules.map((r, i) => <li key={i}><code>{r.enable_if}</code> <span className="muted">({r.fn}:{r.line})</span></li>)}</ul>
-      )}
-      <h3>변경 시 재실행 단계 ({inval.length})</h3>
-      {inval.length === 0 ? <p className="muted">매핑 없음 → 전체 무효화(기본 분기)</p> : (
-        <ul>{inval.map((b, i) => <li key={i}><b>{b.scope}</b>: {b.steps.join(', ') || b.special.join(', ')} <span className="muted">:{b.line}</span></li>)}</ul>
-      )}
-    </div>
-  )
-}
-
-function Search() {
-  const [sp] = useSearchParams()
-  const q = (sp.get('q') ?? '').toLowerCase()
-  const hits = useMemo(() => {
-    if (!q) return []
-    return Object.entries(schema)
-      .filter(([k, d]) => k.includes(q) || d.label?.toLowerCase().includes(q) || d.tooltip?.toLowerCase().includes(q))
-      .slice(0, 100)
-  }, [q])
-  return (
-    <div className="detail">
-      <h2>검색: “{q}” — {hits.length}건{hits.length === 100 ? '+' : ''}</h2>
-      {hits.map(([k]) => <OptionRow key={k} optKey={k} />)}
-    </div>
-  )
-}
-
 // 우측 설정 사이드바 — 편집 가능 + 상단 검색 input(결과는 패널 내 리스트).
 // 27단계: 데스크톱형 셸은 Viewport 가 소유(상단바+좌측 기즈모 레일+중앙 뷰포트+우측 사이드바).
 //  프로세스 섹션엔 설정 패널(SettingsPanel)을 processPanel 로 임베드 — 상태 공유는 그대로.
@@ -264,14 +176,5 @@ function Prepare() {
 //  three.js/WASM 초기화 없이 뜨게 한다 — 소개만 보러 온 사람에게 커널을 로드시키지 않는다.
 export const routes = [
   { path: '/', element: <Landing /> },
-  {
-    path: '/slice',
-    element: <Layout />,
-    children: [
-      { index: true, element: <Prepare /> },
-      { path: 'tab/:builder', element: <TabView /> },
-      { path: 'option/:key', element: <OptionDetail /> },
-      { path: 'search', element: <Search /> },
-    ],
-  },
+  { path: '/slice', element: <Prepare />},
 ]

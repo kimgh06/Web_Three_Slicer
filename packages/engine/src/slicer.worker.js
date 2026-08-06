@@ -47,8 +47,9 @@ self.onmessage = async (e) => {
       try {
         // Module.HEAPU8 은 emscripten 6.x 글루가 노출하지 않음 — embind typed_memory_view 로 버퍼 획득
         const v = Module.sup_progress_view && Module.sup_progress_view()
+        const c = Module.cancel_flag_view && Module.cancel_flag_view()
         if (v && v.buffer instanceof SharedArrayBuffer)
-          self.postMessage({ type: 'supsab', buf: v.buffer, ptr: v.byteOffset })
+          self.postMessage({ type: 'supsab', buf: v.buffer, ptr: v.byteOffset, cancelPtr: c ? c.byteOffset : 0 })
       } catch {}
     }
     // 기본: 슬라이스. 레이어 싱크 등록 → 커널이 레이어마다 콜백(z, idx, gcodeChunk, pathsF32, widthsF32).

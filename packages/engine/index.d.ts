@@ -1,4 +1,6 @@
-// Type definitions for @three-slicer/engine
+// Type definitions for three-slicer (engine entry point)
+export type { SlicerSettings, SettingKey, Point } from '../types/settings-keys.d.ts'
+
 export interface SliceLayer { z: number; idx: number; gcode: string; paths: Float32Array; widths: Float32Array }
 export interface SliceCallbacks {
   onProgress?: (done: number, total: number) => void

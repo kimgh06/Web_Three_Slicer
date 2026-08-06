@@ -555,9 +555,9 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 #endif /* SLIC3R_DEBUG */
 
     // Generate the actual toolpaths and save them into each layer.
-    // [결정성] generate_support_toolpaths 는 병렬 실행 시 바이모달 출력(실측: entities 12836↔12448,
-    //  上 6개 페이즈 체크섬은 4런 동일 → 이 페이즈 내부의 레인지/타이밍 의존). 직렬로도 0.2s(서포트의 ~4%)라
-    //  결정성 확보가 압도적 이득 → 이 페이즈만 병렬 비활성. 근본 원인(idx_layer_* 레인지 스캔 or 공유 상태)은 후속.
+    // [결정성] toolpaths 병렬은 바이모달 재발(2차 실측: per-layer 필러 전환 후에도 2083590↔2094276,
+    //  st 출력 불변 → 필러 상태 이월 무죄). 잔여 용의: 인접 서포트 레이어가 공유하는 contact 레이어 객체를
+    //  loop_interface_processor.generate 가 변형 — 병렬 처리 순서 의존. 근본 수정 전까지 직렬 고정(0.8s).
     { bool __was = tbb_stub::enabled().exchange(false);
       generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
       tbb_stub::enabled().store(__was); }
@@ -2522,7 +2522,8 @@ static inline SupportGeneratorLayer* detect_bottom_contacts(
 
 // Returns polygons to print + polygons to propagate downwards.
 // Called twice: First for normal supports, possibly trimmed by "on build plate only", second for support enforcers not trimmed by "on build plate only".
-static inline std::pair<Polygons, Polygons> project_support_to_grid(const Layer &layer, const SupportGridParams &grid_params, const Polygons &overhangs, Polygons *layer_buildplate_covered
+static inline std::pair<Polygons, Polygons> project_support_to_grid(const Layer &layer, const SupportGridParams &grid_params, const Polygons &overhangs, Polygons *layer_buildplate_covered,
+    Polygons *precomputed_trimming /* = nullptr — 레이어 독립 offset(lslices,ε) 병렬 선계산분(소비: move) */
 #ifdef SLIC3R_DEBUG 
     , size_t iRun, size_t layer_id, const char *debug_name
 #endif /* SLIC3R_DEBUG */
@@ -2530,7 +2531,9 @@ static inline std::pair<Polygons, Polygons> project_support_to_grid(const Layer 
 {
     // Remove the areas that touched from the projection that will continue on next, lower, top surfaces.
 //            Polygons trimming = union_(to_polygons(layer.slices), touching, true);
-    Polygons trimming = layer_buildplate_covered ? std::move(*layer_buildplate_covered) : offset(layer.lslices, float(SCALED_EPSILON));
+    Polygons trimming = layer_buildplate_covered ? std::move(*layer_buildplate_covered)
+                      : precomputed_trimming ? std::move(*precomputed_trimming)
+                      : offset(layer.lslices, float(SCALED_EPSILON));
     Polygons overhangs_projection = diff(overhangs, trimming);
 
 #ifdef SLIC3R_DEBUG
@@ -2635,6 +2638,13 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::bottom_contact_layers_and_
     Polygons  enforcers_projection;
     // Last top contact layer visited when collecting the projection of contact areas.
     int       contact_idx = int(top_contacts.size()) - 1;
+    // [병렬 선계산] trimming = offset(lslices, ε) 는 레이어 독립인데 순차 전파 루프 안에서 매번 계산되던 것
+    //  — 그리드 페이즈(실측 2.0s)의 체인 무관 부분만 분리해 병렬로 선계산.
+    std::vector<Polygons> precomputed_trimmings(object.total_layer_count());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, object.total_layer_count()), [&](const tbb::blocked_range<size_t>& __r) {
+        for (size_t li = __r.begin(); li < __r.end(); ++li)
+            precomputed_trimmings[li] = offset(object.layers()[li]->lslices, float(SCALED_EPSILON));
+    });
     for (int layer_id = int(object.total_layer_count()) - 2; layer_id >= 0; -- layer_id) {
         BOOST_LOG_TRIVIAL(trace) << "Support generator - bottom_contact_layers - layer " << layer_id;
         const Layer &layer = *object.get_layer(layer_id);
@@ -2700,13 +2710,14 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::bottom_contact_layers_and_
         Polygons *layer_buildplate_covered = buildplate_covered.empty() ? nullptr : &buildplate_covered[layer_id];
         // Filtering the propagated support columns to two extrusions, overlapping by maximum 20%.
 //        float column_propagation_filtering_radius = scaled<float>(0.8 * 0.5 * (m_support_params.support_material_flow.spacing() + m_support_params.support_material_flow.width()));
-        task_group.run([&grid_params, &overhangs_projection, &overhangs_projection_raw, &layer, &layer_support_area, layer_buildplate_covered /* , column_propagation_filtering_radius */
+        task_group.run([&grid_params, &overhangs_projection, &overhangs_projection_raw, &layer, &layer_support_area, layer_buildplate_covered, &precomputed_trimmings, layer_id /* , column_propagation_filtering_radius */
 #ifdef SLIC3R_DEBUG 
             , iRun, layer_id
 #endif /* SLIC3R_DEBUG */
             ] {
                 // buildplate_covered[layer_id] will be consumed here.
-                std::tie(layer_support_area, overhangs_projection) = project_support_to_grid(layer, grid_params, overhangs_projection_raw, layer_buildplate_covered
+                std::tie(layer_support_area, overhangs_projection) = project_support_to_grid(layer, grid_params, overhangs_projection_raw, layer_buildplate_covered,
+                    &precomputed_trimmings[layer_id]
 #ifdef SLIC3R_DEBUG 
                     , iRun, layer_id, "general"
 #endif /* SLIC3R_DEBUG */
@@ -2723,7 +2734,7 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::bottom_contact_layers_and_
                 , iRun, layer_id
 #endif /* SLIC3R_DEBUG */
             ]{
-                std::tie(layer_support_area_enforcers, enforcers_projection) = project_support_to_grid(layer, grid_params, enforcers_projection_raw, nullptr
+                std::tie(layer_support_area_enforcers, enforcers_projection) = project_support_to_grid(layer, grid_params, enforcers_projection_raw, nullptr, nullptr
 #ifdef SLIC3R_DEBUG 
                     , iRun, layer_id, "enforcers"
 #endif /* SLIC3R_DEBUG */

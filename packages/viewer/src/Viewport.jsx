@@ -72,6 +72,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const pendingSliceRef = useRef(null)  // 프로미스 기반 슬라이스(전체 플레이트 순차용) + 30단계 워치독 타이머
   const streamAccumRef = useRef(null)   // 30단계: 스트리밍 레이어 누적 {layers:[{z,paths,widths}], gcode:[chunk]}
   const downgradeRef = useRef(false)    // 30단계: 다운그레이드(간소화) 재시도 중 — buildParams 가 인필 단순화+economy
+  const lastGeomRef = useRef(null)      // G003 증분: 직전 성공 슬라이스의 지오메트리 다이제스트(플레이트 무관 — 다른 플레이트면 다이제스트가 다름)
   const selectedPlateRef = useRef(0)
   const plateCountRef = useRef(1)
   const placeXRef = useRef(0)           // 선택 플레이트 내 오브젝트 배치 커서(플레이트 상대)
@@ -84,6 +85,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const [objects, setObjects] = useState([])
   const [triWarn, setTriWarn] = useState('')
   const [slicing, setSlicing] = useState(false)
+  const [autoSlice, setAutoSlice] = useState(false)     // G004: 설정 변경 시 디바운스 자동 재슬라이스(수동 첫 슬라이스 후)
+  const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
   const [stats, setStats] = useState(null)
@@ -571,20 +574,31 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const supSabRef = useRef(null)     // { arr: Uint32Array(SAB, ptr, 1) } — mt 워커가 1회 공유
   const supPollRef = useRef(0)
   const stopSupPoll = () => { if (supPollRef.current) { clearInterval(supPollRef.current); supPollRef.current = 0 } }
+  // G002: 진행 중 슬라이스 취소 — SAB 플래그에 직접 기입(워커가 wasm 에 블록돼 있어도 커널 루프가 관찰)
+  const cancelSlice = () => { const sab = supSabRef.current; console.info('[vp-cancel] cancelSlice, hasView=', !!sab?.cancel); if (sab?.cancel) { try { Atomics.store(sab.cancel, 0, 1) } catch { sab.cancel[0] = 1 } } }
   const mapProgress = (done, total) => {
     const N = total > 2 ? (total - 2) / 2 : 0
     if (!N) return total ? done / total : 0
-    if (done <= N) return 0.15 * (done / N)          // PASS1: 0→15%
-    if (done === N + 1) return 0.20                  // 표면 완료 → 서포트 진입
-    if (done === N + 2) return 0.60                  // 서포트 완료
-    return 0.60 + 0.40 * ((done - N - 2) / N)        // 방출: 60→100%
+    if (done <= N) return 0.35 * (done / N)          // PASS1: 0→35% (실측 2.8s/7.8s — SAB 폴링으로 실진행)
+    if (done === N + 1) return 0.36                  // 표면 완료 → 서포트 진입
+    if (done === N + 2) return 0.87                  // 서포트 완료 (실측 4.0s)
+    return 0.87 + 0.13 * ((done - N - 2) / N)        // 방출: 87→100% (실측 1.1s)
   }
   const startSupPoll = (N) => {
-    const sab = supSabRef.current; if (!sab || supPollRef.current) return
-    // 총 작업량 ≈ 3.5×N (top_contacts N + bottom ~N + trim N + base N 근사, 실측 보정 상수) — 95% 캡 후 완료 틱에서 스냅
+    const sab = supSabRef.current; if (!sab) return
+    stopSupPoll()
+    // 총 작업량 ≈ 3.5×N (실측 보정 상수) — 95% 캡 후 완료 틱에서 스냅
     supPollRef.current = setInterval(() => {
       const ticks = sab.arr[0]
-      setProgress(0.20 + 0.40 * Math.min(0.95, ticks / (3.5 * N)))
+      setProgress(0.36 + 0.51 * Math.min(0.95, ticks / (3.5 * N)))
+    }, 150)
+  }
+  // PASS1 실진행(0→35%): 커널이 SAB 카운터에 퍼밀(0..1000) 기입 — 슬라이스 전송 직후 시작, 첫 progress 메시지에서 종료
+  const startP1Poll = () => {
+    const sab = supSabRef.current; if (!sab) return
+    stopSupPoll()
+    supPollRef.current = setInterval(() => {
+      setProgress(0.35 * Math.min(1, sab.arr[0] / 1000))
     }, 150)
   }
   function getWorker() {
@@ -593,13 +607,14 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       wk.onmessage = (e) => {
         const d = e.data
         const pnd = pendingSliceRef.current
-        if (d.type === 'progress') {   // 30단계: 워치독 리셋(+단계 기록) + 가중 매핑 + 서포트 폴링 제어
+        if (d.type === 'progress') {   // 30단계: 워치독 리셋(+단계 기록) + 가중 매핑 + 밴드별 폴링 제어
           const N = d.total > 2 ? (d.total - 2) / 2 : 0
+          if (N && d.done <= N) stopSupPoll()          // 첫 progress = PASS1 완료 → P1 폴링 종료
           if (N && d.done === N + 1) startSupPoll(N)
           if (N && d.done >= N + 2) stopSupPoll()
           setProgress(mapProgress(d.done, d.total)); pnd?.note?.(d.done, d.total); pnd?.kick?.()
         }
-        else if (d.type === 'supsab') { try { supSabRef.current = { arr: new Uint32Array(d.buf, d.ptr, 1) } } catch {} }
+        else if (d.type === 'supsab') { try { supSabRef.current = { arr: new Uint32Array(d.buf, d.ptr, 1), cancel: d.cancelPtr ? new Uint32Array(d.buf, d.cancelPtr, 1) : null }; console.info('[vp-cancel] supsab cancelPtr=', d.cancelPtr) } catch (e) { console.info('[vp-cancel] supsab view fail', e) } }
         else if (d.type === 'layer') {   // 30단계 스트리밍: 레이어 즉시 수신(transfer) → 누적, 워치독 리셋
           pnd?.kick?.()
           const a = streamAccumRef.current
@@ -749,6 +764,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       pendingSliceRef.current = { resolve, reject, kick, stop, note }
       kick()
       getWorker().postMessage({ stl: buf, params: paramsStr, stall })
+      startP1Poll()   // PASS1 실진행(0→35%) — SAB 미지원(st)이면 no-op
     })
   }
   function recreateWorker() { try { workerRef.current?.terminate() } catch {} ; workerRef.current = null; getWorker() }
@@ -757,10 +773,23 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   async function sliceLadder(buf, params) {
     try { const r = await sliceOne(buf, JSON.stringify(params)); return { r, economy: !!(r.stats && r.stats.economy) } }
     catch (e1) {
+      if (String(e1?.message || e1).includes('canceled')) throw e1   // G002: 취소는 재시도 없이 전파
       recreateWorker()
-      const r = await sliceOne(buf, JSON.stringify({ ...params, economy: true }))   // 실패 시 throw 전파
+      // 절약 재시도: 스테이지 캐시 미보존(힙 최소화) + 재사용 무효(새 워커라 캐시도 없음)
+      const r = await sliceOne(buf, JSON.stringify({ ...params, economy: true, keep_stages: false, reuse_stages: 0 }))   // 실패 시 throw 전파
       return { r, economy: true, recovered: true }
     }
+  }
+  // G003 증분: 지오메트리 다이제스트(SHA-256, 네이티브 — 37MB ≈ 0.1s). 직전 성공 슬라이스와 동일하면
+  //  커널 스테이지 캐시 재사용(reuse_stages=2) — 파라미터가 레이어에 영향 주면 커널 layerKey 가 2차 방어.
+  async function geomDigest(buf) {
+    try { const d = await crypto.subtle.digest('SHA-256', buf); return Array.from(new Uint8Array(d, 0, 8)).map(b => b.toString(16).padStart(2, '0')).join('') }
+    catch { return null }   // non-secure context 등 — 증분 비활성(항상 풀 슬라이스)
+  }
+  function applyIncremental(params, dig) {
+    if (params.economy) return   // 절약 모드: 캐시 유지가 힙 압박 — 증분 미사용
+    params.keep_stages = true
+    params.reuse_stages = dig && dig === lastGeomRef.current ? 2 : 0
   }
   function buildParams(merged) {
     const params = deriveKernelParams(settings)
@@ -827,10 +856,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
-          const { r, economy } = await sliceLadder(merged.buf, buildParams(merged))   // 정상 실패 시 절약 재시도
+          const params = buildParams(merged)
+          const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
+          const { r, economy } = await sliceLadder(merged.buf, params)   // 정상 실패 시 절약 재시도
+          lastGeomRef.current = economy ? null : dig   // 절약 완주면 캐시 미보존 → 재사용 불가
           plateResultsRef.current[i] = r; refreshSlicedCount(); sliced++   // 자동 다운로드 없음 — 탭 전환으로 조회, 저장은 명시적 내보내기로
           if (economy) anyEconomy = true
-        } catch (e) { failed.push(i + 1) }   // E1: 실패해도 이미 완주한 플레이트 g-code 는 보존/제공됨
+        } catch (e) { lastGeomRef.current = null; failed.push(i + 1) }   // E1: 실패해도 이미 완주한 플레이트 g-code 는 보존/제공됨
       }
       setSlicing(false)
       if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('모든 플레이트 슬라이스 실패(절약 모드 포함) — 간소화 재시도를 시도하세요'); return }
@@ -845,13 +877,33 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
-        const { r, economy } = await sliceLadder(merged.buf, buildParams(merged))
-        if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s`)
+        const params = buildParams(merged)
+        const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
+        const { r, economy } = await sliceLadder(merged.buf, params)
+        lastGeomRef.current = economy ? null : dig
+        if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); setSlicing(false); showPlateResult(idx0)
         if (economy) setSliceNotice('메모리 압박 — 절약 모드로 완주(프리뷰 없음, G-code 는 다운로드 가능)')
-      } catch (e) { setSlicing(false); setDowngradeOffer({ scope: 'current' }); setError('슬라이스 실패(절약 모드도 실패): ' + e.message) }
+      } catch (e) {
+        setSlicing(false); lastGeomRef.current = null
+        if (String(e?.message || e).includes('canceled')) { setSliceNotice('슬라이스 취소됨'); return }
+        setDowngradeOffer({ scope: 'current' }); setError('슬라이스 실패(절약 모드도 실패): ' + e.message)
+      }
     }
   }
+  // G004: 자동 재슬라이스 — 설정 변경 0.8s 디바운스. 슬라이스 이력이 있는 현재 플레이트만,
+  //  진행 중이면 취소(G002) 후 완료를 기다렸다가 재슬라이스. 증분(G003) 덕에 보통 emit 재실행(~1s)로 끝난다.
+  useEffect(() => {
+    if (!autoSlice || !objects.length) return
+    if (!plateResultsRef.current[selectedPlateRef.current]) return   // 첫 슬라이스는 수동으로
+    clearTimeout(autoTimerRef.current)
+    const fire = () => {
+      if (pendingSliceRef.current) { cancelSlice(); autoTimerRef.current = setTimeout(fire, 300); return }
+      onSlice('current')
+    }
+    autoTimerRef.current = setTimeout(fire, 800)
+    return () => clearTimeout(autoTimerRef.current)
+  }, [settings, autoSlice])   // eslint-disable-line react-hooks/exhaustive-deps
   // 다운그레이드 재시도: 인필 패턴 단순화(rectilinear)+밀도↓+절약 모드로 다시(사용자 선택). buildParams 가 반영.
   async function retryDowngrade() {
     const off = downgradeOffer; setDowngradeOffer(null); if (!off) return
@@ -1232,7 +1284,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
           {ok && (
             <div className="plate-bar" data-testid="plate-bar" role="tablist" aria-label="플레이트">
               {Array.from({ length: plateCount }, (_, i) => (
-                <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} title={`플레이트 ${i + 1} 선택 — Preview 에선 이 플레이트 결과로 전환`} data-testid={`plate-${i}`} title={`플레이트 ${i + 1}`}>{i + 1}</button>
+                <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} title={`플레이트 ${i + 1} 선택 — Preview 에선 이 플레이트 결과로 전환`} data-testid={`plate-${i}`}>{i + 1}</button>
               ))}
               <button className="plate-add" onClick={addPlate} disabled={plateCount >= MAX_PLATES} title="빈 플레이트 추가 (최대 9개) — 플레이트별로 따로 슬라이스·내보내기" data-testid="plate-add">+</button>
               {plateCount > 1 && <button className="plate-del" onClick={deletePlate} title="마지막 플레이트와 그 슬라이스 결과 삭제" data-testid="plate-del">−</button>}
@@ -1326,8 +1378,11 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
 
             {/* ⑤ 하단 고정 버튼 바 */}
             <div className="side-bottom">
+              <label className="auto-slice" data-testid="auto-slice" title="설정을 바꾸면 0.8초 뒤 자동으로 재슬라이스합니다 (첫 슬라이스는 수동, 진행 중이면 취소 후 재시작)">
+                <input type="checkbox" checked={autoSlice} onChange={e => setAutoSlice(e.target.checked)} /> 자동 슬라이스
+              </label>
               <div className="slice-dd">
-                <button className="slice-btn" title={plateCount > 1 ? '슬라이스 대상 선택 (Ctrl+R = 현재 플레이트)' : '현재 플레이트를 슬라이스 (Ctrl+R)'} onClick={() => (plateCount > 1 ? setSliceMenu(v => !v) : onSlice('current'))} disabled={objects.length === 0 || slicing} data-testid="slice-btn">
+                <button className="slice-btn" title={slicing ? '클릭하면 슬라이스를 취소합니다' : (plateCount > 1 ? '슬라이스 대상 선택 (Ctrl+R = 현재 플레이트)' : '현재 플레이트를 슬라이스 (Ctrl+R)')} onClick={() => (slicing ? cancelSlice() : (plateCount > 1 ? setSliceMenu(v => !v) : onSlice('current')))} disabled={objects.length === 0} data-testid="slice-btn">
                   {slicing ? `슬라이싱… ${Math.round(progress * 100)}%` : (plateCount > 1 ? '슬라이스 ▾' : '슬라이스')}
                 </button>
                 {sliceMenu && plateCount > 1 && (

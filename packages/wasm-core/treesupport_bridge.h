@@ -106,4 +106,8 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
 __attribute__((visibility("default")))
 unsigned long progress_addr();
 
+// 취소 플래그(u32) 주소 — slice() 진입 시 0 리셋, UI 가 SAB 로 1 기입 시 커널·포트가 조기 중단.
+__attribute__((visibility("default")))
+unsigned long cancel_addr();
+
 } // namespace treesupport_bridge

@@ -131,6 +131,8 @@
 /* ⑤ 하단 고정 버튼 바 */
 .side-bottom { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px; border-top: 1px solid #dcdfe3; background: #e6e9ec; }
 .side-bottom .slice-btn { flex: 1.4; margin: 0; }
+.auto-slice { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #444; cursor: pointer; white-space: nowrap; user-select: none; }
+.auto-slice input { margin: 0; }
 .export-btn { flex: 1; text-align: center; padding: 9px; border-radius: 8px; background: #dfe6ea; color: #1f6feb;
   border: 1px solid #c7d2da; text-decoration: none; font-weight: 600; cursor: pointer; font-size: 13px; }
 .export-btn:hover { background: #d3dee4; }

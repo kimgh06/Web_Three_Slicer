@@ -1,6 +1,5 @@
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #222; }
-/* /slice 라우트 컨테이너 — Viewport(shadow) 의 .app-shell(absolute) 이 이 박스를 기준으로 붙는다 */
 .prepare { position: absolute; inset: 0; }
 .app header { display: flex; gap: 16px; align-items: center; padding: 8px 16px;
   border-bottom: 1px solid #ddd; position: sticky; top: 0; background: #fff; z-index: 2; }
@@ -28,35 +27,167 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 .detail pre { background: #f7f7f7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
 .tip { color: #555; background: #fbf8e9; padding: 8px 10px; border-radius: 6px; }
 
-/* ===== 랜딩 (/) — 기능만 단어로 나열. 슬라이서 셸 밖이라 three.js/WASM 을 로드하지 않는다 ===== */
-.landing { position: absolute; inset: 0; overflow-y: auto; background: #0e1216; color: #cdd6dd;
-  font: 15px/1.7 system-ui, -apple-system, sans-serif; }
-.landing > * { max-width: 760px; margin: 0 auto; padding: 0 28px; }
+.landing {
+  --lp-bg: #0e1216;
+  --lp-panel: #141a20;
+  --lp-panel-strong: #1a2027;
+  --lp-panel-hover: #222a33;
+  --lp-text: #e9f1f7;
+  --lp-body: #c2ced8;
+  --lp-muted: #8d9daa;
+  --lp-subtle: #626e79;
+  --lp-on-accent: #ffffff;
+  --lp-code: #9fe3bd;
+  --lp-border: #2c353d;
+  --lp-border-subtle: #191f25;
+  --lp-dot: #4a555f;
+  --lp-accent: #00ae42;
+  --lp-accent-hover: #039b3c;
+  --lp-accent-soft: #143121;
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--lp-bg);
+  color: var(--lp-body);
+  font: 15px/1.7 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.landing > * { max-width: 920px; margin: 0 auto; padding: 0 28px; }
+.landing a { color: inherit; }
+.landing a:focus-visible,
+.landing button:focus-visible { outline: 2px solid var(--lp-accent); outline-offset: 3px; }
 
-.lp-head { padding-top: 96px; padding-bottom: 56px; }
-.lp-head h1 { margin: 0 0 6px; font-size: 34px; font-weight: 700; color: #e9f1f7; letter-spacing: -.01em; }
-.lp-head p { margin: 0 0 28px; font-size: 16px; color: #8d9daa; }
+.lp-head { padding-top: 88px; padding-bottom: 48px; }
+.lp-kicker { margin-bottom: 10px; color: var(--lp-accent); font-size: 12.5px; font-weight: 700; }
+.lp-head h1 { margin: 0 0 8px; font-size: 34px; font-weight: 700; line-height: 1.16; color: var(--lp-text); letter-spacing: 0; }
+.lp-head p { max-width: 680px; margin: 0 0 28px; font-size: 16px; color: var(--lp-muted); word-break: keep-all; }
 .lp-cta { display: flex; gap: 9px; flex-wrap: wrap; }
-.lp-btn { display: inline-block; padding: 10px 22px; border-radius: 8px; text-decoration: none;
-  border: 1px solid #2c353d; color: #cdd6dd; background: #1a2027; font-weight: 600; font-size: 14px; }
-.lp-btn:hover { background: #222a33; }
-.lp-btn.primary { background: #00ae42; border-color: #00ae42; color: #fff; }
-.lp-btn.primary:hover { background: #039b3c; }
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 20px;
+  border-radius: 8px;
+  text-decoration: none;
+  border: 1px solid var(--lp-border);
+  color: var(--lp-body);
+  background: var(--lp-panel-strong);
+  font-weight: 700;
+  font-size: 14px;
+  transition: background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out;
+}
+.lp-btn:hover { background: var(--lp-panel-hover); transform: translateY(-1px); }
+.lp-btn.primary { background: var(--lp-accent); border-color: var(--lp-accent); color: var(--lp-on-accent); }
+.lp-btn.primary:hover { background: var(--lp-accent-hover); }
 
-/* 라벨 고정폭 + 기능어 흐름. 카드·테두리 없이 행 여백만으로 구분한다. */
-.lp-feat { margin: 0; padding-bottom: 64px; }
-.lp-row { display: flex; gap: 22px; padding: 13px 0; border-top: 1px solid #191f25; }
+.lp-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 28px;
+}
+.lp-links a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--lp-border-subtle);
+  border-radius: 8px;
+  background: var(--lp-panel);
+  text-decoration: none;
+  transition: border-color 140ms ease-out, transform 140ms ease-out;
+}
+.lp-links a:hover { border-color: var(--lp-accent); transform: translateY(-1px); }
+.lp-links span { color: var(--lp-text); font-weight: 700; }
+.lp-links small { color: var(--lp-subtle); font-size: 12.5px; }
+
+.lp-section { margin: 0 0 48px; }
+.lp-section-head { margin-bottom: 14px; }
+.lp-section-head h2 { margin: 0 0 4px; color: var(--lp-text); font-size: 18px; line-height: 1.35; }
+.lp-section-head p { margin: 0; color: var(--lp-muted); word-break: keep-all; }
+.lp-code-grid,
+.lp-route-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(min(280px, 100%), 1fr));
+  gap: 12px;
+}
+.lp-code-grid pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 16px;
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  background: var(--lp-panel);
+}
+.lp-code-grid code,
+.lp-route-card code {
+  font: 500 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--lp-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lp-route-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--lp-border-subtle);
+  border-radius: 8px;
+  background: var(--lp-panel);
+}
+.lp-route-card h3 { margin: 0 0 4px; color: var(--lp-text); font-size: 14px; line-height: 1.4; }
+.lp-route-card p { margin: 10px 0 0; color: var(--lp-muted); font-size: 14px; line-height: 1.55; word-break: keep-all; }
+
+.lp-feat { margin: 0; }
+.lp-row { display: flex; gap: 22px; padding: 13px 0; border-top: 1px solid var(--lp-border-subtle); }
 .lp-row:first-child { border-top: 0; }
-.lp-feat dt { flex: 0 0 76px; font-size: 13px; font-weight: 600; color: #6f7d89; padding-top: 1px; }
-.lp-feat dd { margin: 0; flex: 1 1 auto; font-size: 14.5px; color: #c2ced8; }
-.lp-dot { font-style: normal; color: #4a555f; margin: 0 8px; }
+.lp-feat dt { flex: 0 0 76px; font-size: 13px; font-weight: 700; color: var(--lp-subtle); padding-top: 1px; }
+.lp-feat dd { margin: 0; flex: 1 1 auto; font-size: 14.5px; color: var(--lp-body); word-break: keep-all; }
+.lp-feat dd span { display: inline-block; white-space: nowrap; }
+.lp-dot { font-style: normal; color: var(--lp-dot); margin: 0 8px; }
 
-.lp-foot { border-top: 1px solid #191f25; padding-top: 18px; padding-bottom: 48px;
-  font-size: 12.5px; color: #626e79; }
+.lp-license {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--lp-border-subtle);
+  border-radius: 8px;
+  background: var(--lp-accent-soft);
+}
+.lp-license p { margin: 0; color: var(--lp-body); word-break: keep-all; }
+.lp-license a { flex: 0 0 auto; color: var(--lp-accent); font-weight: 700; text-decoration: none; }
+.lp-license a:hover { color: var(--lp-code); }
 
-@media (max-width: 560px) {
-  .lp-head { padding-top: 60px; }
+.lp-foot {
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid var(--lp-border-subtle);
+  padding-top: 18px;
+  padding-bottom: 48px;
+  font-size: 12.5px;
+  color: var(--lp-subtle);
+}
+.lp-foot a { color: var(--lp-muted); text-decoration: none; }
+.lp-foot a:hover { color: var(--lp-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-btn,
+  .lp-links a { transition: none; }
+  .lp-btn:hover,
+  .lp-links a:hover { transform: none; }
+}
+
+@media (max-width: 640px) {
+  .landing > * { padding: 0 20px; }
+  .lp-head { padding-top: 56px; padding-bottom: 40px; }
   .lp-head h1 { font-size: 27px; }
+  .lp-links { grid-template-columns: 1fr; }
+  .lp-code-grid,
+  .lp-route-grid { grid-template-columns: 1fr; }
   .lp-row { flex-direction: column; gap: 5px; }
   .lp-feat dt { flex: none; }
+  .lp-license { align-items: flex-start; flex-direction: column; }
+  .lp-foot { flex-direction: column; gap: 2px; }
 }
