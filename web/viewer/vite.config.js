@@ -16,5 +16,7 @@ export default defineConfig({
   },
   preview: {
     headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
+    // 리버스 프록시 도메인 허용. 추가 호스트는 .env 의 ALLOWED_HOSTS 에 콤마로.
+    allowedHosts: (process.env.ALLOWED_HOSTS || 'slicer.kimgh06.com').split(','),
   },
 })

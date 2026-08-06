@@ -3,6 +3,8 @@ services:
     build:
       context: ..
       dockerfile: web/Dockerfile
+    environment:
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-slicer.kimgh06.com}
     ports:
       - "${UP_PORT:-8080}:4173"
     restart: unless-stopped
