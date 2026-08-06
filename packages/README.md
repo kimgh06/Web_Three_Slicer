@@ -105,7 +105,7 @@ export default function App() {
 }
 ```
 
-The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. It supports STL, OBJ, 3MF, AMF, and PLY model files. Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
+The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
 
 ## Quick Start: Settings Panel
 
@@ -351,6 +351,7 @@ The package includes extracted OrcaSlicer metadata for custom interfaces:
 
 - `slice()` currently takes binary STL input at the engine API boundary.
 - The viewer can import STL, OBJ, 3MF, AMF, and PLY, then converts them for slicing.
+- `registerLoader(exts, fn)` from `three-slicer/viewer/loaders` adds any other format. Formats needing a heavy dependency are kept out of the package so it stays runtime-dependency-free — see `web/viewer/src/step_loader.js` for a STEP loader built on `occt-import-js` (OCCT WASM).
 - Not every OrcaSlicer schema key is wired into the WASM kernel yet.
 - Some vector settings are simplified to their first element.
 - Multithreaded WASM requires cross-origin isolation.

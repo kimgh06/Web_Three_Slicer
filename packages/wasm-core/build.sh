@@ -131,7 +131,12 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 #  이득 0.7%(노이즈) 에 크기 +9%(3.43→3.74MB) 라 -O2 유지. -flto 는 wasm-ld SIGSEGV(-r 부분링크 충돌).
 #  -ffast-math 는 금지(golden byte-identical 깨짐). 병목은 스칼라 정수 폴리곤 연산 — 실 레버는 스레딩.
 MAIN_SRC="slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
-MAIN_CFLAGS="-O2 --bind -std=c++17 -DCGAL_DISABLE_ROUNDING_MATH_CHECK $ARACHNE_INC"
+# -DNDEBUG: 업스트림 OrcaSlicer 릴리스 빌드(CMAKE_BUILD_TYPE=Release)와 동일하게 assert() 를 끈다.
+#  이게 없으면 업스트림이 "디버그 전용 불변식"으로 둔 assert 가 배포 빌드에서 워커를 죽인다 — 예: OCCT 테셀레이션
+#  (STEP 임포트)처럼 정점이 용접되지 않고 슬라이버 삼각형이 섞인 메시는 Voronoi.cpp:334(복구 루틴 *내부*),
+#  VoronoiUtils.cpp:322, FillBase.cpp:1407(길이 0 폐합 에지) 를 밟는다. 업스트림은 전부 복구 경로가 있어
+#  릴리스에서는 정상 슬라이스된다. 트리서포트 그룹(TS_CFLAGS)은 이미 -DNDEBUG 였다.
+MAIN_CFLAGS="-O2 --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 --bind -std=c++17 \

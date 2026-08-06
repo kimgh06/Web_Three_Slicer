@@ -20,7 +20,7 @@ function extrBBox(r) { let mn = [1e9, 1e9], mx = [-1e9, -1e9], mnz = 1e9; for (c
 // 점(x,y)이 레이어 벽(type1) 폴리곤 내부인지 — 수평 레이 교차수(홀수=내부). 벽 세그먼트=폴리곤 에지.
 function insideWalls(L, x, y) { let cnt = 0; for (let i = 0; i < L.paths.length; i += 8) { if (L.paths[i + 3] !== 1) continue; const x0 = L.paths[i], y0 = L.paths[i + 1], x1 = L.paths[i + 4], y1 = L.paths[i + 5]; if ((y0 > y) !== (y1 > y)) { const xc = x0 + (y - y0) / (y1 - y0) * (x1 - x0); if (xc > x) cnt++ } } return (cnt & 1) === 1 }
 
-const benchy = stlTris(readFileSync('fixtures/pseudo_benchy.stl'))
+const benchy = stlTris(readFileSync('testing_files/pseudo_benchy.stl'))
 
 // ① P1 안착 + P2 겹침 — 뷰어처럼 배치(중앙, seated), 슬라이스 후 툴패스 XY ≈ 입력 XY, z 안착
 const placed = place(benchy)   // 중앙+안착

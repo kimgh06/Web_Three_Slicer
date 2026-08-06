@@ -7,10 +7,22 @@
 import * as THREE from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
-import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { AMFLoader } from 'three/examples/jsm/loaders/AMFLoader.js'
+import { parse3MF } from './parse_3mf.js'
 
+// 내장 포맷. registerLoader() 로 확장되면 여기에 확장자가 추가된다(파일 대화상자/드래그앤드롭 필터가 이걸 본다).
 export const SUPPORTED_EXT = ['stl', 'obj', '3mf', 'amf', 'ply']
+
+// 확장 로더 레지스트리. STEP 처럼 무거운 의존성(OCCT WASM 7.6MB)이 필요한 포맷은 패키지에 넣지 않고
+//  쓰는 쪽에서 등록한다 — three-slicer 는 런타임 의존성 0 을 유지한다. (데모 앱 예: web/viewer/src/step_loader.js)
+//   registerLoader('step,stp', async (buffer, name) => [{ name, modelPos: Float32Array(N*9, z-up mm) }])
+const extra = new Map()
+export function registerLoader(exts, fn) {
+  for (const e of (Array.isArray(exts) ? exts : String(exts).split(',')).map(s => s.trim().toLowerCase())) {
+    extra.set(e, fn)
+    if (!SUPPORTED_EXT.includes(e)) SUPPORTED_EXT.push(e)
+  }
+}
 
 export function fileExt(name) { const i = name.lastIndexOf('.'); return i < 0 ? '' : name.slice(i + 1).toLowerCase() }
 
@@ -96,8 +108,8 @@ export async function loadModel(name, buffer) {
       return [{ name, modelPos: tris }]
     }
     case '3mf': {
-      const g = new ThreeMFLoader().parse(buffer)                          // Group (fflate 로 unzip, three 내부)
-      const objs = meshesToObjects(name, collectMeshes(g), true)           // 복수 오브젝트 개별 등록
+      // 자체 파서 — three 의 ThreeMFLoader 는 production extension(p:path)을 못 읽어 슬라이서 저장 3mf 가 전부 빈다.
+      const objs = parse3MF(buffer, name).map(o => ({ name: o.name, modelPos: o.tris }))
       if (!objs.length) throw new Error('3MF 메시 없음')
       return objs
     }
@@ -107,8 +119,13 @@ export async function loadModel(name, buffer) {
       if (!objs.length) throw new Error('AMF 메시 없음')
       return objs
     }
-    default:
-      throw new Error(`지원하지 않는 포맷: .${ext} (STEP 은 범위 외 — OCCT 필요)`)
+    default: {
+      const fn = extra.get(ext)
+      if (!fn) throw new Error(`지원하지 않는 포맷: .${ext}`)
+      const objs = await fn(buffer, name)
+      if (!objs?.length) throw new Error(`.${ext} 메시 없음`)
+      return objs
+    }
   }
 }
 

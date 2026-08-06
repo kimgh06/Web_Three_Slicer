@@ -1,6 +1,6 @@
 # three-slicer/viewer
 
-3D slicer viewer as a React component: three.js viewport (orbit/transform gizmos), model import (STL/OBJ/3MF/AMF/PLY, multi-object, drag & drop), Web Worker slicing via `three-slicer`, support painting, multi-plate, and a GPU-instanced volumetric toolpath preview ported from OrcaSlicer's libvgcode (millions of segments in a single draw path, per-feature colors, layer range slider, G-code export).
+3D slicer viewer as a React component: three.js viewport (orbit/transform gizmos), model import (STL/OBJ/3MF/AMF/PLY + pluggable formats such as STEP, multi-object, drag & drop), Web Worker slicing via `three-slicer`, support painting, multi-plate, and a GPU-instanced volumetric toolpath preview ported from OrcaSlicer's libvgcode (millions of segments in a single draw path, per-feature colors, layer range slider, G-code export).
 
 ```bash
 npm i three-slicer/viewer react react-dom three@^0.160.0
