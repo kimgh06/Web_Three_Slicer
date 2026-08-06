@@ -1717,12 +1717,27 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   tw_p1 = emscripten_get_now();
 
   // ---- PASS 1.5: 표면 검출 (이 레이어 fill − 이웃 contour) ----
-  for (int i=0;i<N;++i) {
-    if (L[i].fill.empty()) continue;
-    Paths above = (i+1<N) ? L[i+1].contour : Paths{};
-    Paths below = (i-1>=0) ? L[i-1].contour : Paths{};
-    L[i].topSurf = clip_paths(L[i].fill, above, ctDifference);  // 위가 비면 top 표면
-    L[i].botSurf = clip_paths(L[i].fill, below, ctDifference);  // 아래가 비면 bottom 표면
+  //  레이어 독립(읽기: 이웃 contour 불변, 쓰기: 자기 topSurf/botSurf) → PASS1 과 동일한 레이어 병렬.
+  {
+    auto surfOne = [&](int i){
+      if (L[i].fill.empty()) return;
+      Paths above = (i+1<N) ? L[i+1].contour : Paths{};
+      Paths below = (i-1>=0) ? L[i-1].contour : Paths{};
+      L[i].topSurf = clip_paths(L[i].fill, above, ctDifference);  // 위가 비면 top 표면
+      L[i].botSurf = clip_paths(L[i].fill, below, ctDifference);  // 아래가 비면 bottom 표면
+    };
+#ifdef __EMSCRIPTEN_PTHREADS__
+    { unsigned hw = std::thread::hardware_concurrency();
+      unsigned nt = std::max(1u, std::min<unsigned>(hw ? hw : 4, (unsigned)std::max(1, N)));
+      std::atomic<int> nextIdx{0};
+      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) surfOne(i); };
+      std::vector<std::thread> ths; ths.reserve(nt-1);
+      for (unsigned t=1; t<nt; ++t) { try { ths.emplace_back(workfn); } catch (...) { break; } }
+      workfn();
+      for (auto& th : ths) th.join(); }
+#else
+    for (int i=0;i<N;++i) surfOne(i);
+#endif
   }
 
   tw_p15 = emscripten_get_now();
