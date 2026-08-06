@@ -1702,11 +1702,18 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     { unsigned hw = std::thread::hardware_concurrency();
       unsigned nt = std::max(1u, std::min<unsigned>(hw ? hw : 4, (unsigned)N));
       std::atomic<int> nextIdx{0};
-      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) computeLayer(i); };
+      // [PASS1 실진행] mt 는 PASS1 을 한 번에 보고해 브라우저에서 2.8s(실측) 동안 0% 정지로 보였다.
+      //  서포트와 같은 SAB 카운터(진행 퍼밀 0..1000)를 워커가 갱신 → UI 스레드가 폴링해 0→35% 밴드 표시.
+      std::atomic<unsigned> p1done{0};
+      auto* p1prog = (std::atomic<unsigned>*)(uintptr_t)treesupport_bridge::progress_addr();
+      p1prog->store(0);
+      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) { computeLayer(i);
+        unsigned d = p1done.fetch_add(1) + 1; p1prog->store((unsigned)((unsigned long long)d * 1000u / (unsigned)N)); } };
       std::vector<std::thread> ths; ths.reserve(nt-1);
       for (unsigned t=1; t<nt; ++t) ths.emplace_back(workfn);
       workfn();                                  // 메인 스레드도 참여
       for (auto& th : ths) th.join();
+      p1prog->store(0);                          // 서포트 밴드 오염 방지(ParallelScope 리셋 전 잔존값 제거)
       report(N, total);                          // JS 콜백은 메인 스레드 전용 → 코스 단위 보고
     }
 #else

@@ -574,17 +574,26 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const mapProgress = (done, total) => {
     const N = total > 2 ? (total - 2) / 2 : 0
     if (!N) return total ? done / total : 0
-    if (done <= N) return 0.15 * (done / N)          // PASS1: 0→15%
-    if (done === N + 1) return 0.20                  // 표면 완료 → 서포트 진입
-    if (done === N + 2) return 0.60                  // 서포트 완료
-    return 0.60 + 0.40 * ((done - N - 2) / N)        // 방출: 60→100%
+    if (done <= N) return 0.35 * (done / N)          // PASS1: 0→35% (실측 2.8s/7.8s — SAB 폴링으로 실진행)
+    if (done === N + 1) return 0.36                  // 표면 완료 → 서포트 진입
+    if (done === N + 2) return 0.87                  // 서포트 완료 (실측 4.0s)
+    return 0.87 + 0.13 * ((done - N - 2) / N)        // 방출: 87→100% (실측 1.1s)
   }
   const startSupPoll = (N) => {
-    const sab = supSabRef.current; if (!sab || supPollRef.current) return
-    // 총 작업량 ≈ 3.5×N (top_contacts N + bottom ~N + trim N + base N 근사, 실측 보정 상수) — 95% 캡 후 완료 틱에서 스냅
+    const sab = supSabRef.current; if (!sab) return
+    stopSupPoll()
+    // 총 작업량 ≈ 3.5×N (실측 보정 상수) — 95% 캡 후 완료 틱에서 스냅
     supPollRef.current = setInterval(() => {
       const ticks = sab.arr[0]
-      setProgress(0.20 + 0.40 * Math.min(0.95, ticks / (3.5 * N)))
+      setProgress(0.36 + 0.51 * Math.min(0.95, ticks / (3.5 * N)))
+    }, 150)
+  }
+  // PASS1 실진행(0→35%): 커널이 SAB 카운터에 퍼밀(0..1000) 기입 — 슬라이스 전송 직후 시작, 첫 progress 메시지에서 종료
+  const startP1Poll = () => {
+    const sab = supSabRef.current; if (!sab) return
+    stopSupPoll()
+    supPollRef.current = setInterval(() => {
+      setProgress(0.35 * Math.min(1, sab.arr[0] / 1000))
     }, 150)
   }
   function getWorker() {
@@ -593,8 +602,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       wk.onmessage = (e) => {
         const d = e.data
         const pnd = pendingSliceRef.current
-        if (d.type === 'progress') {   // 30단계: 워치독 리셋(+단계 기록) + 가중 매핑 + 서포트 폴링 제어
+        if (d.type === 'progress') {   // 30단계: 워치독 리셋(+단계 기록) + 가중 매핑 + 밴드별 폴링 제어
           const N = d.total > 2 ? (d.total - 2) / 2 : 0
+          if (N && d.done <= N) stopSupPoll()          // 첫 progress = PASS1 완료 → P1 폴링 종료
           if (N && d.done === N + 1) startSupPoll(N)
           if (N && d.done >= N + 2) stopSupPoll()
           setProgress(mapProgress(d.done, d.total)); pnd?.note?.(d.done, d.total); pnd?.kick?.()
@@ -749,6 +759,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       pendingSliceRef.current = { resolve, reject, kick, stop, note }
       kick()
       getWorker().postMessage({ stl: buf, params: paramsStr, stall })
+      startP1Poll()   // PASS1 실진행(0→35%) — SAB 미지원(st)이면 no-op
     })
   }
   function recreateWorker() { try { workerRef.current?.terminate() } catch {} ; workerRef.current = null; getWorker() }
