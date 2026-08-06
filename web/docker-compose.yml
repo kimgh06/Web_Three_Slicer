@@ -1,0 +1,8 @@
+services:
+  viewer:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+    ports:
+      - "${UP_PORT:-8080}:4173"
+    restart: unless-stopped

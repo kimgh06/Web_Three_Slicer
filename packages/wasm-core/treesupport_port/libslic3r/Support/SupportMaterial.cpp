@@ -377,6 +377,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
     BOOST_LOG_TRIVIAL(info) << "Support generator - Start";
 
 
+
     coordf_t max_object_layer_height = 0.;
     for (size_t i = 0; i < object.layer_count(); ++ i)
         max_object_layer_height = std::max(max_object_layer_height, object.layers()[i]->height);
@@ -2321,7 +2322,12 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
     if (object.print()->canceled())
         return SupportGeneratorLayersPtr();
 
-    for (size_t layer_id = layer_id_start; layer_id < num_layers; layer_id++) {
+    // [병렬화 — 어셈블리 1.75s/2.4s 실측 지배] 레이어별 완전 독립(읽기: overhangs_per_layers/이웃 lslices
+    //  불변, 쓰기: contact_out[layer_id*2(+1)] 슬롯, layer_storage 는 spin_mutex). 캐리 변수 없음 —
+    //  SlicesMarginCache 도 반복-로컬. 결정성은 mt 다회 해시 + st↔mt cmp 게이트로 검증.
+    tbb::parallel_for(tbb::blocked_range<size_t>(layer_id_start, num_layers),
+        [&](const tbb::blocked_range<size_t>& __asm_r) {
+    for (size_t layer_id = __asm_r.begin(); layer_id < __asm_r.end(); layer_id++) {
         const Layer& layer = *object.layers()[layer_id];
         Polygons            overhang_polygons = to_polygons(overhangs_per_layers[layer_id]);
         Polygons            lower_layer_polygons = (layer_id == 0) ? Polygons() : to_polygons(object.layers()[layer_id - 1]->lslices);
@@ -2362,6 +2368,7 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
             }
         }
     }
+        });
 
     // Compress contact_out, remove the nullptr items.
     remove_nulls(contact_out);

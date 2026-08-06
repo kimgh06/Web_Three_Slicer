@@ -23,6 +23,7 @@ node_modules/
 .fablize/
 .claude/
 .playwright-mcp/
+.env/
 
 # ── web/ (데모 앱) + packages/ (npm 워크스페이스) ─────────
 web/**/dist/

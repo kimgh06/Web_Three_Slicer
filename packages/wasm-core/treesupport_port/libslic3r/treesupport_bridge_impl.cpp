@@ -1,3 +1,4 @@
+#include <chrono>
 // Stage-17 bridge impl: build a facade PrintObject from kernel slice rings (mm), run the REAL organic
 // TreeSupport (stage-16 port), and flatten SupportLayer::support_fills back to plain polylines (mm).
 // This is the ONLY TU where the kernel meets the treesupport_port Slic3r/facade world. Compiled with

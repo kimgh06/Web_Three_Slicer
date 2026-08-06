@@ -1,3 +1,4 @@
 .omc
+.env
 node_modules
 screenshots/

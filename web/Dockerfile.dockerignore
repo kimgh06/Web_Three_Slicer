@@ -1,0 +1,6 @@
+.git
+slicer
+**/node_modules
+**/dist
+web/screenshots
+**/.omc
