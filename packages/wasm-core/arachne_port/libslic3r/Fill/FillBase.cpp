@@ -50,7 +50,7 @@ Fill* Fill::new_from_type(const InfillPattern type)
     case ipConcentric:         return new FillConcentric();
     // STAGE-18 UNTRIM (coordinator-approved): additively RESTORE the two original factory cases the
     // organic TreeSupport integration needs. This reverts part of the STAGE-8 trim to the upstream
-    // behavior (not a new divergence), so it honors the intent of "본선 무변경" = prevent contamination.
+    // behavior (not a new divergence), so it honors the intent of "no change to the main build" = prevent contamination.
     // The kernel's own paths never call new_from_type for these patterns — proven by a golden byte-diff:
     // cube + overhang table (default + grid-support) G-code is identical before/after this change.
     // FillRectilinear/FillSupportBase live in FillRectilinear.hpp (now linked via build.sh FILL_SRC).

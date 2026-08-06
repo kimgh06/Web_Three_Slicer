@@ -3,20 +3,20 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  // 워크스페이스 hoist 로 react 사본이 web/node_modules 하나로 통일돼 절대경로 alias 는 불필요.
-  //  dedupe 만 남겨 앱 로컬 사본이 생겨도 단일 인스턴스를 보장한다.
+  // Workspace hoisting collapses react to a single copy in web/node_modules, so absolute-path aliases are unnecessary.
+  //  Only dedupe is kept, which guarantees a single instance even if an app-local copy appears.
   resolve: { dedupe: ['react', 'react-dom', 'three'] },
-  worker: { format: 'es' },   // 워커의 st/mt 동적 선택(코드 스플릿) + mt 글루 top-level await 에 필요
-  build: { target: 'es2022' },   // mt 글루(emscripten pthread)의 top-level await — Chrome 89+/Safari 15+
+  worker: { format: 'es' },   // needed for the worker's dynamic st/mt selection (code splitting) and the mt glue's top-level await
+  build: { target: 'es2022' },   // top-level await in the mt glue (emscripten pthread) — Chrome 89+/Safari 15+
 
-  // COOP/COEP → crossOriginIsolated → 워커가 mt 커널(-pthread, 2.2×) 자동 선택. 없어도 st 로 동작.
+  // COOP/COEP -> crossOriginIsolated -> the worker picks the mt kernel automatically (-pthread, 2.2x). Without them it still runs on st.
   server: {
-    // fs.allow 불필요 — 루트 package.json 의 workspaces 를 Vite 가 감지해 저장소 전체를 기본 허용
+    // No fs.allow needed — Vite detects the workspaces in the root package.json and allows the whole repository by default
     headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
   },
   preview: {
     headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
-    // 리버스 프록시 도메인 허용. 추가 호스트는 .env 의 ALLOWED_HOSTS 에 콤마로.
+    // Allows the reverse-proxy domain. Add more hosts as a comma-separated ALLOWED_HOSTS in .env.
     allowedHosts: (process.env.ALLOWED_HOSTS || 'slicer.kimgh06.com').split(','),
   },
 })

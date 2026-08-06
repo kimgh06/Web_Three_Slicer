@@ -15,8 +15,8 @@ function trisToSTL(tris) {
   for (const t of tris) { off += 12; for (const p of t){ buf.writeFloatLE(p[0],off); buf.writeFloatLE(p[1],off+4); buf.writeFloatLE(p[2],off+8); off += 12 } buf.writeUInt16LE(0,off); off += 2 }
   return buf
 }
-// 28단계 P2: 하니스가 "베드 중앙 배치 좌표"를 보낸다(뷰어 bakeLocal 과 동일: XY-bbox 중심을 원점에, minz=0).
-//  기본 auto_center=false(뷰어 좌표 신뢰)에서 이 중앙배치 좌표는 레거시 재정렬 결과와 동일 → golden byte-identical.
+// Stage 28 P2: the harness sends "bed-centered placement coordinates" (same as the viewer's bakeLocal: XY bbox center at the origin, minz=0).
+//  With the default auto_center=false (trusting the viewer's coordinates) these centered coordinates match the legacy realignment result -> golden stays byte-identical.
 function centerTris(tris) {
   let mnx=1e9,mny=1e9,mnz=1e9,mxx=-1e9,mxy=-1e9
   for (const t of tris) for (const v of t){ mnx=Math.min(mnx,v[0]);mxx=Math.max(mxx,v[0]);mny=Math.min(mny,v[1]);mxy=Math.max(mxy,v[1]);mnz=Math.min(mnz,v[2]) }

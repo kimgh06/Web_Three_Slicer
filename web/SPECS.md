@@ -1,15 +1,15 @@
-# 상세 스펙 — 3MF XML · 페인팅 코덱 · 표현식 언어 · 단축키 · 3D 렌더링
+# Detailed specs — 3MF XML · painting codec · expression language · shortcuts · 3D rendering
 
-`REVERSE_ENGINEERING_GUIDE.md`의 보조 문서. 전부 소스 실측 기반 (main 607648c).
+A companion to `REVERSE_ENGINEERING_GUIDE.md`. Everything here was measured against the sources (main 607648c).
 
 ---
 
-## 1. 3MF 프로젝트 파일 XML 스펙
+## 1. 3MF project file XML spec
 
-원본: [src/libslic3r/Format/bbs_3mf.cpp](../slicer/src/libslic3r/Format/bbs_3mf.cpp) 상수 선언부(232-439행).
-ZIP 엔트리 목록은 가이드 §7.2. 여기는 엔트리별 XML 구조.
+Source: [src/libslic3r/Format/bbs_3mf.cpp](../slicer/src/libslic3r/Format/bbs_3mf.cpp), the constant declarations (lines 232-439).
+The ZIP entry list is in guide §7.2. This section covers the XML structure of each entry.
 
-### 1.1 `3D/3dmodel.model` — 씬/메시 (3MF 코어 + 확장)
+### 1.1 `3D/3dmodel.model` — scene/mesh (3MF core + extensions)
 
 ```
 <model unit="millimeter" ...>
@@ -18,14 +18,14 @@ ZIP 엔트리 목록은 가이드 §7.2. 여기는 엔트리별 XML 구조.
    <mesh>
     <vertices>  <vertex x y z/>* </vertices>
     <triangles> <triangle v1 v2 v3
-                  paint_supports=""    ← 서포트 페인팅 (§2 코덱)
-                  paint_seam=""        ← 심 페인팅
-                  paint_color=""       ← MMU 색 페인팅
-                  paint_fuzzy_skin=""  ← 퍼지스킨 페인팅
+                  paint_supports=""    <- support painting (§2 codec)
+                  paint_seam=""        <- seam painting
+                  paint_color=""       <- MMU color painting
+                  paint_fuzzy_skin=""  <- fuzzy skin painting
                   face_property=""/>* </triangles>
    </mesh>
    <components> <component objectid="" p:path="" transform=""/>* </components>
-   <!-- 텍스트/SVG 볼륨 메타 -->
+   <!-- text/SVG volume metadata -->
    <slic3rpe:text text="" font_name="" font_size="" bold="" italic="" ... />
    <slic3rpe:shape scale="" depth="" use_surface="" filepath3mf="" ... />
   </object>
@@ -35,15 +35,15 @@ ZIP 엔트리 목록은 가이드 §7.2. 여기는 엔트리별 XML 구조.
 </model>
 ```
 
-- 오브젝트별 실제 메시는 `3D/Objects/<name>_<n>.model`로 분리되고 3dmodel.model이 component로 참조한다.
-- `transform` = 3×4 행렬 12개 실수 공백 구분 (column-major 3열 + translation).
+- Each object's real mesh is split into `3D/Objects/<name>_<n>.model` and referenced from 3dmodel.model as a component.
+- `transform` = a 3x4 matrix, 12 space-separated reals (3 column-major columns + translation).
 
-### 1.2 `Metadata/model_settings.config` — 계층 설정 오버라이드 (XML)
+### 1.2 `Metadata/model_settings.config` — hierarchical setting overrides (XML)
 
 ```
 <config>
  <object id="">
-  <metadata key="name|extruder|...(옵션키)" value=""/>*
+  <metadata key="name|extruder|...(option key)" value=""/>*
   <part id="" subtype="normal_part|negative_part|modifier_part|support_blocker|support_enforcer">
    <metadata key="name|matrix|source_file|source_object_id|source_volume_id|
                   source_offset_{x,y,z}|mesh_shared|volume_type|part_type" value=""/>*
@@ -57,77 +57,77 @@ ZIP 엔트리 목록은 가이드 §7.2. 여기는 엔트리별 XML 구조.
                  filament_map_mode|filament_maps|limit_filament_maps|
                  gcode_file|thumbnail_file|thumbnail_no_light_file|top_file|pick_file|
                  pattern_bbox_file|index" value=""/>*
-  <model_instance .../>*                 ← 이 플레이트에 속한 인스턴스
+  <model_instance .../>*                 <- the instances belonging to this plate
  </plate>*
  <assemble> <assemble_item object_id="" instance_id="" transform="" offset=""/>* </assemble>
 </config>
 ```
 
-- **설정 오버라이드 값은 전부 `<metadata key value>` 쌍**. key가 곧 config-schema.json의 옵션 키.
-- `<part>`의 `matrix`가 볼륨 로컬 변환.
+- **Every setting override is a `<metadata key value>` pair**, where the key is exactly an option key from config-schema.json.
+- A `<part>`'s `matrix` is the volume-local transform.
 
-### 1.3 `Metadata/project_settings.config` — 평면 JSON
+### 1.3 `Metadata/project_settings.config` — flat JSON
 
-병합 완료된 전체 설정 스냅샷. `{ "옵션키": "값" | ["필라멘트별 값", ...] }`.
-벡터 옵션은 항상 문자열 배열. 이 파일 하나만 읽어도 슬라이싱 설정 재현 가능.
+A snapshot of the fully merged settings. `{ "option key": "value" | ["per-filament value", ...] }`.
+Vector options are always arrays of strings. This file alone is enough to reproduce the slicing settings.
 
-### 1.4 `Metadata/slice_info.config` — 슬라이스 결과 메타 (XML)
+### 1.4 `Metadata/slice_info.config` — slice result metadata (XML)
 
-`<header>`(버전 등) + `<plate>`별 `<metadata key=prediction|weight|outside|support_used|
+A `<header>` (version, …) plus per-`<plate>` `<metadata key=prediction|weight|outside|support_used|
 label_object_enabled|timelapse_type .../>` + `<filament id type color used_m used_g/>` +
 `<warning msg/>` + `<object identify_id name skipped/>`.
 
-### 1.5 왕복 호환 규칙
+### 1.5 Round-trip compatibility rules
 
-- 읽을 때 모르는 태그/속성/엔트리는 **버리지 말고 원본 바이트 보존** 후 다시 쓸 것.
-- 레거시 `Metadata/Slic3r_PE*.config`(PrusaSlicer 계열)는 읽기 전용 호환.
+- When reading, **preserve the original bytes of unknown tags/attributes/entries instead of dropping them** and write them back out.
+- Legacy `Metadata/Slic3r_PE*.config` (the PrusaSlicer family) is read-only compatibility.
 
 ---
 
-## 2. 페인팅 데이터 코덱 (TriangleSelector)
+## 2. Painting data codec (TriangleSelector)
 
-원본: [TriangleSelector.cpp:1692](../slicer/src/libslic3r/TriangleSelector.cpp#L1692) `serialize`,
-문자열화: [Model.cpp `FacetsAnnotation::get_triangle_as_string`](../slicer/src/libslic3r/Model.cpp).
+Source: [TriangleSelector.cpp:1692](../slicer/src/libslic3r/TriangleSelector.cpp#L1692) `serialize`,
+stringification: [Model.cpp `FacetsAnnotation::get_triangle_as_string`](../slicer/src/libslic3r/Model.cpp).
 
-### 2.1 개념
+### 2.1 Concept
 
-페인팅은 원본 삼각형을 재귀 분할한 트리로 저장한다. 삼각형별로 비트스트림을 만들고,
-그 비트스트림을 16진수 문자열로 바꿔 3MF `paint_*` 속성에 넣는다.
-**페인팅 안 된 삼각형(상태 NONE, 미분할)은 속성 자체가 없다.**
+Painting is stored as a tree of recursively split source triangles. A bitstream is built per triangle,
+then converted to a hexadecimal string and stored in the 3MF `paint_*` attribute.
+**Unpainted triangles (state NONE, unsplit) have no attribute at all.**
 
-### 2.2 삼각형 하나의 비트스트림 (재귀)
+### 2.2 The bitstream of a single triangle (recursive)
 
 ```
 triangle := split_info state? children*
-split_info := 2비트 yy = 분할된 변 수 (0=리프, 1..3)
-분할(yy>0)  : 2비트 xx = special side (1분할: 어느 변, 2분할: 유지된 변, 3분할: 무시)
-             이후 자식 (yy+1)개를 역순으로 재귀 직렬화   ← PrusaSlicer 2.3.1 호환용 역순
-리프(yy=0)  : 상태 n = EnforcerBlockerType
-             n<=2  → 2비트 xx = n
-             n>=3  → 2비트 xx = 0b11, 그다음 4비트 zzzz = n-3   (n 최대 16, 익스트루더 색)
+split_info := 2 bits yy = number of split edges (0=leaf, 1..3)
+split (yy>0)  : 2 bits xx = special side (1 split: which edge, 2 splits: the retained edge, 3 splits: ignored)
+              then the (yy+1) children are serialized recursively in reverse order   <- reversed for PrusaSlicer 2.3.1 compatibility
+leaf (yy=0)   : state n = EnforcerBlockerType
+              n<=2  -> 2 bits xx = n
+              n>=3  -> 2 bits xx = 0b11, then 4 bits zzzz = n-3   (n up to 16, the extruder color)
 ```
 
-상태 값: 0=NONE, 1=ENFORCER, 2=BLOCKER, 3+=익스트루더 인덱스(MMU 페인팅).
+State values: 0=NONE, 1=ENFORCER, 2=BLOCKER, 3+=extruder index (MMU painting).
 
-### 2.3 문자열 인코딩
+### 2.3 String encoding
 
-비트스트림을 4비트 니블로 잘라 각 니블을 16진 문자(`0-9A-F`)로 변환하되,
-**문자를 항상 문자열 앞에 삽입한다** — 즉 최종 문자열은 니블 역순이다.
-디코딩은 문자열 끝에서 앞으로 읽으며 비트를 복원한다.
-니블 내 비트 순서: `next_code = bit[3]<<3 | bit[2]<<2 | bit[1]<<1 | bit[0]` (LSB가 스트림 먼저).
+The bitstream is cut into 4-bit nibbles and each nibble becomes a hex character (`0-9A-F`), but
+**each character is always inserted at the front of the string** — so the final string is in reverse nibble order.
+Decoding reads from the end of the string backwards, restoring the bits.
+Bit order within a nibble: `next_code = bit[3]<<3 | bit[2]<<2 | bit[1]<<1 | bit[0]` (the LSB comes first in the stream).
 
-JS 구현 시 검증 벡터: 미분할+ENFORCER 리프 = 비트 `00`(yy) + `01`(xx→ n=1) → 니블 `0100₂=4` → 문자열 `"4"`.
+Verification vector for a JS implementation: an unsplit ENFORCER leaf = bits `00` (yy) + `01` (xx -> n=1) -> nibble `0100₂=4` -> string `"4"`.
 
 ---
 
-## 3. PlaceholderParser 표현식 언어 (EBNF)
+## 3. The PlaceholderParser expression language (EBNF)
 
-원본: [PlaceholderParser.cpp](../slicer/src/libslic3r/PlaceholderParser.cpp) boost::spirit 문법(1880-2400행).
-용도: ① 커스텀 G-code 슬롯 ② 프리셋 `compatible_printers_condition` / `compatible_prints_condition`.
+Source: [PlaceholderParser.cpp](../slicer/src/libslic3r/PlaceholderParser.cpp), the boost::spirit grammar (lines 1880-2400).
+Used for (1) custom G-code slots and (2) the preset `compatible_printers_condition` / `compatible_prints_condition`.
 
 ```ebnf
 template        = { text | macro } ;
-macro           = "{" block "}" | legacy "[" variable "]" ;      (* [] 는 레거시 단순치환 *)
+macro           = "{" block "}" | legacy "[" variable "]" ;      (* [] is the legacy simple substitution *)
 block           = if_block | switch_block | assignment | expr ;
 if_block        = "if" expr "then"? body
                   { "elsif" expr body } [ "else" body ] "endif" ;
@@ -136,13 +136,13 @@ ternary         = or_expr [ "?" expr ":" expr ] ;
 or_expr         = and_expr { ("or"  | "||") and_expr } ;
 and_expr        = equality { ("and" | "&&") equality } ;
 equality        = relational { ("==" | "!=" | "=~" | "!~") relational } ;
-                                          (* =~ / !~ : 정규식 매치, 우변은 /regex/ 리터럴 *)
+                                          (* =~ / !~ : regex match, the right-hand side is a /regex/ literal *)
 relational      = additive { ("<" | ">" | "<=" | ">=") additive } ;
 additive        = multiplicative { ("+" | "-") multiplicative } ;
 multiplicative  = unary { ("*" | "/" | "%") unary } ;
 unary           = [ "-" | "+" | "!" | "not" ] factor ;
 factor          = "(" expr ")" | literal | function_call | variable_ref ;
-variable_ref    = ident [ "[" expr "]" ] ;                        (* 벡터 인덱싱 *)
+variable_ref    = ident [ "[" expr "]" ] ;                        (* vector indexing *)
 literal         = int | float | bool | string | "/" regex "/" ;
 function_call   = "min(a,b)" | "max(a,b)" | "random(lo,hi)"
                 | "int(x)" | "round(x)" | "floor(x)" | "ceil(x)"
@@ -150,395 +150,395 @@ function_call   = "min(a,b)" | "max(a,b)" | "random(lo,hi)"
                 | "is_nil(var)" | "size(vec)" | "empty(vec)"
                 | "one_of(x, list...)" | "interpolate_table(x, (k,v)...)"
                 | "regex_replace(subject, pattern, repl)"
-                | "repeat" | "filament_change" ;                  (* G-code 전용 *)
-assignment      = ["global"|"local"] ident "=" expr ;             (* 스크립트 변수 *)
+                | "repeat" | "filament_change" ;                  (* G-code only *)
+assignment      = ["global"|"local"] ident "=" expr ;             (* script variables *)
 ```
 
-- 값 타입: int, double, bool, string, 벡터(설정 옵션에서 옴). nullable 벡터의 nil은 `is_nil`로 검사.
-- 설정 옵션 키가 곧 변수명이다 (`nozzle_diameter[0]`, `printer_notes=~/.*PRINTER_VENDOR_XX.*/`).
-- 웹 구현은 재귀하강 파서 ~800줄 규모. 우선순위는 위 EBNF 순서 그대로.
+- Value types: int, double, bool, string, vector (coming from a settings option). nil in a nullable vector is tested with `is_nil`.
+- A settings option key is directly a variable name (`nozzle_diameter[0]`, `printer_notes=~/.*PRINTER_VENDOR_XX.*/`).
+- A web implementation is a recursive-descent parser of roughly 800 lines. Precedence follows the EBNF order above exactly.
 
 ---
 
-## 4. 키보드 단축키 (KBShortcutsDialog.cpp 실측)
+## 4. Keyboard shortcuts (measured from KBShortcutsDialog.cpp)
 
-플랫폼별 ctrl=⌘(macOS). 전체 목록은 [KBShortcutsDialog.cpp](../slicer/src/slic3r/GUI/KBShortcutsDialog.cpp).
+Per platform, ctrl = ⌘ on macOS. The full list is in [KBShortcutsDialog.cpp](../slicer/src/slic3r/GUI/KBShortcutsDialog.cpp).
 
-| 키 | 동작 | | 키 | 동작 |
+| Key | Action | | Key | Action |
 |---|---|---|---|---|
-| Ctrl+N/O/S | 새/열기/저장 프로젝트 | | M / R / S | 기즈모 이동/회전/스케일 |
-| Ctrl+Shift+S | 다른 이름으로 저장 | | F | 면 바닥 정렬 |
-| Ctrl+I | 지오메트리 임포트 | | C / B | 컷 / 메시 불리언 |
-| Ctrl+R | 플레이트 슬라이스 | | P / H | 심 페인팅 / 퍼지스킨 |
-| Ctrl+G | 슬라이스 파일 내보내기 | | T / U / Y / E | 텍스트/측정/어셈블/브림이어 |
-| Ctrl+Z / Ctrl+Y | undo / redo | | A / Q | 전체 정렬 / 자동 방향 |
-| Ctrl+X/C/V | 잘라내기/복사/붙여넣기 | | I / O | 줌 인/아웃 |
-| Ctrl+A / Ctrl+D | 전체 선택 / 전체 삭제 | | V | 출력 가능 토글 |
-| Ctrl+K | 선택 복제 | | 1-9 | 필라멘트/익스트루더 지정 |
-| Ctrl+0~6 | 카메라 프리셋 뷰 | | ? | 단축키 목록 |
-| Ctrl+P | 환경설정 | | L / C (프리뷰) | 단일 레이어 모드 / G-code 창 |
-| Del/fn+⌫ | 선택 삭제 | | | |
+| Ctrl+N/O/S | New/open/save project | | M / R / S | Gizmo move/rotate/scale |
+| Ctrl+Shift+S | Save as | | F | Place face on bed |
+| Ctrl+I | Import geometry | | C / B | Cut / mesh boolean |
+| Ctrl+R | Slice plate | | P / H | Seam painting / fuzzy skin |
+| Ctrl+G | Export sliced file | | T / U / Y / E | Text/measure/assemble/brim ears |
+| Ctrl+Z / Ctrl+Y | undo / redo | | A / Q | Arrange all / auto orient |
+| Ctrl+X/C/V | Cut/copy/paste | | I / O | Zoom in/out |
+| Ctrl+A / Ctrl+D | Select all / delete all | | V | Toggle printable |
+| Ctrl+K | Duplicate selection | | 1-9 | Assign filament/extruder |
+| Ctrl+0~6 | Camera preset views | | ? | Shortcut list |
+| Ctrl+P | Preferences | | L / C (preview) | Single layer mode / G-code window |
+| Del/fn+⌫ | Delete selection | | | |
 
 ---
 
-## 5. 3D 렌더링 · 피킹 · 페인팅 상호작용 상세
+## 5. 3D rendering · picking · painting interaction details
 
-전부 소스 실측. 웹(three.js/WebGL2) 재구현의 계약 문서다.
+All measured from the sources. This is the contract document for a web (three.js/WebGL2) reimplementation.
 
-### 5.1 지오메트리 파이프라인 (Model → GPU)
+### 5.1 Geometry pipeline (Model -> GPU)
 
 ```
 ModelVolume.mesh (TriangleMesh)
-  → GLVolume 생성 시 v.model.init_from(mesh)         (3DScene.cpp:836 → GLModel.cpp:436)
-  → GLModel::Geometry 버텍스 버퍼
+  -> when a GLVolume is created, v.model.init_from(mesh)         (3DScene.cpp:836 -> GLModel.cpp:436)
+  -> the GLModel::Geometry vertex buffer
 ```
 
-- **버텍스 레이아웃**: `EVertexLayout::P3N3` — position 3f + normal 3f 인터리브
-  ([GLModel.hpp:38-47](../slicer/src/slic3r/GUI/GLModel.hpp#L38)). 인덱스는 UINT/USHORT/UBYTE 자동 축소.
-- **GLVolume 1개 = ModelVolume × ModelInstance 조합 하나**. 변환은
-  `m_instance_transformation`(인스턴스)과 `m_volume_transformation`(파트 로컬) **2단 분리 보관**
-  ([3DScene.hpp:117-119](../slicer/src/slic3r/GUI/3DScene.hpp#L117)) — 최종 월드행렬 = instance ∘ volume.
-- 부가 캐시: convex hull(배치·간섭 판정용), 변환된 bbox 3종, `SinkingContours`(베드 아래로
-  가라앉은 부분의 윤곽 표시, flat 셰이더로 별도 렌더 — 3DScene.cpp:1060).
-- **상태·색 팔레트는 GLVolume 정적 멤버**: `MODEL_COLOR[5]`(필라멘트 폴백), `MODEL_NEGTIVE_COL`,
+- **Vertex layout**: `EVertexLayout::P3N3` — position 3f + normal 3f, interleaved
+  ([GLModel.hpp:38-47](../slicer/src/slic3r/GUI/GLModel.hpp#L38)). Indices shrink automatically to UINT/USHORT/UBYTE.
+- **One GLVolume = one ModelVolume x ModelInstance combination**. The transforms are kept
+  **in two separate stages**: `m_instance_transformation` (the instance) and `m_volume_transformation` (part local)
+  ([3DScene.hpp:117-119](../slicer/src/slic3r/GUI/3DScene.hpp#L117)) — the final world matrix = instance ∘ volume.
+- Extra caches: the convex hull (for arrangement and interference tests), 3 kinds of transformed bbox, and `SinkingContours` (drawing the outline of
+  the part sunk below the bed, rendered separately with a flat shader — 3DScene.cpp:1060).
+- **State and color palettes are static GLVolume members**: `MODEL_COLOR[5]` (the filament fallback), `MODEL_NEGTIVE_COL`,
   `MODEL_MIDIFIER_COL`, `SUPPORT_ENFORCER/BLOCKER_COL`, `MODEL_HIDDEN_COL`, `DISABLED/UNPRINTABLE` +
-  호버 상태 `EHoverState {None, Hover, Select, Deselect}` (3DScene.hpp:85-110). 매 프레임
-  `set_render_color()`가 (선택·호버·타입·필라멘트 색)을 조합해 최종 색 결정.
-- 웹 매핑: `BufferGeometry`(pos+normal) 볼륨당 1개, `Object3D.matrix`에 2단 변환 합성,
-  색은 머티리얼 유니폼. InstancedMesh는 동일 볼륨 다중 인스턴스일 때만.
+  and the hover state `EHoverState {None, Hover, Select, Deselect}` (3DScene.hpp:85-110). Every frame
+  `set_render_color()` combines (selection, hover, type, filament color) into the final color.
+- Web mapping: one `BufferGeometry` (pos+normal) per volume, the two-stage transform composed into `Object3D.matrix`,
+  and the color as a material uniform. InstancedMesh only when the same volume has many instances.
 
-### 5.2 셰이더 계약 (본체 = gouraud)
+### 5.2 Shader contract (the main body = gouraud)
 
-`_render_objects`가 사용하는 셰이더는 `gouraud` (폴백 확인: GLCanvas3D.cpp `_render_objects` 내부
-`shader = get_shader("gouraud")`). 유니폼이 곧 기능 목록이다
+The shader `_render_objects` uses is `gouraud` (confirmed fallback: inside GLCanvas3D.cpp `_render_objects`,
+`shader = get_shader("gouraud")`). The uniforms are effectively the feature list.
 ([resources/shaders/110/gouraud.vs/.fs](../slicer/resources/shaders/110/)):
 
-| 유니폼 | 기능 | 웹 재현 |
+| Uniform | Feature | Web equivalent |
 |---|---|---|
-| `view_model_matrix, projection_matrix, view_normal_matrix, volume_world_matrix` | 변환 | three 기본 |
-| `uniform_color` | 볼륨 색 (5.1의 set_render_color 결과) | material.color |
-| `print_volume` (PrintVolumeDetection: type 0=Rect/1=Circle + xy_data/z_data) | **베드 밖 판정을 프래그먼트에서 실시간 계산 → 회색/경고 틴트** (`_render_objects`가 `set_print_volume` 주입, GLCanvas3D.cpp:8199-8214) | onBeforeCompile 셰이더 주입, 또는 단순화: CPU bbox 판정 후 머티리얼 스왑 |
-| `extruder_printable_heights` | 익스트루더별 출력높이 초과 표시 | 〃 |
-| `z_range`, `clipping_plane` | 단면 클리핑 (기즈모/어셈블 뷰) — fragment discard | material.clippingPlanes |
-| `color_clip_plane` + 2색 | 클립면 기준 이중 색 (컷 기즈모) | 커스텀 |
-| `slope` (SlopeDetection) | 오버행 경사 시각화 (법선 z 임계) | 커스텀 셰이더 |
-| `is_outline`, `depth_tex`, `screen_size` | 선택 아웃라인 (깊이 비교 방식) | three OutlinePass로 대체 |
+| `view_model_matrix, projection_matrix, view_normal_matrix, volume_world_matrix` | transforms | three's defaults |
+| `uniform_color` | volume color (the result of set_render_color in 5.1) | material.color |
+| `print_volume` (PrintVolumeDetection: type 0=Rect/1=Circle + xy_data/z_data) | **decides off-bed status live in the fragment shader -> grey/warning tint** (`_render_objects` injects it via `set_print_volume`, GLCanvas3D.cpp:8199-8214) | shader injection with onBeforeCompile, or simplified: a CPU bbox test then a material swap |
+| `extruder_printable_heights` | marks exceeding the per-extruder print height | same |
+| `z_range`, `clipping_plane` | cross-section clipping (gizmo/assemble view) — fragment discard | material.clippingPlanes |
+| `color_clip_plane` + 2 colors | two colors split by the clip plane (the cut gizmo) | custom |
+| `slope` (SlopeDetection) | overhang slope visualization (a normal z threshold) | custom shader |
+| `is_outline`, `depth_tex`, `screen_size` | selection outline (via depth comparison) | replaced by three's OutlinePass |
 
-투명 볼륨(모디파이어 등)은 불투명 패스 후 별도 패스 (§가이드 6.5 렌더 순서). 렌더 전
-`m_volumes`에 z_range/클리핑 플레인을 일괄 세팅한다 (GLCanvas3D.cpp:8226-8240).
+Transparent volumes (modifiers, …) go in a separate pass after the opaque one (guide §6.5 render order). Before rendering,
+z_range and the clipping planes are set on all of `m_volumes` at once (GLCanvas3D.cpp:8226-8240).
 
-### 5.3 피킹 (GPU 컬러피킹 아님 — CPU 레이캐스트)
+### 5.3 Picking (not GPU color picking — a CPU raycast)
 
-- 진입: `SceneRaycaster` ([SceneRaycaster.hpp:40](../slicer/src/slic3r/GUI/SceneRaycaster.hpp#L40)) —
-  Bed/Volume/Gizmo 그룹별 raycaster 목록, `encode_id/decode_id/base_id`(:115-119)로 히트 대상 식별.
-- 개별 메시: `MeshRaycaster` ([MeshUtils.hpp:159](../slicer/src/slic3r/GUI/MeshUtils.hpp#L159)) —
-  **`AABBMesh`(igl AABB 트리) 기반** `unproject_on_mesh`(마우스→역투영→트리 쿼리→히트점+법선),
-  `closest_hit`. 즉 마우스 픽셀→월드 레이→BVH 순회가 매 프레임 호버에도 돈다.
-- 웹 매핑: `three.Raycaster` + **three-mesh-bvh**(동일 가속 구조). id 인코딩은 불필요
-  (three가 객체 참조를 돌려줌). 호버 하이라이트도 같은 캐시 전략(§5.4의 raycast cache) 사용.
+- Entry point: `SceneRaycaster` ([SceneRaycaster.hpp:40](../slicer/src/slic3r/GUI/SceneRaycaster.hpp#L40)) —
+  a raycaster list per Bed/Volume/Gizmo group, with hits identified through `encode_id/decode_id/base_id` (:115-119).
+- Per mesh: `MeshRaycaster` ([MeshUtils.hpp:159](../slicer/src/slic3r/GUI/MeshUtils.hpp#L159)) —
+  **based on `AABBMesh` (the igl AABB tree)**, providing `unproject_on_mesh` (mouse -> unproject -> tree query -> hit point + normal)
+  and `closest_hit`. So mouse pixel -> world ray -> BVH traversal runs even on every hover frame.
+- Web mapping: `three.Raycaster` + **three-mesh-bvh** (the same acceleration structure). Id encoding is unnecessary
+  (three returns the object reference). Hover highlighting uses the same caching strategy (the raycast cache in §5.4).
 
-### 5.4 페인팅 브러시 상호작용 (GLGizmoPainterBase — 서포트/심/MMU/퍼지스킨 공통)
+### 5.4 Painting brush interaction (GLGizmoPainterBase — shared by support/seam/MMU/fuzzy skin)
 
-전체 플로우 ([GLGizmoPainterBase.cpp](../slicer/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.cpp)):
+The full flow ([GLGizmoPainterBase.cpp](../slicer/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.cpp)):
 
 ```
-① 마우스 이동 → update_raycast_cache(mouse, camera, trafo_matrices)   (:158, 495, 603)
-     모든 후보 볼륨에 레이캐스트 → 최근접 (mesh_id, hit점, facet번호) 캐시
-② 드래그/클릭 → gizmo_event(action, mouse_pos, shift/alt/ctrl)        (:658)
-③ 커서(브러시) 생성 — TriangleSelector::CursorType                    (TriangleSelector.hpp:52)
-     CIRCLE(화면축 원기둥) | SPHERE(구, 기본값) | POINTER(삼각형 단위)
-     | HEIGHT_RANGE(높이 구간) | GAP_FILL   ← BBS 확장
-     프레임 간 이동은 Capsule2D/3D(DoublePointCursor, :209-223)로 이어 빈틈 방지
-④ 적용 → TriangleSelector::select_patch(facet_start, cursor, new_state,
+(1) mouse move -> update_raycast_cache(mouse, camera, trafo_matrices)   (:158, 495, 603)
+     raycast every candidate volume -> cache the nearest (mesh_id, hit point, facet index)
+(2) drag/click -> gizmo_event(action, mouse_pos, shift/alt/ctrl)        (:658)
+(3) build the cursor (brush) — TriangleSelector::CursorType             (TriangleSelector.hpp:52)
+     CIRCLE (a screen-axis cylinder) | SPHERE (a sphere, the default) | POINTER (per triangle)
+     | HEIGHT_RANGE (a height band) | GAP_FILL   <- a BBS extension
+     Movement between frames is bridged with Capsule2D/3D (DoublePointCursor, :209-223) to avoid gaps
+(4) apply -> TriangleSelector::select_patch(facet_start, cursor, new_state,
         trafo_no_translate, triangle_splitting, highlight_by_angle_deg,
         select_partially)                                             (TriangleSelector.hpp:306)
-     시작 facet에서 BFS 확장, 커서 경계에 걸친 삼각형은 재귀 분할(triangle_splitting)
-     → 브러시 경계가 삼각형 크기보다 정밀해짐. highlight_by_angle_deg = 오버행 한정 페인팅
-⑤ 스마트/버킷 필: seed_fill_select_triangles(법선각 smart_fill_angle 이내 flood, :693,857)
-     bucket_fill_select_triangles(:861-864), 휠로 각도 조절(:680), 업 시
-     seed_fill_apply_on_triangles(new_state) 확정(:855)
-⑥ 확정 → ModelVolume의 FacetsAnnotation에 직렬화(§2 코덱) + undo 스냅샷
-⑦ 렌더 — TriangleSelectorGUI (GLGizmoPainterBase.hpp:33):
-     상태별 GLModel 분리(m_iva_enforcers / m_iva_blockers / m_iva_seed_fills[3] /
-     m_paint_contour, :71-79). 변경 시 update_render_data()가 페인트된 삼각형만
-     재빌드해 본체 메시 위에 오버레이로 그림. MMU 다색은 triangle_patches(:109-111)
-⑧ 클리핑 플레인 안쪽만 페인트 (get_clipping_plane_in_volume_coordinates, :805 부근)
+     BFS expansion from the starting facet; triangles straddling the cursor boundary are split recursively (triangle_splitting)
+     -> the brush boundary becomes finer than the triangle size. highlight_by_angle_deg = painting limited to overhangs
+(5) smart/bucket fill: seed_fill_select_triangles (flood within smart_fill_angle of the normal, :693,857),
+     bucket_fill_select_triangles (:861-864), the wheel adjusts the angle (:680), and on release
+     seed_fill_apply_on_triangles(new_state) commits (:855)
+(6) commit -> serialized into the ModelVolume's FacetsAnnotation (the §2 codec) + an undo snapshot
+(7) render — TriangleSelectorGUI (GLGizmoPainterBase.hpp:33):
+     a separate GLModel per state (m_iva_enforcers / m_iva_blockers / m_iva_seed_fills[3] /
+     m_paint_contour, :71-79). On change, update_render_data() rebuilds only the painted triangles
+     and draws them as an overlay on top of the main mesh. Multi-color MMU uses triangle_patches (:109-111)
+(8) paint only inside the clipping plane (get_clipping_plane_in_volume_coordinates, around :805)
 ```
 
-**웹 재구현 지침**: 원본 메시는 불변으로 두고 ① three-mesh-bvh로 ①의 캐시 재현
-② TriangleSelector 알고리즘(BFS+분할)을 JS 포팅 — 자료구조는 §2 코덱과 동일한 분할 트리라
-직렬화까지 한 번에 해결 ③ 페인트 오버레이는 상태별 BufferGeometry 재구성(⑦과 동일 전략).
-브러시 반경은 월드 단위(SPHERE)와 화면 단위(CIRCLE) 두 모드 다 지원해야 데스크톱과 감각이 같다.
+**Guidance for a web reimplementation**: keep the source mesh immutable and (1) reproduce the cache from step 1 with three-mesh-bvh
+(2) port the TriangleSelector algorithm (BFS + splitting) to JS — its data structure is the same split tree as the §2 codec, so
+serialization comes for free (3) rebuild the paint overlay as a BufferGeometry per state (the same strategy as step 7).
+The brush radius must support both world units (SPHERE) and screen units (CIRCLE) to feel like the desktop app.
 
-### 5.5 렌더 루프 요약 (프레임 1장)
+### 5.5 Render loop summary (one frame)
 
-가이드 §6.5 패스 순서 + 위 계약을 합치면: 배경 → 베드/플레이트(그리드·로고·아이콘) →
-불투명 볼륨(gouraud, print_volume 판정) → 선택 표시 → 투명 볼륨 → 순차간섭영역 →
-활성 기즈모(+페인트 오버레이) → (SSAO/FXAA 선택) → ImGui 오버레이. 카메라는 target 중심
-구면 궤도(가이드 §6.5.1). 호버는 매 프레임 CPU 레이캐스트(§5.3).
+Combining the guide's §6.5 pass order with the contract above: background -> bed/plate (grid, logo, icons) ->
+opaque volumes (gouraud, print_volume test) -> selection markers -> transparent volumes -> sequential interference regions ->
+the active gizmo (+ paint overlay) -> (optional SSAO/FXAA) -> the ImGui overlay. The camera is a spherical orbit around
+the target (guide §6.5.1). Hover is a CPU raycast every frame (§5.3).
 
 ---
 
-## 6. G-code 경로 계산 파이프라인 상세
+## 6. G-code path calculation pipeline in detail
 
-슬라이스 결과(ExPolygon)가 실제 G1/G2 라인이 되기까지의 전 단계. 전부 소스 실측.
+Every step from the slice result (ExPolygon) to actual G1/G2 lines. All measured from the sources.
 
-### 6.1 경로 데이터 모델 — ExtrusionEntity 계층
+### 6.1 Path data model — the ExtrusionEntity hierarchy
 
 ([ExtrusionEntity.hpp:165-179](../slicer/src/libslic3r/ExtrusionEntity.hpp#L165))
 
 ```
-ExtrusionPath      = Polyline3(점열) + mm3_per_mm + width + height + role
+ExtrusionPath      = Polyline3 (point list) + mm3_per_mm + width + height + role
                      + overhang_degree + smooth_speed
-ExtrusionLoop      = ExtrusionPath 연속(닫힌 루프, 심 분할점 보유)
-ExtrusionEntityCollection = 엔티티 트리. no_sort 플래그(:33)가 true면 순서 보존
+ExtrusionLoop      = consecutive ExtrusionPaths (a closed loop, holding the seam split point)
+ExtrusionEntityCollection = a tree of entities. With the no_sort flag (:33) true, the order is preserved
 ```
 
-**이 계층이 슬라이서의 "경로" 그 자체다.** 속도·E값은 여기 없다 — 방출 시점(§6.7)에 계산된다.
-role 20종은 가이드 §9. 웹에서 프리뷰용 경로가 필요하면 G-code 텍스트를 다시 파싱하는 대신
-이 계층을 직렬화하는 커스텀 export가 지름길이다.
+**This hierarchy is the slicer's "paths" themselves.** Speed and E values are not here — they are computed at emission time (§6.7).
+The 20 roles are in guide §9. If a web app needs paths for preview, serializing this hierarchy with a custom export is
+a shortcut compared with re-parsing the G-code text.
 
-### 6.2 폭→유량 수학 (Flow → E값)
+### 6.2 Width -> flow math (Flow -> E value)
 
-- 단면적 공식 ([Flow.cpp:219-230](../slicer/src/libslic3r/Flow.cpp#L219)):
-  - 일반 압출: `mm3_per_mm = h × (w − h(1 − π/4))` — 스타디움(직사각형+반원 끝) 단면
-  - 브리지: `mm3_per_mm = π w²/4` — 원형 단면
-- E값 변환 ([GCode.cpp:7382](../slicer/src/libslic3r/GCode.cpp#L7382), [Extruder.cpp:19](../slicer/src/libslic3r/Extruder.cpp#L19)):
+- Cross-section formulas ([Flow.cpp:219-230](../slicer/src/libslic3r/Flow.cpp#L219)):
+  - Normal extrusion: `mm3_per_mm = h × (w − h(1 − π/4))` — a stadium (rectangle + semicircular ends) cross-section
+  - Bridges: `mm3_per_mm = π w²/4` — a circular cross-section
+- E value conversion ([GCode.cpp:7382](../slicer/src/libslic3r/GCode.cpp#L7382), [Extruder.cpp:19](../slicer/src/libslic3r/Extruder.cpp#L19)):
   ```
-  e_per_mm3 = filament_flow_ratio / 필라멘트단면적(π d²/4)
-  e_per_mm  = e_per_mm3 × path.mm3_per_mm        (flow_ratio로 재나눔 :7383)
-  dE        = e_per_mm × 세그먼트 길이             (:7900)
+  e_per_mm3 = filament_flow_ratio / filament cross-section (π d²/4)
+  e_per_mm  = e_per_mm3 × path.mm3_per_mm        (divided by flow_ratio again at :7383)
+  dE        = e_per_mm × segment length            (:7900)
   ```
-  상대 E(`use_relative_e_distances`)/절대 E 모드는 GCodeWriter가 처리.
+  GCodeWriter handles relative E (`use_relative_e_distances`) versus absolute E mode.
 
-### 6.3 벽 경로 생성 (PerimeterGenerator)
+### 6.3 Wall path generation (PerimeterGenerator)
 
 - `process_classic()` ([PerimeterGenerator.cpp:1159](../slicer/src/libslic3r/PerimeterGenerator.cpp#L1159)) —
-  슬라이스 윤곽을 라인 스페이싱만큼 **반복 내측 오프셋**(Clipper) → wall_loops개 루프,
-  남은 틈은 갭필 경로. 오버행 구간은 폴리라인 분할로 role 태깅(erOverhangPerimeter).
-- `process_arachne()` (:2108) — Arachne 가변폭 알고리즘([src/libslic3r/Arachne/](../slicer/src/libslic3r/Arachne/)):
-  스켈레톤 기반 bead 배치로 얇은 벽에서 폭을 연속 변화. ExtrusionPath의 width가 세그먼트마다 다름.
-- 인필 경로: [Fill/](../slicer/src/libslic3r/Fill/) 패턴별 클래스가 표면 → 폴리라인 생성 후
-  anchor(벽에 붙이는 짧은 연결)를 더해 ExtrusionPath로 변환 (내부 알고리즘은 패턴별, 요약 수준).
+  **Repeatedly offsets the slice contour inward** by the line spacing (Clipper) -> wall_loops loops,
+  with the remaining gaps becoming gap-fill paths. Overhanging stretches are tagged by splitting the polyline (role erOverhangPerimeter).
+- `process_arachne()` (:2108) — the Arachne variable-width algorithm ([src/libslic3r/Arachne/](../slicer/src/libslic3r/Arachne/)):
+  skeleton-based bead placement varies the width continuously on thin walls. An ExtrusionPath's width differs per segment.
+- Infill paths: the per-pattern classes in [Fill/](../slicer/src/libslic3r/Fill/) turn a surface into polylines, then add
+  anchors (short connections attaching to the wall) and convert them to ExtrusionPaths (the internal algorithms are per pattern; summarized here).
 
-### 6.4 순서화와 심
+### 6.4 Ordering and seams
 
-- 최근접 체이닝: `chain_extrusion_entities(entities, start_near)`
-  ([ShortestPath.hpp:21](../slicer/src/libslic3r/ShortestPath.hpp#L21)) — 이전 끝점에서 가장 가까운
-  엔티티/방향 선택. `no_sort` 컬렉션(서포트 등)은 건너뜀.
-- 심: `extrude_loop` → `m_seam_placer.place_seam(layer, loop, last_pos, …)` →
-  `loop.split_at(seam점)` ([GCode.cpp:6626-6628](../slicer/src/libslic3r/GCode.cpp#L6626)) —
-  루프를 심 위치에서 잘라 열린 경로로 만든 뒤 방출. scarf joint도 여기서 시작.
-  (SeamPlacer 내부 스코어링 — 가시성·각도·정렬 — 은 [SeamPlacer.cpp](../slicer/src/libslic3r/GCode/SeamPlacer.cpp), 요약 수준.)
+- Nearest-neighbor chaining: `chain_extrusion_entities(entities, start_near)`
+  ([ShortestPath.hpp:21](../slicer/src/libslic3r/ShortestPath.hpp#L21)) — picks the entity closest to the previous end point
+  and direction from the previous end point. `no_sort` collections (support, …) are skipped.
+- Seams: `extrude_loop` -> `m_seam_placer.place_seam(layer, loop, last_pos, …)` ->
+  `loop.split_at(seam point)` ([GCode.cpp:6626-6628](../slicer/src/libslic3r/GCode.cpp#L6626)) —
+  the loop is cut at the seam into an open path before emission. The scarf joint also starts here.
+  (SeamPlacer's internal scoring — visibility, angle, alignment — is in [SeamPlacer.cpp](../slicer/src/libslic3r/GCode/SeamPlacer.cpp); summarized here.)
 
-### 6.5 트래블과 리트랙션
+### 6.5 Travel and retraction
 
 ([GCode.cpp:8254-8330](../slicer/src/libslic3r/GCode.cpp#L8254))
 
 ```
 travel_to(point, role):
-  needs_retraction(travel, role, lift_type) 판정 (:8263)
-    — 최소 이동거리, 같은 아일랜드 내부 여부 등
-  reduce_crossing_wall이면 AvoidCrossingPerimeters.travel_to로 벽 회피 경로 재계산 (:8327)
-    — 우회로가 있으면 리트랙션 생략 가능(could_be_wipe_disabled)
-  retract(:8556): 와이프(경로 되짚기) → 리트랙션 → z_hop(LiftType: 일반/경사/스파이럴)
+  needs_retraction(travel, role, lift_type) decides (:8263)
+    — minimum travel distance, whether it stays inside the same island, …
+  with reduce_crossing_wall, AvoidCrossingPerimeters.travel_to recomputes a wall-avoiding path (:8327)
+    — when a detour exists the retraction can be skipped (could_be_wipe_disabled)
+  retract (:8556): wipe (retracing the path) -> retraction -> z_hop (LiftType: normal/slope/spiral)
 ```
 
-### 6.6 속도 결정 (방출 시점, `_extrude` :7215)
+### 6.6 Speed decision (at emission time, `_extrude` :7215)
 
-우선순위 (관찰: GCode.cpp:7390-7465 부근):
-1. role별 config 속도 (bridge_speed, ironing_speed, scarf_joint_speed로 캡 등)
-2. 속도 미설정 시: `filament_max_volumetric_speed / mm3_per_mm` 로 역산 (:7430)
-3. 첫 `slow_down_layers`층은 선형 보간 감속 (:7442+, raft 오프셋 고려)
-4. **레이어 최소시간 감속은 여기가 아니라 CoolingBuffer 후처리**(§6.8)에서 G-code 재작성으로 적용
+Priority (observed around GCode.cpp:7390-7465):
+1. The config speed for the role (bridge_speed, ironing_speed, capped by scarf_joint_speed, …)
+2. When no speed is set: derived from `filament_max_volumetric_speed / mm3_per_mm` (:7430)
+3. The first `slow_down_layers` layers are slowed by linear interpolation (:7442+, accounting for the raft offset)
+4. **The minimum layer time slowdown is not applied here but in the CoolingBuffer post-processing** (§6.8), which rewrites the G-code
 
-### 6.7 방출 (GCodeWriter)
+### 6.7 Emission (GCodeWriter)
 
 - `extrude_to_xy(point, dE)` ([GCodeWriter.cpp:1094](../slicer/src/libslic3r/GCodeWriter.cpp#L1094)) → `G1 X.. Y.. E..`
 - `travel_to_xy` (:749), `retract` (:1165)
-- 아크 피팅 켜짐 + ArcSegment면 G2/G3 방출 ([GCode.cpp:7980](../slicer/src/libslic3r/GCode.cpp#L7980),
-  [GCodeWriter.cpp:1116](../slicer/src/libslic3r/GCodeWriter.cpp#L1116)) — 경로는 사전에 ArcFitter가 원호 근사
+- With arc fitting on and an ArcSegment, G2/G3 is emitted ([GCode.cpp:7980](../slicer/src/libslic3r/GCode.cpp#L7980),
+  [GCodeWriter.cpp:1116](../slicer/src/libslic3r/GCodeWriter.cpp#L1116)) — the path was arc-approximated beforehand by ArcFitter
 
-### 6.8 레이어 후처리 파이프라인 (확정 순서)
+### 6.8 Layer post-processing pipeline (the definitive order)
 
 TBB parallel_pipeline ([GCode.cpp:4223-4231](../slicer/src/libslic3r/GCode.cpp#L4223)):
 
 ```
-generator(레이어 G-code 생성)
-  → [spiral_mode]           켜진 경우: 레이어 경계 없는 나선 Z로 재작성
-  → [pressure_equalizer]    켜진 경우: 압출률 변화 평활화
-  → cooling                 CoolingBuffer: 레이어 시간 계산→감속/팬속도 재작성 (항상)
-  → fan_mover               팬 명령 시간축 이동 (항상)
-  → [adaptive PA processor] 어댑티브 압력어드밴스 주입
+generator (produces the layer G-code)
+  -> [spiral_mode]           when enabled: rewritten to a spiral Z with no layer boundaries
+  -> [pressure_equalizer]    when enabled: smooths the extrusion rate changes
+  -> cooling                 CoolingBuffer: computes layer time -> rewrites slowdowns/fan speeds (always)
+  -> fan_mover               shifts fan commands along the time axis (always)
+  -> [adaptive PA processor] injects adaptive pressure advance
   → output stream
 ```
 
-즉 **속도·팬의 최종값은 경로 계산이 아니라 텍스트 후처리에서 확정**된다. 웹에서 시간
-추정을 재현하려면 GCodeProcessor(가이드 §9.1)를 쓰는 게 정확한 이유가 이것이다.
+So **the final speed and fan values are settled in text post-processing, not in path calculation**. That is exactly why
+using GCodeProcessor (guide §9.1) is the accurate way to reproduce time estimates on the web.
 
-**30단계 — output 스트리밍 회귀(OOM 내성).** 원본은 위 파이프라인이 레이어 단위로 흘러 `output stream` 으로
-빠져나간다(전체 상주 안 함). 미니커널은 그간 전체 `gw.s`(g-code 문자열)+전체 `layersArr`(툴패스)를 상주시킨 뒤
-PE·GCodeProcessor 가 전체 문자열을 재파싱(A3 삼중 상주)했다 — 대형 모델 OOM 원인. 30단계에서 레이어 싱크
-(`set_layer_sink`)로 레이어마다 청크 방출+힙 해제, GCodeProcessor 는 `process_buffer` 청크 피드(원본이 스트리밍
-파서), 뷰어는 transferable 로 즉시 인출. 스트리밍 조립본 = 배치 byte-identical(절대 조건, `golden_stream.mjs`).
-힙 피크: batch 126.9MB→stream 107.1MB→**economy 16.4MB(87%↓)**(318k세그, `bench_heap.mjs`).
+**Stage 30 — the output streaming round (OOM tolerance).** Upstream, the pipeline above flows per layer and exits through the `output stream`
+(nothing stays fully resident). Until then the mini kernel kept the whole `gw.s` (the g-code string) plus the whole `layersArr` (toolpaths) resident and then
+had PE and GCodeProcessor re-parse the entire string (A3, triple residency) — the cause of OOM on large models. Stage 30 added a layer sink
+(`set_layer_sink`) that emits a chunk per layer and frees the heap, feeds GCodeProcessor chunk by chunk via `process_buffer` (upstream is a streaming
+parser), and lets the viewer take the data immediately as transferables. The streamed assembly is byte-identical to batch (an absolute requirement, `golden_stream.mjs`).
+Heap peak: batch 126.9MB -> stream 107.1MB -> **economy 16.4MB (87% lower)** (318k segments, `bench_heap.mjs`).
 
-**OOM 시나리오 표(S-A~S-E)** — 30단계 대응:
+**OOM scenario table (S-A~S-E)** — as addressed in stage 30:
 
-| ID | 압박 지점 | 대응(30단계) |
+| ID | Pressure point | Response (stage 30) |
 |----|-----------|--------------|
-| S-A1/A2/A3 | 커널 전체 g-code 문자열 · 전체 툴패스 · 후처리 삼중 상주 | 레이어 스트리밍 방출+해제, PE/GCodeProcessor 청크 피드(A3 제거) |
-| S-B1/B2 | Worker→메인 전달 · JS 사본 상주 | transferable 이전(worker 사본 즉시 해제), 메인 청크 소비 |
-| S-B3 | g-code 텍스트 상주(다운로드용) | 청크 배열 보관(OPFS append 는 옵션·유예) |
-| S-C2 | 플레이트 결과 텍스처 상주 | 선택 외 플레이트는 캐시(레이어 데이터)만, 텍스처는 전환 시 재빌드 |
-| S-D2/A6 | OOM/행 | 감지 3종(worker error·WASM abort·60s 워치독)→워커 재생성→절약 재슬라이스(g-code만)→간소화 제안 |
-| S-E1 | 전체 플레이트 순차 중 실패 | 완주 플레이트 g-code 보존·제공, 부분 g-code 는 미제공 |
+| S-A1/A2/A3 | The kernel's whole g-code string · whole toolpath set · triple residency during post-processing | streamed per-layer emission and release, chunk feeding for PE/GCodeProcessor (A3 removed) |
+| S-B1/B2 | Worker -> main transfer · a resident JS copy | transferables (the worker copy is freed at once), the main thread consumes chunks |
+| S-B3 | The g-code text staying resident (for download) | kept as an array of chunks (OPFS append is optional and deferred) |
+| S-C2 | Plate result textures staying resident | unselected plates keep only the cache (layer data); textures are rebuilt on switch |
+| S-D2/A6 | OOM / hang | 3 detectors (worker error · WASM abort · 60s watchdog) -> recreate the worker -> economy re-slice (g-code only) -> offer a simplified retry |
+| S-E1 | A failure partway through slicing all plates | the g-code of finished plates is preserved and offered; partial g-code is not |
 
-### 6.9 웹 매핑 판단
+### 6.9 Web mapping verdict
 
-이 파이프라인(§6.3-6.8)은 Clipper 오프셋·Arachne·심 스코어링이 얽힌 **WASM 트랙 영역**
-(가이드 §10 트랙 C) — JS 재구현 비권장. 인수 기준은 골든 G-code byte-diff(가이드 §11.7).
-웹이 직접 필요로 하는 것은 ① E값/단면적 수학(§6.2 — 프리뷰 두께 재현) ② ExtrusionEntity
-직렬화(§6.1 — 프리뷰 데이터) ③ 후처리 순서 지식(§6.8 — 시간 추정 검증) 세 가지다.
+This pipeline (§6.3-6.8) tangles Clipper offsets, Arachne and seam scoring, so it belongs to the **WASM track**
+(guide §10 track C) — a JS reimplementation is not recommended. The acceptance criterion is a golden G-code byte diff (guide §11.7).
+What the web side actually needs is three things: (1) the E value / cross-section math (§6.2 — reproducing preview thickness) (2) ExtrusionEntity
+serialization (§6.1 — preview data) (3) knowledge of the post-processing order (§6.8 — validating time estimates).
 
 ---
 
-## 7. libvgcode 툴패스 렌더링 원본 알고리즘 (섹션 분해)
+## 7. The upstream libvgcode toolpath rendering algorithm (broken down)
 
-원본: [src/libvgcode/](../slicer/src/libvgcode/) — SegmentTemplate.cpp, Shaders.hpp `Segments_Vertex_Shader`. 전부 실측.
+Source: [src/libvgcode/](../slicer/src/libvgcode/) — SegmentTemplate.cpp, Shaders.hpp `Segments_Vertex_Shader`. All measured.
 
-### 7.1 데이터 모델 — CPU는 지오메트리를 만들지 않는다
-- `PathVertex`(PathVertex.hpp:17): G-code 무브 끝점당 1개 — position, **height, width**, feedrate, role, type…
-- GPU 업로드는 **텍스처 버퍼(TBO)**: `position_tex`, `height_width_angle_tex`(x=높이,y=폭,z=다음 세그먼트와의 조인 각도,w=z-fighting bias), `color_tex`, `segment_index_tex`(가시 세그먼트 인덱스만).
+### 7.1 Data model — the CPU builds no geometry
+- `PathVertex` (PathVertex.hpp:17): one per G-code move endpoint — position, **height, width**, feedrate, role, type, …
+- The GPU upload uses **texture buffers (TBO)**: `position_tex`, `height_width_angle_tex` (x=height, y=width, z=the join angle with the next segment, w=z-fighting bias), `color_tex`, and `segment_index_tex` (visible segment indices only).
 
-### 7.2 지오메트리 — 8정점 템플릿 × GPU 인스턴싱
-SegmentTemplate.cpp:17 (원본 주석 그대로):
+### 7.2 Geometry — an 8-vertex template x GPU instancing
+SegmentTemplate.cpp:17 (the upstream comment verbatim):
 ```
      /1-------6\
     / |       | \
-   2--0-------5--7      ← 단면은 다이아몬드(상·하·좌·우), 2/7 = 앞뒤 "스파이크"
+   2--0-------5--7      <- the cross-section is a diamond (top/bottom/left/right); 2/7 are the front and back "spikes"
     \ |       | /
       3-------4
 ```
-세그먼트당 고정 24인덱스(8삼각형) 템플릿 하나를 `glDrawArraysInstanced(TRIANGLES, 24, 세그먼트수)`(:81)로 반복 — **CPU 정점 버퍼가 세그먼트 수와 무관**(메모리 O(1) 지오메트리 + TBO만 O(n)).
+A single fixed 24-index (8 triangle) template per segment is repeated with `glDrawArraysInstanced(TRIANGLES, 24, segment count)` (:81) — **the CPU vertex buffer is independent of the segment count** (O(1) geometry in memory; only the TBOs are O(n)).
 
-### 7.3 정점 셰이더 확장 (핵심 수학, Shaders.hpp)
-1. `gl_InstanceID` → segment_index_tex → PathVertex a, b=a+1 페치
-2. `line_dir` 계산 — **수직선 가드**: `|dot(dir,UP)|>0.9`면 right=cross(X축,dir) (퇴화 방어를 셰이더가 직접)
-3. **뷰 의존 하프박스**: 카메라가 옆/위 어느 쪽인지에 따라 코너 부호 테이블 16개 중 8개 선택 — 카메라를 향한 절반 면만 생성 (오버드로 절반)
-4. 코너 = endpoint ± half_width·right ± half_height·up
-5. **마이터 조인**: 스파이크 정점(2/7)을 `sin(|θ|/2)·dir + sign(θ)·cos(|θ|/2)·right` 만큼 이동(θ=사전계산된 이웃 세그먼트 각도) → 코너에서 이웃 비드와 정확히 맞물림. 이음 없는 끝은 POINTY_CAPS로 half_width 뾰족 캡
-6. **Orca 확장: `eye_position.z += bias`** — z-fighting을 (월드가 아닌) **뷰공간 z bias**로 회피. 원본도 이 문제를 명시적으로 다룬다
-7. 라이팅: 고정 2광원(top/front) 디퓨즈+스펙큘러, 법선은 `normalize(pos−endpoint)` 근사
+### 7.3 Vertex shader expansion (the core math, Shaders.hpp)
+1. `gl_InstanceID` -> segment_index_tex -> fetch PathVertex a and b=a+1
+2. compute `line_dir` — **vertical line guard**: when `|dot(dir,UP)|>0.9`, right=cross(X axis, dir) (the shader itself handles the degenerate case)
+3. **View-dependent half box**: depending on whether the camera is to the side or above, 8 of the 16 corner sign table entries are chosen — only the half facing the camera is generated (halving overdraw)
+4. corner = endpoint ± half_width·right ± half_height·up
+5. **Miter join**: the spike vertices (2/7) are moved by `sin(|θ|/2)·dir + sign(θ)·cos(|θ|/2)·right` (θ = the precomputed neighbor segment angle) -> they interlock exactly with the neighboring bead at a corner. Unjoined ends get a pointed half_width cap via POINTY_CAPS
+6. **Orca extension: `eye_position.z += bias`** — z-fighting is avoided with a **view-space z bias** (not world space). Upstream tackles this problem explicitly too
+7. Lighting: two fixed lights (top/front) with diffuse + specular, the normal approximated as `normalize(pos−endpoint)`
 
-### 7.4 우리 뷰어(`toolpath_gpu.js`)와의 구조 차이 — 24단계에서 원본 방식으로 정합
-원래 손수 만든 CPU 리본 빌더(직육면체·w/2 근사·월드 ε)는 거대 평면 아티팩트를 반복 유발 → 24단계에서 **원본 알고리즘
-그대로 포팅**해 아래 모든 항목을 원본과 일치시켰다. (WebGL2 제약상 표현만 다른 항목은 "원본 의미 보존"으로 표기.)
-| | 원본 libvgcode(데스크톱 OpenGL) | 현 뷰어(24단계, WebGL2) |
+### 7.4 Structural differences from our viewer (`toolpath_gpu.js`) — aligned to the upstream approach in stage 24
+The original hand-rolled CPU ribbon builder (cuboids, a w/2 approximation, a world-space ε) kept producing giant plane artifacts -> stage 24 **ported the upstream algorithm
+verbatim**, matching every item below with upstream. (Items that only differ in expression because of WebGL2 constraints are marked "upstream semantics preserved".)
+| | Upstream libvgcode (desktop OpenGL) | Current viewer (stage 24, WebGL2) |
 |---|---|---|
-| 지오메트리 | GPU 인스턴싱(8정점 템플릿, 24인덱스) | 동일 — `InstancedBufferGeometry`(vertex_id_float) |
-| 단면 | 다이아몬드+앞뒤 스파이크 | 동일(VERTEX_DATA 그대로) |
-| 조인 | 마이터(atan2 각도 사전계산) | 동일(`buildSegmentData` 가 동일 산식) |
-| 정점 셰이더 | `Segments_Vertex_Shader_ES`(GLSL ES 3.0) | 동일 포팅(`RawShaderMaterial` GLSL3) |
-| 데이터 전송 | TBO(samplerBuffer) 또는 2D 텍스처 폴백 | 2D `DataTexture`+`texelFetch(tex_coord(id))` (원본 ES 폴백 경로와 동일) |
-| z-fighting | 다이아몬드 단면 + position.z-=0.5h(뷰공간 bias 는 옵션 확장) | 동일 — 다이아몬드+z센터링으로 공면 원천 부재 |
-| 메모리 | O(n) 텍스처 + O(1) 템플릿 | 동일(O(1) 지오메트리 + O(n) DataTexture) |
-| 가시 범위 | 인덱스만 조절 | 세그먼트 인덱스 레이어순 → `instanceCount` O(1) |
+| Geometry | GPU instancing (an 8-vertex template, 24 indices) | Same — `InstancedBufferGeometry` (vertex_id_float) |
+| Cross-section | Diamond + front/back spikes | Same (VERTEX_DATA verbatim) |
+| Joins | Miter (angles precomputed with atan2) | Same (`buildSegmentData` uses the same formula) |
+| Vertex shader | `Segments_Vertex_Shader_ES` (GLSL ES 3.0) | Ported as-is (`RawShaderMaterial`, GLSL3) |
+| Data transfer | TBO (samplerBuffer) or a 2D texture fallback | 2D `DataTexture` + `texelFetch(tex_coord(id))` (the same as the upstream ES fallback path) |
+| z-fighting | Diamond cross-section + position.z-=0.5h (the view-space bias is an optional extension) | Same — the diamond + z centering removes coplanarity at the source |
+| Memory | O(n) textures + an O(1) template | Same (O(1) geometry + an O(n) DataTexture) |
+| Visible range | Adjusts indices only | Segment indices in layer order -> `instanceCount`, O(1) |
 
 ---
 
-## 8. 데스크톱 UI 전수 실측 — 뷰어 재현 로드맵
+## 8. Full survey of the desktop UI — the viewer reproduction roadmap
 
-원본 UI를 파일:줄 단위로 전수 조사한 결과와 웹 뷰어가 따라가기 위한 섹션 정의. (2026-07-24 실측)
+The result of surveying the upstream UI file by file and line by line, plus the section definitions the web viewer follows. (Measured 2026-07-24)
 
-### S1. 상단 커스텀 타이틀바 — BBLTopbar.cpp:245-301  🟡 27단계(상단바+탭+열기; File메뉴/undo-redo 자리만)
-로고 · File 메뉴 · 드롭다운 메뉴 · 저장 · **undo/redo 버튼** · 창 제어.
-→ 뷰어: 파일/저장/undo·redo 버튼 바. (뷰어의 "헤더 제거"는 빌더 나열 제거였을 뿐 — 데스크톱은 상단바가 있다.)
-→ **뷰어(27단계)**: ~44px 상단바 = 로고 "OrcaSlicer RE" + 열기 · 중앙 Prepare|Preview 탭 · undo/redo 자리(비활성+툴팁). File 메뉴/창 제어 미룸.
+### S1. Custom top title bar — BBLTopbar.cpp:245-301  🟡 stage 27 (top bar + tabs + open; only placeholders for the File menu and undo/redo)
+Logo · File menu · dropdown menu · save · **undo/redo buttons** · window controls.
+-> Viewer: a file/save/undo/redo button bar. (The viewer's "header removal" only removed the builder listing — the desktop app does have a top bar.)
+-> **Viewer (stage 27)**: a ~44px top bar = the logo "OrcaSlicer RE" + Open · the centered Prepare|Preview tabs · undo/redo placeholders (disabled + tooltip). The File menu and window controls are deferred.
 
-### S2. 뷰 전환 — ECanvasType 3모드 (GLCanvas3D.hpp:510)  ✅ 25단계 구현(Prepare|Preview)
-Prepare | Preview | Assemble. assemble_view_toolbar(GLCanvas3D.cpp:1172)로 전환. 어셈블은 후순위.
-→ **뷰어(25단계 완료)**: 좌상단 Prepare|Preview 토글, 슬라이스 완료 시 자동 Preview, Preview 에서 기즈모/페인팅 게이팅.
-  Assemble 는 후순위 유지.
+### S2. View switching — the 3 ECanvasType modes (GLCanvas3D.hpp:510)  ✅ implemented in stage 25 (Prepare|Preview)
+Prepare | Preview | Assemble, switched through assemble_view_toolbar (GLCanvas3D.cpp:1172). Assemble is lower priority.
+-> **Viewer (stage 25, done)**: a Prepare|Preview toggle at the top left, automatic Preview after slicing, and gizmo/painting gating in Preview.
+  Assemble remains lower priority.
 
-### S3. 툴바 3종  🟡 27단계(좌측 기즈모 레일 4종 + 뷰포트 add/delete + arrange/orient 비활성)
-상단 메인(add/addplate/arrange/orient/split/layersediting…) · 좌측 기즈모 23종 · **collapse_toolbar**(사이드바 접기, :1356).
-arrange/orient 는 백엔드(libslic3r Arrange/Orient) 이식 필요 — 버튼 비활성+툴팁이 정직한 1단계.
-→ **뷰어(27단계)**: 좌측 세로 레일 = 이동/회전/스케일/서포트페인팅(원본 toolbar_*_dark.svg). 뷰포트 상단 = 추가·선택삭제 + arrange/orient
-  비활성("백엔드 이식 예정" 툴팁). split/layersediting/collapse·기즈모 23종 나머지 미룸.
+### S3. The 3 toolbars  🟡 stage 27 (a 4-tool left gizmo rail + viewport add/delete + disabled arrange/orient)
+The main top bar (add/addplate/arrange/orient/split/layersediting…) · 23 gizmos on the left · **collapse_toolbar** (collapses the sidebar, :1356).
+arrange/orient need the backend (libslic3r Arrange/Orient) ported — a disabled button plus a tooltip is the honest first step.
+-> **Viewer (stage 27)**: a vertical rail on the left = move/rotate/scale/support painting (the upstream toolbar_*_dark.svg). The viewport top = add and delete-selected + arrange/orient
+  disabled ("backend port pending" tooltip). split/layersediting/collapse and the other 23 gizmos are deferred.
 
-### S4. 사이드바 (Plater.cpp:655-800 멤버 실측, 위→아래)  🟡 27단계(프린터/필라멘트/프로세스/오브젝트 + 하단 버튼바)
-→ **뷰어(27단계)**: 우측 사이드바 = ① 프린터(베드·노즐 표시) ② 필라멘트(색 스와치+T행+/−, 색→오브젝트 반영) ③ 프로세스(설정 패널 임베드)
-  ④ 오브젝트 리스트(출력토글 눈알·이름·T셀렉터·삭제 = 컬럼 6종 중 4종) ⑤ 하단 [슬라이스▾]+[G-code 내보내기]. 콤보(프리셋)·AMS·flushing·
-  ObjectSettings/ObjectLayers·plate/all 분기·send_gcode 미룸(프리셋 시스템·커널 per-object 선행).
-1. 프린터 섹션: 타이틀+아이콘, connect·sync·setting 버튼, 프린터 콤보, 노즐 직경/타입, 베드 타입, 익스트루더 그룹(단일/듀얼)
-2. 필라멘트 섹션: 타이틀+개수, add/del/AMS/set 버튼 4종, 필라멘트 콤보 목록(combos_filament[]), purge_mode·flushing_volume 버튼(플러시 매트릭스)
-3. 프로세스 섹션: combo_print(프리셋 콤보) + ParamsPanel 임베드(sizer_params)
-4. 검색바(m_search_bar) + SearchObjectDialog (Ctrl+F)
-5. **ObjectList 트리 — 컬럼 6종** (GUI_ObjectList.cpp:406-413): 이름·출력토글(colPrint)·필라멘트·서포트페인트(colSupportPaint)·싱킹(colSinking)·편집(colEditing)
-6. **ObjectSettings**(오브젝트별 오버라이드) + **ObjectLayers**(높이 구간별 설정)
-7. 하단 버튼: btn_reslice(**plate/all 분기** — on_action_slice_all, Plater.cpp:5625) · btn_export_gcode · btn_send_gcode(프린터 전송, 웹 범위 외)
+### S4. Sidebar (measured from the Plater.cpp:655-800 members, top to bottom)  🟡 stage 27 (printer/filament/process/objects + the bottom button bar)
+-> **Viewer (stage 27)**: the right sidebar = (1) printer (bed and nozzle display) (2) filament (color swatches + T rows + and −, the color feeding through to objects) (3) process (the settings panel embedded)
+  (4) the object list (print toggle eye, name, T selector, delete = 4 of the 6 columns) (5) the bottom [Slice ▾] + [Export G-code]. The preset combos, AMS, flushing,
+  ObjectSettings/ObjectLayers, the plate/all split and send_gcode are deferred (they need the preset system and per-object kernel support first).
+1. Printer section: title + icon, connect/sync/setting buttons, the printer combo, nozzle diameter/type, bed type, extruder group (single/dual)
+2. Filament section: title + count, the 4 add/del/AMS/set buttons, the filament combo list (combos_filament[]), the purge_mode/flushing_volume buttons (the flush matrix)
+3. Process section: combo_print (the preset combo) + the embedded ParamsPanel (sizer_params)
+4. Search bar (m_search_bar) + SearchObjectDialog (Ctrl+F)
+5. **The ObjectList tree — 6 columns** (GUI_ObjectList.cpp:406-413): name · print toggle (colPrint) · filament · support paint (colSupportPaint) · sinking (colSinking) · editing (colEditing)
+6. **ObjectSettings** (per-object overrides) + **ObjectLayers** (settings per height band)
+7. Bottom buttons: btn_reslice (**a plate/all split** — on_action_slice_all, Plater.cpp:5625) · btn_export_gcode · btn_send_gcode (sending to the printer, out of scope for the web)
 
-### S5. 파라미터 패널 — ParamsPanel.cpp  🟡 25단계 부분(toggle-rules 일부 + dirty/리셋)
-- **`Global | Objects` SwitchButton** (:265-267) — 전역 설정 ↔ 선택 오브젝트 오버라이드 전환 (핵심 UX) — **미구현**(커널 per-object 선행)
-- m_tab_print/filament/printer 임베드, mode 스위치(Simple/Advanced/Expert)
-- 프리셋 대비 변경값 표시(dirty) + 리셋 화살표, toggle-rules 기반 활성/비활성
-→ **뷰어(25단계)**: `toggle_eval.js` 가 toggle-rules 조건식을 JS 번역(로컬 인라인) — 완전 번역 가능한 규칙만 적용(회색+툴팁),
-  enum 비교·미지 로컬은 fail-open. **dirty 주황점+↺리셋**(기준=default). 전체 231규칙 완역·Global|Objects 스위치는 미룸.
+### S5. Parameter panel — ParamsPanel.cpp  🟡 partially in stage 25 (some toggle-rules + dirty/reset)
+- The **`Global | Objects` SwitchButton** (:265-267) — switching between global settings and the selected object's overrides (core UX) — **not implemented** (needs per-object kernel support first)
+- Embeds m_tab_print/filament/printer, with a mode switch (Simple/Advanced/Expert)
+- Shows values changed against the preset (dirty) + a reset arrow, and enables/disables based on toggle-rules
+-> **Viewer (stage 25)**: `toggle_eval.js` translates the toggle-rules conditions into JS (with inlined locals) — applying only the fully translatable rules (grey + tooltip),
+  while enum comparisons and unknown locals fail open. **An orange dirty dot + a ↺ reset** (baseline = the default). Translating all 231 rules and the Global|Objects switch are deferred.
 
-### S6. Preview 뷰  🟡 25단계 대부분(뷰타입 6/11 + 이중 슬라이더 + 역할 범례)
-- 수직 슬라이더 = **lower/higher 이중 값**(IMSlider.hpp:68-73, 범위 표시 + one-layer 모드) + 수평 무브 슬라이더 별도
-- 뷰 타입 11종 컬러링(가이드 §9) — GPU 렌더러(§7 포트)가 color 텍스처 구조라 재계산만으로 전환 가능
-- 역할별 범례(시간·비율 — GCodeProcessor 결과에 이미 있음)
-→ **뷰어(25단계)**: 이중 슬라이더(lower/higher+단일레이어; instanceCount 컷+셰이더 layer_lo 클립, O(1)) ✅. 뷰 타입
-  **6종**(Feature/Speed/Height/Width/Fan/Temp) — 원본 `DEFAULT_RANGES_COLORS`+`get_color_at` 포팅, color 텍스처만
-  재계산 ✅. Speed/Fan/Temp 는 커널 미보유라 설정값 유도(근거 기록). 역할 범례 = **길이 비율**(시간 비율은 커널 role
-  export 필요 → 보류). 남은 5종 뷰(ActualSpeed/PA/Accel/Jerk/VolFlow 등)·수직 방향 CSS·수평 무브 슬라이더 미룸.
+### S6. Preview view  🟡 mostly done in stage 25 (6 of 11 view types + the dual slider + the role legend)
+- The vertical slider carries **two values, lower/higher** (IMSlider.hpp:68-73, showing the range + a one-layer mode) plus a separate horizontal move slider
+- 11 view type colorings (guide §9) — because the GPU renderer (the §7 port) is structured around a color texture, switching is just a recomputation
+- A legend per role (time and share — already present in the GCodeProcessor result)
+-> **Viewer (stage 25)**: the dual slider (lower/higher + single layer; an instanceCount cut plus the shader's layer_lo clip, O(1)) ✅. View types:
+  **6** (Feature/Speed/Height/Width/Fan/Temp) — ports upstream's `DEFAULT_RANGES_COLORS` + `get_color_at`, recomputing only the color
+  texture ✅. Speed/Fan/Temp are derived from settings because the kernel does not carry them (rationale recorded). The role legend shows the **length share** (a time share would need the kernel to
+  export roles -> deferred). The remaining 5 views (ActualSpeed/PA/Accel/Jerk/VolFlow, …), the vertical CSS orientation and the horizontal move slider are deferred.
 
-### S7~S9. 플레이트 시스템(PartPlate — 다중 플레이트+이름표+아이콘) · 단축키(§4 표)+undo/redo · 알림 토스트
-🟡 **S7 1차판 — 29단계** (뷰어 오케스트레이션, 커널 무변경): N개 플레이트(1행 그리드, 상단 툴바 추가/삭제, 이름표 1·2·3…) · 위치 기반 소속(오브젝트 원점이 얹힌 플레이트 사각형) · 플레이트 클릭 선택(테두리 강조) · [슬라이스 ▾]→현재/전체 · 전체=플레이트별 순차 슬라이스+개별 `plate_N.gcode` 다운로드(zip 없음) · 프리뷰=선택 플레이트 캐시 결과(전환 시 교체). 각 플레이트는 좌표를 로컬로 넘기고 G-code 오프셋=플레이트 원점+베드/2(28단계 좌표 계약 유지). **유예**: per-플레이트 설정 오버라이드 · lock/아이콘 · 자동 배치.
+### S7~S9. The plate system (PartPlate — multiple plates + labels + icons) · shortcuts (the §4 table) + undo/redo · notification toasts
+🟡 **S7 first pass — stage 29** (viewer orchestration, kernel unchanged): N plates (a single-row grid, add/remove in the top toolbar, labels 1·2·3…) · membership by position (the plate rectangle the object's origin sits on) · click a plate to select it (highlighted border) · [Slice ▾] -> current/all · all = slicing plate by plate in sequence with an individual `plate_N.gcode` download (no zip) · preview = the selected plate's cached result (swapped on switch). Each plate passes coordinates in local space and the G-code offset = plate origin + bed/2 (keeping the stage-28 coordinate contract). **Deferred**: per-plate setting overrides · lock/icons · auto arrange.
 
-### 권장 구현 순서  (진행: ✅S6 대부분 · ✅S2 · 🟡S5 일부 · 🟡S7 1차 — 29단계)
-S6(이중 슬라이더+뷰타입: 데이터 준비됨) → S5(스위치+toggle-rules+dirty) → S2(뷰 분리) → S4-5·6(ObjectList 컬럼+ObjectLayers — 커널 per-object 확장 포함) → S4-1~3(**프리셋 시스템 = 분수령**: 66벤더 로드+inherits+expr 평가기) → S1(상단바+undo/redo) → S3 → S7(플레이트).
+### Recommended implementation order  (progress: ✅ most of S6 · ✅ S2 · 🟡 part of S5 · 🟡 S7 first pass — stage 29)
+S6 (dual slider + view types: the data is ready) -> S5 (switch + toggle-rules + dirty) -> S2 (view separation) -> S4-5/6 (ObjectList columns + ObjectLayers — including the per-object kernel extension) -> S4-1~3 (**the preset system = the watershed**: loading 66 vendors + inherits + an expression evaluator) -> S1 (top bar + undo/redo) -> S3 -> S7 (plates).
 
 ---
 
-## 9. 미구현 기능 전수 목록 (2026-07-25 기준)
+## 9. Full list of unimplemented features (as of 2026-07-25)
 
-28단계 시점의 갭 인벤토리. 근거: README 단계별 유예 기록 전수 + settings.js/커널 실측(매핑 42키·커널 파라미터 57개).
+The gap inventory at stage 28. Basis: every deferral recorded per stage in the README plus measurements of settings.js and the kernel (42 mapped keys, 57 kernel parameters).
 
-### A. 슬라이싱 커널
-1. **커스텀 G-code 슬롯 전체 + PlaceholderParser 미포팅** — 시작/종료/레이어체인지/필라멘트체인지 커스텀 불가 (EBNF 스펙은 §3에 존재, 커널은 고정 프리앰블)
-2. 인필 패턴: 데스크톱 26종 중 ~10종 (원본 이식 5 + 자체 근사 4 + gyroid_approx). 미이식: adaptive cubic·lightning(스파스 경로)·monotonic 표면·hilbert 계열 등
-3. **가변 레이어 높이**(adaptive layer height) 없음
-4. **per-object/per-region 설정 + layer_config_ranges** 없음 (전역 1세트 — Global|Objects 스위치의 선행 조건)
-5. WipeTower: 다층 스케줄링·rib 메시·PlaceholderParser 토큰 (레이어별 독립 생성)
-6. PE 기본값 lite (원본 PE는 옵트인), 벽회피 실패 케이스 잔존, 스파이럴 바닥 개방, zigzag 오목 갭 횡단
-7. 멀티머티리얼 고급: 그룹별 셸/서포트/아이어닝 미분리, 플러시 볼륨 행렬·램밍 없음
-8. 브림 세분(ears/outer-inner), 드래프트 실드, 프라임타워 위치/크기 파라미터 일부 하드코딩(§감사 참조)
-9. non-planar — 데스크톱에도 없음(범위 외 확정)
+### A. Slicing kernel
+1. **All custom G-code slots plus PlaceholderParser are unported** — no custom start/end/layer-change/filament-change (the EBNF spec is in §3; the kernel has a fixed preamble)
+2. Infill patterns: about 10 of the desktop's 26 (5 upstream ports + 4 own approximations + gyroid_approx). Not ported: adaptive cubic, lightning (sparse paths), monotonic surfaces, the hilbert family, …
+3. No **variable layer height** (adaptive layer height)
+4. No **per-object/per-region settings or layer_config_ranges** (one global set — the prerequisite for the Global|Objects switch)
+5. WipeTower: multi-layer scheduling, the rib mesh and PlaceholderParser tokens (each layer is generated independently)
+6. PE defaults to lite (the upstream PE is opt-in), wall avoidance still fails in some cases, spiral mode leaves the bottom open, and zigzag crosses concave gaps
+7. Advanced multi-material: shells/support/ironing are not separated per group, and there is no flush volume matrix or ramming
+8. Brim variants (ears/outer-inner), the draft shield, and some prime tower position/size parameters are hardcoded (see the audit)
+9. non-planar — absent from the desktop app too (confirmed out of scope)
 
-### B. 설정 표면 (최대 갭)
-- 매핑 42키 / 907옵션 (**4.6%**) — 커널 파라미터 57개가 상한. 미매핑 대군: 온도 세부(챔버·아이들), 리트랙션 세부(wipe·lift 방향), accel/jerk 개별, 최소 레이어시간 세부, top/bottom 표면 패턴 선택, 시퀀스·타임랩스, 정밀도(슬라이스 갭 클로징·해상도) 등 대부분
-- coFloatOrPercent의 ratio_over 참조 체인 일반화 안 됨(노즐 기준 %만), 벡터 옵션 첫 원소만 편집, "0=auto" 일부만
+### B. Settings surface (the largest gap)
+- 42 keys mapped out of 907 options (**4.6%**) — the 57 kernel parameters are the ceiling. Large unmapped groups: temperature details (chamber, idle), retraction details (wipe, lift direction), individual accel/jerk, minimum layer time details, top/bottom surface pattern selection, sequence and time-lapse, precision (slice gap closing, resolution) and most of the rest
+- The ratio_over reference chain of coFloatOrPercent is not generalized (only nozzle-based %), only the first element of vector options is editable, and "0=auto" is only partly handled
 
-### C. 프리셋/프로파일 시스템 — 전부 미구현 ⭐분수령
-66벤더 로드·inherits 해석·compatible 조건(expr 평가기)·프리셋 콤보 3종·사용자 프리셋 저장·dirty 기준을 프리셋으로(현재 스키마 default 기준)
+### C. Preset/profile system — entirely unimplemented ⭐the watershed
+Loading 66 vendors, resolving inherits, compatibility conditions (an expression evaluator), the 3 preset combos, saving user presets, and making dirty relative to a preset (currently it is relative to the schema default)
 
-### D. 프로젝트/포맷
-3MF **프로젝트** 저장/복원(설정·배치·페인팅 왕복 — §1 스펙 존재), STEP(OCCT)·DRC(Draco) 임포트, G-code 임포트(뷰어 전용 모드), 프로젝트 저장 기능 자체
+### D. Project/formats
+3MF **project** save/restore (round-tripping settings, arrangement and painting — the §1 spec exists), STEP (OCCT) and DRC (Draco) import, G-code import (a viewer-only mode), and the project save feature itself
 
-### E. UI (SPECS §8 잔여)
-undo/redo(자리만) · ~~기즈모 변환 후 자동 재안착~~ **✅29단계**(드래그 커밋 시 minZ→0 재안착, 이동·회전·스케일; 원본과 차이는 싱킹 미지원 한 줄 — 원본은 sinking(minZ<0) 유지, 우리는 슬라이스 음수z 불가로 minZ≠0이면 0으로 스냅) · arrange/orient(백엔드 필요) · ObjectSettings/ObjectLayers(A-4 선행) · Global|Objects 스위치 · **플레이트 시스템(S7 🟡1차 완 — 29단계, per-플레이트 설정·lock·자동배치 잔여)** · File 메뉴 · 단축키 대부분(§4 표) · 카메라 프리셋(Ctrl+0~6)/뷰 큐브 · 알림 토스트 · AMS/플러싱 다이얼로그 · **수평 무브 슬라이더** · 옵션 마커(심/리트랙션/툴체인지 표시)
+### E. UI (the rest of SPECS §8)
+undo/redo (placeholder only) · ~~automatic re-seating after a gizmo transform~~ **✅ stage 29** (re-seats minZ -> 0 on drag commit for move/rotate/scale; the one difference from upstream is no sinking support — upstream keeps sinking (minZ<0), while we snap any minZ≠0 to 0 because the slicer cannot handle negative z) · arrange/orient (needs the backend) · ObjectSettings/ObjectLayers (needs A-4 first) · the Global|Objects switch · **the plate system (S7 🟡 first pass done — stage 29; per-plate settings, lock and auto arrange remain)** · the File menu · most shortcuts (the §4 table) · camera presets (Ctrl+0~6) / the view cube · notification toasts · the AMS/flushing dialogs · **the horizontal move slider** · option markers (seam/retraction/tool change indicators)
 
-### F. 페인팅
-심/MMU 색/퍼지스킨 페인팅 미구현(서포트 enforcer/blocker만 — TriangleSelector 기반은 이식 완료라 확장 가능) · 커서 종류 SPHERE만(CIRCLE/POINTER/HEIGHT_RANGE/GAP_FILL 미구현) · 언더뷰 브러시 조준 러프엣지
+### F. Painting
+Seam, MMU color and fuzzy skin painting are unimplemented (support enforcer/blocker only — the TriangleSelector base is already ported, so they are extensible) · only the SPHERE cursor (CIRCLE/POINTER/HEIGHT_RANGE/GAP_FILL are missing) · rough edges when aiming the brush from below
 
-### G. 프리뷰
-뷰 타입 잔여 5종(ActualSpeed/PA/Accel/Jerk/VolFlow) · **Speed/Fan/Temp가 실측 아닌 설정 유도값**(커널 per-segment feedrate/tool export 필요 — Tool 뷰 색 포함) · role별 시간 분해 표시 · G-code 텍스트 뷰·라인↔툴패스 연동
+### G. Preview
+The remaining 5 view types (ActualSpeed/PA/Accel/Jerk/VolFlow) · **Speed/Fan/Temp are derived from settings rather than measured** (needs the kernel to export per-segment feedrate/tool — including the Tool view colors) · a per-role time breakdown display · a G-code text view with line <-> toolpath linking
 
-### H. 캘리브레이션
-12종(PA/Flow/Temp/VFA/Retraction/Input Shaping/Cornering…) 전부 미구현 — calib.cpp는 UI 독립적이라 이식 후보
+### H. Calibration
+All 12 (PA/Flow/Temp/VFA/Retraction/Input Shaping/Cornering, …) are unimplemented — calib.cpp is UI-independent, so it is a porting candidate
 
-### I. 범위 외 선언 (구현 대상 아님)
-Device/네트워크/멀티디바이스·프린터 전송·클라우드 — 데스크톱의 프린터 연동 계층
+### I. Declared out of scope (not to be implemented)
+Device/network/multi-device, sending to a printer, the cloud — the desktop app's printer integration layer

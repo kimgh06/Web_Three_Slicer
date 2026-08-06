@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# 브라우저 단독 슬라이싱 미니 커널 빌드 (트랙 C)
-# 산출물: ../engine/src/slicer_core.js  (SINGLE_FILE=1 → wasm 을 base64 인라인,
-#         외부 .wasm fetch 없음 → 정적 서버/vite preview 어디서든 자립 동작)
+# Build of the browser-only slicing mini kernel (track C)
+# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined as base64,
+#         no external .wasm fetch -> self-contained on any static server or vite preview)
 #
-# 7단계: 실제 OrcaSlicer Arachne(WallToolPaths) 이식본을 함께 링크한다.
-#  - 커널 자체 clipper(전역 ClipperLib)와 Arachne 이식본 clipper(Slic3r::ClipperLib / ClipperLib_Z)는
-#    서로 다른 네임스페이스라 공존. arachne_bridge.cpp 만이 두 세계를 잇는다.
-#  - 필요: brew boost(header-only voronoi) + brew eigen. 스텁: tbb/boost-log/cereal/SVG/Flow/Config 등.
+# Stage 7: the real OrcaSlicer Arachne (WallToolPaths) port is linked in as well.
+#  - The kernel's own clipper (global ClipperLib) and the Arachne port's clipper (Slic3r::ClipperLib / ClipperLib_Z) live in
+#    different namespaces, so they coexist. Only arachne_bridge.cpp bridges the two worlds.
+#  - Requires: brew boost (header-only voronoi) + brew eigen. Stubbed: tbb/boost-log/cereal/SVG/Flow/Config, etc.
 set -euo pipefail
 
 export EMSDK_PYTHON=/opt/homebrew/bin/python3.14
 export PATH="/opt/homebrew/opt/emscripten/bin:$PATH"
-# ccache 래핑: 미변경 TU 재사용 → 단일 파일 수정 재빌드가 분 단위 → 수십 초. (brew install ccache)
+# ccache wrapping: unchanged TUs are reused -> a single-file rebuild goes from minutes to tens of seconds. (brew install ccache)
 command -v ccache >/dev/null && export EM_COMPILER_WRAPPER=ccache
 
 cd "$(dirname "$0")"
-# 34단계: deps 사본을 third_party/ 로 복사 → slicer/ 의존 제거(REPO 삭제)
+# Stage 34: copy the deps into third_party/ -> removes the dependency on slicer/ (REPO can be deleted)
 AP=arachne_port/libslic3r
 
-# --- Arachne 이식본 소스 (원본 그대로 + 문서화된 최소 수정) ---
+# --- Arachne port sources (upstream verbatim + documented minimal edits) ---
 ARACHNE_SRC="
   arachne_bridge.cpp
   $AP/Arachne/WallToolPaths.cpp
@@ -43,7 +43,7 @@ ARACHNE_SRC="
   $AP/clipper.cpp
   third_party/deps_src/clipper/clipper_z.cpp
 "
-# --- 8단계: 이식된 실제 OrcaSlicer Fill 패턴 (gyroid TPMS/honeycomb/3dhoneycomb/crosshatch/concentric) ---
+# --- Stage 8: the ported real OrcaSlicer Fill patterns (gyroid TPMS/honeycomb/3dhoneycomb/crosshatch/concentric) ---
 C2=third_party/deps_src/clipper2/Clipper2Lib
 FILL_SRC="
   fill_bridge.cpp
@@ -53,45 +53,45 @@ FILL_SRC="
   $AP/ShortestPath.cpp $AP/ExtrusionEntityCollection.cpp $AP/Circle.cpp $AP/Clipper2Utils.cpp
   $C2/src/clipper.engine.cpp $C2/src/clipper.offset.cpp $C2/src/clipper.rectclip.cpp
 "
-# --- 8단계: 이식된 실제 PressureEqualizer ---
+# --- Stage 8: the ported real PressureEqualizer ---
 PE_SRC="pe_bridge.cpp $AP/GCode/PressureEqualizer.cpp $AP/GCodeFormatter_impl.cpp"
-# --- 10단계: 이식된 GCodeProcessor 시간추정 알고리즘 ---
+# --- Stage 10: the ported GCodeProcessor time estimation algorithm ---
 TIME_SRC="gcode_time.cpp"
-# --- 12단계: 실 config 서브시스템(Config.cpp + PrintConfig.cpp)을 본선 빌드에 병합 ---
-#  config_bridge.cpp 만이 커널↔실 PrintConfig 경계(arachne_bridge 와 동일 격리). config 소스는 자기
-#  디렉터리의 실 헤더를 "" 상대 include 로 얻고, Arachne/Fill/PE 는 stub PrintConfig.hpp 를 그대로 사용
-#  (enum 은 verbatim 동일 → ODR 안전). 어떤 main TU 도 boost/thread 를 include 하지 않으므로 config/stubs
-#  의 boost/thread 빈 스텁은 PrintConfig.cpp 에만 영향.
+# --- Stage 12: merge the real config subsystem (Config.cpp + PrintConfig.cpp) into the main build ---
+#  Only config_bridge.cpp sits on the kernel <-> real PrintConfig boundary (same isolation as arachne_bridge). The config sources pull
+#  the real headers from their own directory via "" relative includes, while Arachne/Fill/PE keep using the stub PrintConfig.hpp
+#  (the enums are verbatim identical -> ODR-safe). No main TU includes boost/thread, so the empty boost/thread stubs under config/stubs
+#  affect PrintConfig.cpp only.
 CP=arachne_port/config/libslic3r
 CONFIG_SRC="config_bridge.cpp $CP/Config.cpp $CP/PrintConfig.cpp $CP/MaterialType.cpp"
 CONFIG_INC="-Iarachne_port/config/stubs"
-# --- 12단계 item 2: 실 WipeTower 를 본선에 링크(wipe_tower_real). WipeTower.cpp 는 자기 디렉터리의
-#  GCodeProcessor 스텁(→실 PrintConfig)·wipetower/inc 의 TriangleMesh/Triangulation 스텁을 사용.
-#  role_to_string/localesutils_wasm 는 단일함수/유니티 래퍼(전체 TU 의 Flow/PCH 의존 회피). Arachne/Fill/PE
-#  는 여전히 stub PrintConfig — wipetower/inc 는 libslic3r/TriangleMesh(prefix)·Triangulation 만 섀도우하며
-#  본선 어떤 컴파일 TU 도 이를 include 하지 않음(실측). Circle/ArcFitter/geometry 는 이미 링크됨.
+# --- Stage 12 item 2: link the real WipeTower into the main build (wipe_tower_real). WipeTower.cpp uses the
+#  GCodeProcessor stub in its own directory (-> real PrintConfig) and the TriangleMesh/Triangulation stubs in wipetower/inc.
+#  role_to_string/localesutils_wasm are single-function/unity wrappers (avoiding the whole TU's Flow/PCH dependency). Arachne/Fill/PE
+#  still use the stub PrintConfig — wipetower/inc only shadows libslic3r/TriangleMesh (prefix) and Triangulation, and no compiled TU in
+#  the main build includes them (measured). Circle/ArcFitter/geometry are already linked.
 WT=arachne_port/wipetower
 WIPETOWER_SRC="$WT/GCode/WipeTower.cpp $WT/role_to_string.cpp $WT/localesutils_wasm.cpp"
 CONFIG_INC="$CONFIG_INC -Iarachne_port/wipetower/inc"
-# --- 13단계: 실 이식 GCodeProcessor 본체(time_engine=full). gcodeproc_bridge.cpp 가 커널↔GCodeProcessor
-#  경계. GCodeProcessor.cpp 는 gcodeproc/inc 의 Print 스텁(2심볼)·gcodeproc/stubs 의 boost::nowide/filesystem
-#  스텁 사용, PrintConfig 는 forwarder→real. GCodeReader/MultiNozzleUtils/ArcWelder/Elegoo 이식, string_to_role
-#  단일함수 추출. ProjectTask 는 FilamentInfo 스텁. 본선 어떤 기존 TU 도 이 스텁들을 include 안 함(실측).
+# --- Stage 13: the real ported GCodeProcessor itself (time_engine=full). gcodeproc_bridge.cpp is the kernel <-> GCodeProcessor
+#  boundary. GCodeProcessor.cpp uses the Print stub in gcodeproc/inc (2 symbols) and the boost::nowide/filesystem stubs in gcodeproc/stubs,
+#  with PrintConfig going forwarder -> real. GCodeReader/MultiNozzleUtils/ArcWelder/Elegoo are ported and string_to_role is extracted as a
+#  single function. ProjectTask uses a FilamentInfo stub. No pre-existing TU in the main build includes these stubs (measured).
 GP=arachne_port/gcodeproc
 GCODEPROC_SRC="gcodeproc_bridge.cpp $GP/GCode/GCodeProcessor.cpp $GP/GCode/ElegooGCodeProcessorHelper.cpp $GP/extrusion_role_helper.cpp $AP/GCodeReader.cpp $AP/MultiNozzleUtils.cpp $AP/Geometry/ArcWelder.cpp"
 CONFIG_INC="$CONFIG_INC -Iarachne_port/gcodeproc/inc -Iarachne_port/gcodeproc/stubs"
-# Arachne/Fill 이식본용 include (커널 소스에는 영향 없음 — 커널은 arachne_bridge.h/fill_bridge.h 만 include)
-# 14단계: 실 CGAL 평면성 검사(VoronoiUtilsCgal). cgal_stubs 는 boost wasm.hpp 오버라이드(BOOST_NO_FENV_H
-#  제거 → Boost.Multiprecision interval c99 rounding). CGAL 6.x 헤더온리(brew), GMP/MPFR 링크 없음.
-# --- 18단계: 실 오가닉 TreeSupport 본선 통합 (treesupport_bridge, 옵션 (a) 승인) ---
-#  17단계 ODR 실측 결론: 공유-심볼 방식은 ODR-clean 링크 + 120 그린을 이미 달성했고, 유일한 런타임 벽은 본선
-#  FillBase 팩토리의 STAGE-8 트림(new_from_type→ipSupportBase/ipRectilinear nullptr)이었다. 18단계에서 그 트림을
-#  가산적으로 원복(위 FillBase.cpp STAGE-18 UNTRIM + FILL_SRC 에 FillRectilinear.cpp 추가; 골든 byte-diff 0 로
-#  기본 경로 무영향 실증)하여 트리 경로도 실 필러를 받는다. 트리 고유 소스만 별도 릴로케이터블 오브젝트로 격리
-#  컴파일(파일-상대 include 로 포트 헤더 해소)한 뒤 본선 링크에 합류. 공유 소스(Point/Polygon/PrintConfig/Arachne/
-#  Fill*/Geometry/Voronoi/clipper…)는 재컴파일 안 함(헤더 ABI 동일 실측; FillRectilinear/SupportBase 는 이제 본선
-#  제공). 충돌 2심볼(ExtrusionEntity::role_to_string/string_to_role)은 -DTS_BRIDGE_EXCLUDE_ROLE_FNS 로 가드(본선이
-#  role_to_string.cpp+extrusion_role_helper.cpp 로 제공). 커널↔브릿지는 plain 타입만. -DNDEBUG 는 트리 그룹만.
+# Includes for the Arachne/Fill ports (no effect on kernel sources — the kernel only includes arachne_bridge.h/fill_bridge.h)
+# Stage 14: the real CGAL planarity check (VoronoiUtilsCgal). cgal_stubs overrides boost's wasm.hpp (dropping BOOST_NO_FENV_H
+#  -> Boost.Multiprecision interval c99 rounding). CGAL 6.x is header-only (brew), with no GMP/MPFR linkage.
+# --- Stage 18: integrate the real organic TreeSupport into the main build (treesupport_bridge, option (a) approved) ---
+#  Stage-17 ODR findings: the shared-symbol approach already achieved an ODR-clean link and 120 green, and the only runtime wall was the
+#  main build's FillBase factory STAGE-8 trim (new_from_type -> nullptr for ipSupportBase/ipRectilinear). Stage 18 restores that trim
+#  additively (the STAGE-18 UNTRIM in FillBase.cpp above + adding FillRectilinear.cpp to FILL_SRC; a byte-diff of 0 against golden proves
+#  the default path is unaffected), so the tree path also gets the real fillers. Only tree-specific sources are compiled in isolation into
+#  separate relocatable objects (port headers resolved via file-relative includes) before joining the main link. Shared sources (Point/Polygon/
+#  PrintConfig/Arachne/Fill*/Geometry/Voronoi/clipper, …) are not recompiled (header ABI verified identical; FillRectilinear/SupportBase are now
+#  provided by the main build). The 2 conflicting symbols (ExtrusionEntity::role_to_string/string_to_role) are guarded with
+#  -DTS_BRIDGE_EXCLUDE_ROLE_FNS (the main build provides role_to_string.cpp + extrusion_role_helper.cpp). The kernel <-> bridge boundary uses plain types only. -DNDEBUG applies to the tree group only.
 TS=treesupport_port; TL=$TS/libslic3r
 TS_UNIQUE_SRC="
   $TL/treesupport_bridge_impl.cpp $TL/selector_bridge_impl.cpp $TL/TriangleSelector.cpp
@@ -104,17 +104,17 @@ TS_UNIQUE_SRC="
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
 "
 TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
-# ---- 병렬 컴파일 헬퍼: 소스별 .o 를 코어 수만큼 동시 컴파일 (기존: em++ 1회 호출 = 순차 컴파일) ----
-#  ccache(EM_COMPILER_WRAPPER)가 헤더 의존 포함 캐싱을 담당하므로 mtime 증분 로직 없이 매번 전체 호출
-#  — 미변경 TU 는 캐시 히트로 ~0.1s. 링크는 소스 나열 순서 그대로 .o 를 넘겨 결정성(golden) 유지.
+# ---- Parallel compile helper: compile one .o per source, as many at a time as there are cores (previously: a single em++ call = sequential compilation) ----
+#  ccache (EM_COMPILER_WRAPPER) handles caching including header dependencies, so everything is invoked every time with no mtime-based incremental logic
+#  — unchanged TUs hit the cache in ~0.1s. The link passes the .o files in source order to stay deterministic (golden).
 NCPU=$(sysctl -n hw.ncpu 2>/dev/null || echo 8)
-pcompile() {  # $1=objdir  $2=컴파일 플래그(문자열)  이후=소스 목록
+pcompile() {  # $1=objdir  $2=compile flags (string)  rest=source list
   local objdir="$1" flags="$2"; shift 2
   mkdir -p "$objdir"
   printf '%s\n' "$@" | OBJDIR="$objdir" CFLAGS="$flags" xargs -P "$NCPU" -I SRC bash -c '
     em++ $CFLAGS -c "SRC" -o "$OBJDIR/$(printf "%s" "SRC" | tr "/" "_").o"'
 }
-objs() {  # $1=objdir  이후=소스 목록 → 소스 순서 그대로 .o 경로 출력
+objs() {  # $1=objdir  rest=source list -> prints .o paths in source order
   local objdir="$1"; shift; local s
   for s in "$@"; do printf '%s/%s.o ' "$objdir" "$(printf '%s' "$s" | tr '/' '_')"; done
 }
@@ -127,15 +127,15 @@ em++ -O2 -r $(objs /tmp/ws_obj/ts_st $TS_UNIQUE_SRC) -o $TS_GROUP_OBJ
 
 ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 
-# 속도 플래그 실측 (2026-07-29, big_cyl arachne+support): -O3 -msimd128 은 5183ms vs -O2 5149ms —
-#  이득 0.7%(노이즈) 에 크기 +9%(3.43→3.74MB) 라 -O2 유지. -flto 는 wasm-ld SIGSEGV(-r 부분링크 충돌).
-#  -ffast-math 는 금지(golden byte-identical 깨짐). 병목은 스칼라 정수 폴리곤 연산 — 실 레버는 스레딩.
+# Speed flags, measured (2026-07-29, big_cyl arachne+support): -O3 -msimd128 gives 5183ms vs -O2 5149ms —
+#  a 0.7% (noise-level) gain for +9% size (3.43 -> 3.74MB), so -O2 stays. -flto hits a wasm-ld SIGSEGV (conflict with -r partial linking).
+#  -ffast-math is forbidden (breaks golden byte-identity). The bottleneck is scalar integer polygon math — the real lever is threading.
 MAIN_SRC="slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
-# -DNDEBUG: 업스트림 OrcaSlicer 릴리스 빌드(CMAKE_BUILD_TYPE=Release)와 동일하게 assert() 를 끈다.
-#  이게 없으면 업스트림이 "디버그 전용 불변식"으로 둔 assert 가 배포 빌드에서 워커를 죽인다 — 예: OCCT 테셀레이션
-#  (STEP 임포트)처럼 정점이 용접되지 않고 슬라이버 삼각형이 섞인 메시는 Voronoi.cpp:334(복구 루틴 *내부*),
-#  VoronoiUtils.cpp:322, FillBase.cpp:1407(길이 0 폐합 에지) 를 밟는다. 업스트림은 전부 복구 경로가 있어
-#  릴리스에서는 정상 슬라이스된다. 트리서포트 그룹(TS_CFLAGS)은 이미 -DNDEBUG 였다.
+# -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
+#  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
+#  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),
+#  VoronoiUtils.cpp:322 and FillBase.cpp:1407 (zero-length closed edge). Upstream has recovery paths for all of them, so they
+#  slice fine in release. The tree support group (TS_CFLAGS) already had -DNDEBUG.
 MAIN_CFLAGS="-O2 --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
@@ -151,16 +151,16 @@ em++ -O2 --bind -std=c++17 \
   -o ../engine/src/slicer_core.js \
   $(objs /tmp/ws_obj/st $MAIN_SRC) $TS_GROUP_OBJ
 
-# webpack 호환: ENVIRONMENT_IS_NODE 가드 안의 동적 import("node:module") 를 webpack 이
-# 정적 해석하다 실패(node: 스킴) → webpackIgnore 매직 코멘트로 제외. 런타임 동작 불변(Vite/Node 무영향).
+# webpack compatibility: webpack tries to statically resolve the dynamic import("node:module") inside the ENVIRONMENT_IS_NODE guard
+# and fails (node: scheme) -> excluded with a webpackIgnore magic comment. Runtime behavior is unchanged (no effect on Vite/Node).
 sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js
 
 echo "built -> ../engine/src/slicer_core.js"
 ls -la ../engine/src/slicer_core.js
 
-# ---- 멀티스레드(mt) 빌드: PASS 1 레이어 병렬 (__EMSCRIPTEN_PTHREADS__) ----
-#  별도 산출물 — 기본(st)은 zero-config 유지, mt 는 브라우저에서 COOP/COEP(crossOriginIsolated) 필요.
-#  ALLOW_MEMORY_GROWTH+pthreads 조합은 emscripten 이 성능 경고를 내지만 기능상 유효(측정으로 판단).
+# ---- Multithreaded (mt) build: PASS 1 layers in parallel (__EMSCRIPTEN_PTHREADS__) ----
+#  A separate artifact — the default (st) stays zero-config, while mt needs COOP/COEP (crossOriginIsolated) in the browser.
+#  emscripten warns about the ALLOW_MEMORY_GROWTH + pthreads combination, but it is functionally valid (judged by measurement).
 echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
 pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
 em++ -O2 -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
@@ -183,7 +183,7 @@ em++ -O2 -pthread --bind -std=c++17 \
   $(objs /tmp/ws_obj/mt $MAIN_SRC) /tmp/ts_group_mt.o
 
 sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
-# mt 글루의 pthread 부트스트랩에도 동일 케이스: Node 가드 안의 동적 import("node:worker_threads")
+# The same case applies to the pthread bootstrap in the mt glue: the dynamic import("node:worker_threads") inside the Node guard
 sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js
 
 echo "built -> ../engine/src/slicer_core.mt.js"

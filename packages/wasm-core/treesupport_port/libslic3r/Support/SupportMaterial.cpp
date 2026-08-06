@@ -16,7 +16,7 @@
 
 #include <tbb/parallel_for.h>
 #include <tbb/spin_mutex.h>
-#include <tbb/stub_parallel.h>   // [결정성] toolpaths 직렬 스코프
+#include <tbb/stub_parallel.h>   // [determinism] serial scope for toolpaths
 #include <tbb/task_group.h>
 
 #define SUPPORT_USE_AGG_RASTERIZER
@@ -555,9 +555,9 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 #endif /* SLIC3R_DEBUG */
 
     // Generate the actual toolpaths and save them into each layer.
-    // [결정성] toolpaths 병렬은 바이모달 재발(2차 실측: per-layer 필러 전환 후에도 2083590↔2094276,
-    //  st 출력 불변 → 필러 상태 이월 무죄). 잔여 용의: 인접 서포트 레이어가 공유하는 contact 레이어 객체를
-    //  loop_interface_processor.generate 가 변형 — 병렬 처리 순서 의존. 근본 수정 전까지 직렬 고정(0.8s).
+    // [determinism] Parallel toolpaths bring the bimodal behavior back (second measurement: 2083590 vs 2094276 even after switching to per-layer fillers,
+    //  with st output unchanged -> filler state carry-over is innocent). Remaining suspect: adjacent support layers share a contact layer object that
+    //  loop_interface_processor.generate mutates — order-dependent under parallelism. Kept serial (0.8s) until a proper fix.
     { bool __was = tbb_stub::enabled().exchange(false);
       generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
       tbb_stub::enabled().store(__was); }
@@ -2322,9 +2322,9 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
     if (object.print()->canceled())
         return SupportGeneratorLayersPtr();
 
-    // [병렬화 — 어셈블리 1.75s/2.4s 실측 지배] 레이어별 완전 독립(읽기: overhangs_per_layers/이웃 lslices
-    //  불변, 쓰기: contact_out[layer_id*2(+1)] 슬롯, layer_storage 는 spin_mutex). 캐리 변수 없음 —
-    //  SlicesMarginCache 도 반복-로컬. 결정성은 mt 다회 해시 + st↔mt cmp 게이트로 검증.
+    // [parallelized — assembly dominates at a measured 1.75s/2.4s] Fully independent per layer (reads: overhangs_per_layers and neighboring lslices
+    //  are immutable; writes: the contact_out[layer_id*2(+1)] slots, with layer_storage under a spin_mutex). No carried variables —
+    //  SlicesMarginCache is iteration-local too. Determinism is verified by hashing several mt runs plus an st vs mt cmp gate.
     tbb::parallel_for(tbb::blocked_range<size_t>(layer_id_start, num_layers),
         [&](const tbb::blocked_range<size_t>& __asm_r) {
     for (size_t layer_id = __asm_r.begin(); layer_id < __asm_r.end(); layer_id++) {
@@ -2523,7 +2523,7 @@ static inline SupportGeneratorLayer* detect_bottom_contacts(
 // Returns polygons to print + polygons to propagate downwards.
 // Called twice: First for normal supports, possibly trimmed by "on build plate only", second for support enforcers not trimmed by "on build plate only".
 static inline std::pair<Polygons, Polygons> project_support_to_grid(const Layer &layer, const SupportGridParams &grid_params, const Polygons &overhangs, Polygons *layer_buildplate_covered,
-    Polygons *precomputed_trimming /* = nullptr — 레이어 독립 offset(lslices,ε) 병렬 선계산분(소비: move) */
+    Polygons *precomputed_trimming /* = nullptr — the per-layer independent offset(lslices,ε) precomputed in parallel (consumed by move) */
 #ifdef SLIC3R_DEBUG 
     , size_t iRun, size_t layer_id, const char *debug_name
 #endif /* SLIC3R_DEBUG */
@@ -2638,8 +2638,8 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::bottom_contact_layers_and_
     Polygons  enforcers_projection;
     // Last top contact layer visited when collecting the projection of contact areas.
     int       contact_idx = int(top_contacts.size()) - 1;
-    // [병렬 선계산] trimming = offset(lslices, ε) 는 레이어 독립인데 순차 전파 루프 안에서 매번 계산되던 것
-    //  — 그리드 페이즈(실측 2.0s)의 체인 무관 부분만 분리해 병렬로 선계산.
+    // [parallel precomputation] trimming = offset(lslices, ε) is per-layer independent, yet it used to be recomputed inside the sequential propagation loop
+    //  — only the chain-independent part of the grid phase (measured 2.0s) is split out and precomputed in parallel.
     std::vector<Polygons> precomputed_trimmings(object.total_layer_count());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, object.total_layer_count()), [&](const tbb::blocked_range<size_t>& __r) {
         for (size_t li = __r.begin(); li < __r.end(); ++li)

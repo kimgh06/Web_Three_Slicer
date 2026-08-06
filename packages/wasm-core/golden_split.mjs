@@ -1,7 +1,7 @@
-// 골든 분리 검증 (S0): golden.mjs 출력을 섹션별로 쪼개 비교한다.
-//  - 무서포트 섹션: 서포트 로직을 고쳐도 byte-identical 이어야 한다(무관 경로 회귀 감지)
-//  - 서포트 섹션: 임계각 수식 교정 시 "바뀌는 것이 정상" — 변경 여부만 보고
-// 사용: node golden_split.mjs <baseline.txt> <current.txt>
+// Split golden verification (S0): splits golden.mjs output into sections and compares them.
+//  - Support-free sections: must stay byte-identical even when support logic changes (detects regressions on unrelated paths)
+//  - Support sections: "changing is expected" when the threshold-angle formula is corrected — only whether it changed is reported
+// Usage: node golden_split.mjs <baseline.txt> <current.txt>
 import { readFileSync } from 'node:fs'
 
 const split = (path) => {
@@ -26,13 +26,13 @@ for (const name of Object.keys(base)) {
   if (name === '(prologue)') continue
   const same = base[name] === cur[name]
   if (isSupport(name)) {
-    console.log(`${same ? '=  ' : '≠  '} ${name}  [서포트 — 변경 허용]`)
+    console.log(`${same ? '=  ' : '≠  '} ${name}  [support — change allowed]`)
   } else if (same) {
-    console.log(`OK  ${name}  [무서포트 — byte-identical]`)
+    console.log(`OK  ${name}  [support-free — byte-identical]`)
   } else {
-    console.log(`FAIL ${name}  [무서포트인데 변경됨 — 무관 경로 회귀!]`)
+    console.log(`FAIL ${name}  [support-free but changed — regression on an unrelated path!]`)
     fail++
   }
 }
-console.log(fail ? `\n${fail} 개 무서포트 섹션이 변경됨 — 회귀 의심` : '\n무서포트 섹션 전부 byte-identical')
+console.log(fail ? `\n${fail} support-free section(s) changed — suspected regression` : '\nAll support-free sections are byte-identical')
 process.exit(fail ? 1 : 0)

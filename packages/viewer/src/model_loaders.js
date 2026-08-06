@@ -1,20 +1,20 @@
-// 26단계: 통일 모델 임포트 파이프라인 — STL/OBJ/3MF/AMF/PLY.
-//  three/examples/jsm 로더 재사용(신규 npm 의존성 없음). 각 로더 결과(BufferGeometry|Group) →
-//  월드행렬 베이크 → 비인덱스 삼각형 → **model z-up** flat 배열(N*9). 슬라이스 경로(addObject→buildMergedSTL→커널) 재사용.
-//  좌표계(실측): 3D 프린팅 포맷은 모두 z-up mm. three 로더는 축 변환을 하지 않고 파일 원좌표를 그대로 로드하므로,
-//   STL/3MF/AMF/PLY 는 z-up 그대로 model 좌표로 사용. OBJ 는 관례상 y-up(그래픽) 가능성이 있으나 프린팅 OBJ 는 z-up 이
-//   일반적 → z-up 기본(부적절 시 기즈모 회전). 이 판단은 프린팅 워크플로 기준(근거 주석).
+// Stage 26: unified model import pipeline — STL/OBJ/3MF/AMF/PLY.
+//  Reuses three/examples/jsm loaders (no new npm dependency). Each loader result (BufferGeometry|Group) ->
+//  bake world matrix -> non-indexed triangles -> a **model z-up** flat array (N*9). Reuses the slice path (addObject->buildMergedSTL->kernel).
+//  Coordinate systems (measured): every 3D printing format is z-up mm. three's loaders apply no axis conversion and load raw file coordinates,
+//   so STL/3MF/AMF/PLY are used as model coordinates z-up as-is. OBJ may conventionally be y-up (graphics), but printing OBJ files are
+//   usually z-up -> z-up by default (rotate with the gizmo when that is wrong). This call follows the printing workflow (rationale comment).
 import * as THREE from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { AMFLoader } from 'three/examples/jsm/loaders/AMFLoader.js'
 import { parse3MF } from './parse_3mf.js'
 
-// 내장 포맷. registerLoader() 로 확장되면 여기에 확장자가 추가된다(파일 대화상자/드래그앤드롭 필터가 이걸 본다).
+// Built-in formats. registerLoader() appends extensions here (the file dialog / drag-and-drop filters read this).
 export const SUPPORTED_EXT = ['stl', 'obj', '3mf', 'amf', 'ply']
 
-// 확장 로더 레지스트리. STEP 처럼 무거운 의존성(OCCT WASM 7.6MB)이 필요한 포맷은 패키지에 넣지 않고
-//  쓰는 쪽에서 등록한다 — three-slicer 는 런타임 의존성 0 을 유지한다. (데모 앱 예: web/viewer/src/step_loader.js)
+// Extra loader registry. Formats needing heavy dependencies (STEP -> OCCT WASM, 7.6MB) are not bundled and are
+//  registered by the consumer — three-slicer keeps zero runtime dependencies. (Demo app example: web/viewer/src/step_loader.js)
 //   registerLoader('step,stp', async (buffer, name) => [{ name, modelPos: Float32Array(N*9, z-up mm) }])
 const extra = new Map()
 export function registerLoader(exts, fn) {
@@ -26,7 +26,7 @@ export function registerLoader(exts, fn) {
 
 export function fileExt(name) { const i = name.lastIndexOf('.'); return i < 0 ? '' : name.slice(i + 1).toLowerCase() }
 
-// --- STL 파서 (바이너리 + ASCII) → model 좌표 position (N*9) ---  (기존 Viewport 로직 이관)
+// --- STL parser (binary + ASCII) -> model-space position (N*9) ---  (moved out of the old Viewport logic)
 function parseSTL(buffer) {
   const dv = new DataView(buffer)
   if (buffer.byteLength >= 84) {
@@ -50,7 +50,7 @@ function parseSTL(buffer) {
   return new Float32Array(nums)
 }
 
-// BufferGeometry(+월드행렬) → 비인덱스 삼각형 model z-up flat 배열(N*9). 로더 좌표=z-up 그대로 사용.
+// BufferGeometry (+ world matrix) -> non-indexed triangles as a model z-up flat array (N*9). Loader coordinates are used as z-up directly.
 function geoToModelTris(geometry, matrix) {
   const pos = geometry?.attributes?.position
   if (!pos || pos.count < 3) return null
@@ -65,7 +65,7 @@ function geoToModelTris(geometry, matrix) {
   return out
 }
 
-// Group/Object3D 재귀 → [{geometry, matrixWorld}] (월드행렬 베이크용).
+// Recursive Group/Object3D walk -> [{geometry, matrixWorld}] (for baking the world matrix).
 function collectMeshes(root) {
   root.updateMatrixWorld(true)
   const meshes = []
@@ -73,7 +73,7 @@ function collectMeshes(root) {
   return meshes
 }
 
-// 로더 결과 → 오브젝트 목록. multi=true(3mf/amf) 면 메시별 개별 오브젝트, 아니면 하나로 병합.
+// Loader result -> object list. With multi=true (3mf/amf) each mesh becomes its own object, otherwise everything is merged into one.
 function meshesToObjects(baseName, meshes, multi) {
   const parts = meshes.map(m => geoToModelTris(m.geometry, m.matrix)).filter(Boolean)
   if (!parts.length) return []
@@ -81,20 +81,20 @@ function meshesToObjects(baseName, meshes, multi) {
     return parts.map((p, i) => ({ name: `${baseName}#${i + 1}`, modelPos: p }))
   }
   if (parts.length === 1) return [{ name: baseName, modelPos: parts[0] }]
-  // 병합
+  // Merge
   let total = 0; for (const p of parts) total += p.length
   const merged = new Float32Array(total); let o = 0
   for (const p of parts) { merged.set(p, o); o += p.length }
   return [{ name: baseName, modelPos: merged }]
 }
 
-// 공개 API: (파일명, ArrayBuffer) → Promise<[{name, modelPos(N*9, model z-up)}]>. 커널 무관 순수.
+// Public API: (filename, ArrayBuffer) -> Promise<[{name, modelPos(N*9, model z-up)}]>. Pure, kernel-independent.
 export async function loadModel(name, buffer) {
   const ext = fileExt(name)
   switch (ext) {
     case 'stl': {
       const pos = parseSTL(buffer)
-      if (!pos) throw new Error('STL 파싱 실패')
+      if (!pos) throw new Error('Failed to parse STL')
       return [{ name, modelPos: pos }]
     }
     case 'obj': {
@@ -104,44 +104,44 @@ export async function loadModel(name, buffer) {
     case 'ply': {
       const geo = new PLYLoader().parse(buffer)                            // BufferGeometry
       const tris = geoToModelTris(geo, null)
-      if (!tris) throw new Error('PLY 지오메트리 없음')
+      if (!tris) throw new Error('No PLY geometry')
       return [{ name, modelPos: tris }]
     }
     case '3mf': {
-      // 자체 파서 — three 의 ThreeMFLoader 는 production extension(p:path)을 못 읽어 슬라이서 저장 3mf 가 전부 빈다.
+      // Own parser — three's ThreeMFLoader cannot read the production extension (p:path), so every slicer-saved 3mf came out empty.
       const objs = parse3MF(buffer, name).map(o => ({ name: o.name, modelPos: o.tris }))
-      if (!objs.length) throw new Error('3MF 메시 없음')
+      if (!objs.length) throw new Error('No mesh in 3MF')
       return objs
     }
     case 'amf': {
-      const g = new AMFLoader().parse(buffer)                              // Group (DOMParser 사용 — 브라우저)
+      const g = new AMFLoader().parse(buffer)                              // Group (uses DOMParser — browser only)
       const objs = meshesToObjects(name, collectMeshes(g), true)
-      if (!objs.length) throw new Error('AMF 메시 없음')
+      if (!objs.length) throw new Error('No mesh in AMF')
       return objs
     }
     default: {
       const fn = extra.get(ext)
-      if (!fn) throw new Error(`지원하지 않는 포맷: .${ext}`)
+      if (!fn) throw new Error(`Unsupported format: .${ext}`)
       const objs = await fn(buffer, name)
-      if (!objs?.length) throw new Error(`.${ext} 메시 없음`)
+      if (!objs?.length) throw new Error(`No mesh in .${ext}`)
       return objs
     }
   }
 }
 
-// ---- 33단계: 객체 분리 (원본 Split to objects / TriangleMesh::its_split) ----
-// 원본 정의: "면은 **에지를 공유하면** 연결된 것으로 본다(공유 에지 = 정점 인덱스 2개 공유)"
-//  (TriangleMesh.cpp:1505). 그 연결 성분(patch)마다 독립 오브젝트가 된다.
-// 우리 localPos 는 비인덱스 삼각형 스트림(정점 9개/삼각형)이라, 먼저 좌표를 양자화해 정점을 용접하고
-//  에지를 만든 뒤 union-find 로 성분을 모은다. 인접 리스트를 만들지 않아 메모리/시간이 선형에 가깝다.
+// ---- Stage 33: split to objects (upstream Split to objects / TriangleMesh::its_split) ----
+// Upstream definition: "facets are considered connected **when they share an edge** (shared edge = two shared vertex indices)"
+//  (TriangleMesh.cpp:1505). Each connected component (patch) becomes its own object.
+// Our localPos is a non-indexed triangle stream (9 vertex values per triangle), so we first quantize coordinates to weld vertices,
+//  then build edges and gather components with union-find. No adjacency list is built, so memory/time stay near-linear.
 //
-// 반환: 성분이 2개 이상이면 Float32Array[] (각 성분의 localPos, 좌표계는 입력 그대로),
-//       1개면 null (분리 불가).
+// Returns: Float32Array[] when there are 2+ components (each component's localPos, in the input coordinate system),
+//       null when there is only 1 (cannot split).
 export function splitConnectedComponents(localPos) {
   const nTri = Math.floor(localPos.length / 9)
   if (nTri < 2) return null
 
-  // 정점 용접: 부동소수 오차로 같은 점이 갈라지지 않도록 1e-4mm 격자로 양자화
+  // Vertex welding: quantize to a 1e-4mm grid so floating-point error does not split identical points
   const Q = 1e4
   const vmap = new Map()
   const vidx = new Int32Array(nTri * 3)
@@ -161,20 +161,20 @@ export function splitConnectedComponents(localPos) {
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] } return x }
   const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a }
 
-  // 에지(정점쌍) → 처음 본 면. 같은 에지를 다시 만나면 두 면을 합친다.
-  //  에지당 면이 3개 이상인 비-매니폴드도 첫 면 기준으로 전부 이어져 문제없다.
+  // Edge (vertex pair) -> the first facet seen. Meeting the same edge again unions the two facets.
+  //  Non-manifold edges with 3+ facets still link up fine, all against that first facet.
   const edge = new Map()
   for (let t = 0; t < nTri; t++) {
     for (let e = 0; e < 3; e++) {
       const a = vidx[t * 3 + e], b = vidx[t * 3 + (e + 1) % 3]
-      const key = a < b ? a * 4294967296 + b : b * 4294967296 + a   // 정점 인덱스 2개를 하나의 수로
+      const key = a < b ? a * 4294967296 + b : b * 4294967296 + a   // pack two vertex indices into one number
       const prev = edge.get(key)
       if (prev === undefined) edge.set(key, t)
       else union(t, prev)
     }
   }
 
-  // 성분별 면 수집
+  // Collect facets per component
   const groups = new Map()
   for (let t = 0; t < nTri; t++) {
     const r = find(t)
@@ -184,7 +184,7 @@ export function splitConnectedComponents(localPos) {
   }
   if (groups.size < 2) return null
 
-  // 큰 성분부터 (원본도 부피 순으로 정렬해 첫 오브젝트가 본체가 되게 한다)
+  // Largest component first (upstream also sorts by volume so the first object is the main body)
   const parts = [...groups.values()].sort((a, b) => b.length - a.length)
   return parts.map(faces => {
     const out = new Float32Array(faces.length * 9)

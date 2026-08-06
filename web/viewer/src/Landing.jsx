@@ -5,31 +5,31 @@ import schema from 'three-slicer/data/config-schema.json'
 const OPTION_COUNT = Object.keys(schema).length
 
 const LINKS = [
-  ['npm', 'https://www.npmjs.com/package/three-slicer', '패키지'],
-  ['GitHub', 'https://github.com/kimgh06/Web_Three_Slicer', '소스'],
-  ['Demo', 'https://slicer.kimgh06.com/', '배포'],
+  ['npm', 'https://www.npmjs.com/package/three-slicer', 'package'],
+  ['GitHub', 'https://github.com/kimgh06/Web_Three_Slicer', 'source'],
+  ['Demo', 'https://slicer.kimgh06.com/', 'deployment'],
 ]
 
 const ROUTES = [
-  ['Engine', 'three-slicer', 'Node 또는 브라우저에서 binary STL을 G-code로 슬라이스'],
-  ['Settings', 'three-slicer/settings', 'OrcaSlicer 설정 map을 커널 파라미터로 변환'],
-  ['Viewer', 'three-slicer/viewer', 'React 3D 뷰어, 모델 로딩, 워커 슬라이싱, 툴패스 프리뷰'],
-  ['Components', 'three-slicer/components', '907개 설정 schema 기반 React SettingsPanel'],
+  ['Engine', 'three-slicer', 'Slice a binary STL into G-code, in Node or the browser'],
+  ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
+  ['Viewer', 'three-slicer/viewer', 'React 3D viewer: model loading, worker slicing, toolpath preview'],
+  ['Components', 'three-slicer/components', 'React SettingsPanel driven by the 907-option schema'],
   ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, invalidation map'],
-  ['Worker', 'three-slicer/worker', '브라우저 main thread 밖에서 layer streaming'],
+  ['Worker', 'three-slicer/worker', 'Layer streaming off the browser main thread'],
 ]
 
 const GROUPS = [
-  ['입력', ['STL', 'OBJ', '3MF', 'AMF', 'PLY', '드래그앤드롭', '다중 모델']],
-  ['배치', ['이동', '회전', '스케일', '복제', '객체 분리', '바닥 정렬', '멀티 플레이트']],
-  ['슬라이싱', [
-    'Arachne 가변폭 벽', 'gyroid / honeycomb / crosshatch 인필',
-    '트리 · 그리드 서포트', '서포트 페인팅',
-    '스커트', '브림', '래프트', '아이어닝', '아크 피팅', '멀티머티리얼',
+  ['Input', ['STL', 'OBJ', '3MF', 'AMF', 'PLY', 'drag and drop', 'multiple models']],
+  ['Arrange', ['move', 'rotate', 'scale', 'duplicate', 'split to objects', 'place on bed', 'multi-plate']],
+  ['Slicing', [
+    'Arachne variable-width walls', 'gyroid / honeycomb / crosshatch infill',
+    'tree · grid support', 'support painting',
+    'skirt', 'brim', 'raft', 'ironing', 'arc fitting', 'multi-material',
   ]],
-  ['프리뷰', ['레이어 슬라이더', '단일 레이어', '트래블', '피처 / 속도 / 높이 / 폭 / 팬 / 온도 뷰']],
-  ['출력', ['G-code 다운로드', '출력 시간', '필라멘트 사용량']],
-  ['설정', [`${OPTION_COUNT}개 옵션`, '검색', '모드 필터']],
+  ['Preview', ['layer slider', 'single layer', 'travel', 'feature / speed / height / width / fan / temperature views']],
+  ['Output', ['G-code download', 'print time', 'filament usage']],
+  ['Settings', [`${OPTION_COUNT} options`, 'search', 'mode filter']],
 ]
 
 export default function Landing() {
@@ -38,10 +38,10 @@ export default function Landing() {
       <header className="lp-head">
         <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
         <h1>Web Three Slicer</h1>
-        <p>OrcaSlicer 기반의 WASM 슬라이싱 엔진, React 뷰어, 설정 패널을 하나의 npm 패키지로 제공합니다.</p>
+        <p>An OrcaSlicer-based WASM slicing engine, React viewer and settings panel, shipped as a single npm package.</p>
         <div className="lp-cta">
-          <Link className="lp-btn primary" to="/slice">슬라이서 열기</Link>
-          <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm 패키지</a>
+          <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
+          <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
           <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">GitHub</a>
         </div>
         <nav className="lp-links" aria-label="Project links">
@@ -58,7 +58,7 @@ export default function Landing() {
         <section className="lp-section" aria-labelledby="install-title">
           <div className="lp-section-head">
             <h2 id="install-title">Install</h2>
-            <p>Headless engine만 쓰거나, React viewer/settings UI까지 붙일 수 있습니다.</p>
+            <p>Use the headless engine on its own, or add the React viewer and settings UI on top.</p>
           </div>
           <div className="lp-code-grid">
             <pre><code>npm i three-slicer</code></pre>
@@ -69,7 +69,7 @@ export default function Landing() {
         <section className="lp-section" aria-labelledby="routes-title">
           <div className="lp-section-head">
             <h2 id="routes-title">Use It As</h2>
-            <p>README의 사용 경로를 그대로 따라갈 수 있도록 subpath export를 나눠 제공합니다.</p>
+            <p>Subpath exports are split so you can follow the usage paths in the README exactly.</p>
           </div>
           <div className="lp-route-grid">
             {ROUTES.map(([name, path, desc]) => (
@@ -85,7 +85,7 @@ export default function Landing() {
         <section className="lp-section" aria-labelledby="features-title">
           <div className="lp-section-head">
             <h2 id="features-title">Demo Surface</h2>
-            <p>이 배포판은 패키지를 workspace 이름으로 소비하는 실제 브라우저 데모입니다.</p>
+            <p>This deployment is a real browser demo that consumes the package by its workspace name.</p>
           </div>
           <dl className="lp-feat">
             {GROUPS.map(([label, items]) => (
@@ -100,8 +100,8 @@ export default function Landing() {
         </section>
 
         <section className="lp-section lp-license" aria-label="License">
-          <p>AGPL-3.0-or-later · OrcaSlicer 기반 · 서버 없이 브라우저 또는 Node에서 실행</p>
-          <Link to="/slice">바로 슬라이스하기</Link>
+          <p>AGPL-3.0-or-later · based on OrcaSlicer · runs in the browser or Node with no server</p>
+          <Link to="/slice">Start slicing</Link>
         </section>
       </main>
 

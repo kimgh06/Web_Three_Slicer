@@ -510,9 +510,9 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
 
             assert(curr_move.actual_feedrate == 0.0f);
 
-            // [PORT GUARD] move_id==0 이면 prev 가 없다 — 원본은 moves[-1] 을 읽고(514) 심지어 쓴다(519).
-            //  데스크톱에선 잠복 UB 로 넘어가지만 wasm 힙에선 인접 블록 손상 → 이후 임의 지점 OOB 크래시
-            //  (ASAN: heap-buffer-overflow, moves 버퍼 -92B == moves[-1].type). 첫 블록은 보간 스킵.
+            // [PORT GUARD] With move_id==0 there is no prev — upstream reads moves[-1] (line 514) and even writes to it (519).
+            //  On desktop that slips by as latent UB, but on the wasm heap it corrupts the adjacent block -> an OOB crash at an arbitrary point later
+            //  (ASAN: heap-buffer-overflow, moves buffer -92B == moves[-1].type). Interpolation is skipped for the first block.
             if (block.move_id == 0)
                 continue;
 

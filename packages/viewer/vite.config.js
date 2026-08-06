@@ -1,12 +1,12 @@
 import { defineConfig } from 'vite'
 
-// 라이브러리 빌드 — JSX 트랜스파일만 하고 나머지는 전부 external.
-// slicer.worker.js 의 new URL 패턴은 dist 에 원형 보존돼야 한다(소비자 번들러가 워커 청크로 인식).
+// Library build — transpiles JSX only; everything else stays external.
+// The new URL pattern in slicer.worker.js must be preserved verbatim in dist (so consumer bundlers see a worker chunk).
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
-  root: dirname(fileURLToPath(import.meta.url)),   // --config 로 루트 cwd 에서 실행돼도 엔트리/outDir 기준 고정
+  root: dirname(fileURLToPath(import.meta.url)),   // pins entry/outDir even when run from the repo root cwd via --config
   build: {
     lib: {
       entry: { Viewport: 'src/Viewport.jsx', toolpath_gpu: 'src/toolpath_gpu.js', model_loaders: 'src/model_loaders.js' },
@@ -14,7 +14,7 @@ export default defineConfig({
     },
     outDir: 'dist',
     rollupOptions: {
-      // make_worker.js 는 external + 원형 복사(build 스크립트) — 정적 워커 패턴을 소비자 번들러에 보존.
+      // make_worker.js is external + copied verbatim (build script) — preserves the static worker pattern for consumer bundlers.
       external: [/^react(-dom)?($|\/)/, /^three($|\/)/, /^three-slicer($|\/)/, /make_worker\.js$/],
       output: { paths: (id) => /make_worker\.js$/.test(id) ? './make_worker.js' : id },
     },

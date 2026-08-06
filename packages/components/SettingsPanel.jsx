@@ -8,13 +8,13 @@
 //                  which is what apps/independence-check does to prove zero router coupling.)
 import React, { useMemo, useState } from 'react'
 import ShadowHost from './shadow_host.jsx'
-import shadowCss from './styles.css?inline'   // Shadow DOM 격리 — 빌드 시 문자열로 내장
+import shadowCss from './styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import BedShapeEditor from './BedShapeEditor.jsx'
 import { schema } from 'three-slicer/data'
 
-// 커스텀 위젯 레지스트리 — 원본 Tab.cpp 의 라인 위젯 치환(create_bed_shape_widget) 상당.
-//  스키마 구동 위젯으로 부족한 복합 타입은 여기 등록한 에디터가 오버라이드한다.
-//  소비자는 <SettingsPanel customWidgets={{key: Component}}/> 로 추가/교체 가능.
+// Custom widget registry — the equivalent of upstream Tab.cpp's line widget substitution (create_bed_shape_widget).
+//  Composite types that schema-driven widgets cannot express are overridden by the editors registered here.
+//  Consumers can add/replace them via <SettingsPanel customWidgets={{key: Component}}/>.
 const CUSTOM_WIDGETS = {
   printable_area: BedShapeEditor,
 }
@@ -71,7 +71,7 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
     case 'points':
       return <code className="pts">{JSON.stringify(raw ?? [])}</code>
     case 'unknown':
-      return <span className="muted">스키마 없음</span>
+      return <span className="muted">No schema</span>
     default:
       return (<span className="inputwrap">
         <input value={scalar ?? ''} onChange={e => set(e.target.value)} disabled={disabled} />
@@ -81,7 +81,7 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
 }
 
 function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOpen, customWidgets }) {
-  if (optKey.startsWith('<')) return <div className="row custom"><span className="muted">⚙ 커스텀 위젯 {optKey}</span></div>
+  if (optKey.startsWith('<')) return <div className="row custom"><span className="muted">⚙ Custom widget {optKey}</span></div>
   const def = schema[optKey]
   const cond = disabled ? disabled[optKey] : undefined
   const off = cond != null
@@ -89,18 +89,18 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOp
   const reset = () => setSettings(s => { const n = { ...s }; delete n[optKey]; return n })
   const label = def?.label || def?.full_label || optKey
   return (
-    <div className={'row' + (off ? ' disabled' : '')} title={off ? `비활성 조건: ${cond}` : (def?.tooltip ?? '')} data-testid={`row-${optKey}`}>
+    <div className={'row' + (off ? ' disabled' : '')} title={off ? `Disabled when: ${cond}` : (def?.tooltip ?? '')} data-testid={`row-${optKey}`}>
       <span className="lbl-cell">
-        {dirty && <span className="dirty-dot" title="기본값에서 변경됨" data-testid={`dirty-${optKey}`} />}
+        {dirty && <span className="dirty-dot" title="Changed from default" data-testid={`dirty-${optKey}`} />}
         {onOptionOpen
-          ? <button type="button" className="lbl lbl-link" onClick={() => onOptionOpen(optKey)} title="상세">{label}</button>
+          ? <button type="button" className="lbl lbl-link" onClick={() => onOptionOpen(optKey)} title="Details">{label}</button>
           : <span className="lbl">{label}</span>}
       </span>
       <code className="key">{optKey}</code>
       <ModeBadge mode={def?.mode} />
       <span className="widget-cell">
         <EditableWidget def={def} optKey={optKey} settings={settings} setSettings={setSettings} disabled={off} customWidgets={customWidgets} />
-        {dirty && <button className="reset-btn" onClick={reset} title="기본값으로 리셋" data-testid={`reset-${optKey}`}>↺</button>}
+        {dirty && <button className="reset-btn" onClick={reset} title="Reset to default" data-testid={`reset-${optKey}`}>↺</button>}
       </span>
     </div>
   )
@@ -126,9 +126,9 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
     <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
       <div className="sp-top">
-        <input className="sp-search" placeholder="옵션 검색 (907개)…" value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
+        <input className="sp-search" placeholder="Search options (907)…" value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
         {!q && (<>
-          <label className="sp-builder"><span>설정 그룹</span>
+          <label className="sp-builder"><span>Settings group</span>
             <select value={builder} onChange={e => { setBuilder(e.target.value); setPageIdx(0) }}>
               {MAIN_BUILDERS.map(b => <option key={b} value={b}>{builderLabel(b)}</option>)}
             </select>
@@ -144,9 +144,9 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
       <div className="sp-body">
         {q ? (
           <section data-testid="search-results">
-            <h3>검색: “{query}” — {hits.length}건{hits.length === 60 ? '+' : ''}</h3>
+            <h3>Search: “{query}” — {hits.length} hit{hits.length === 1 ? '' : 's'}{hits.length === 60 ? '+' : ''}</h3>
             {hits.map(row)}
-            {!hits.length && <p className="muted">일치 없음</p>}
+            {!hits.length && <p className="muted">No matches</p>}
           </section>
         ) : page ? (<>
           <h2>{page.page} <span className="muted">Tab.cpp:{page.line}</span></h2>
@@ -154,11 +154,11 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
             const opts = g.options.filter(k => passesMode(k, mode))
             if (!opts.length) return null
             return (<section key={g.group + g.line}>
-              <h3>{g.group || '(무제 그룹)'} <span className="muted">:{g.line}</span></h3>
+              <h3>{g.group || '(untitled group)'} <span className="muted">:{g.line}</span></h3>
               {opts.map(row)}
             </section>)
           })}
-        </>) : <p className="muted">빌더 없음</p>}
+        </>) : <p className="muted">No builder</p>}
       </div>
     </div>
     </ShadowHost>

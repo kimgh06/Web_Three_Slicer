@@ -7,7 +7,7 @@ import createModule from './src/slicer_core.js'
 const u8 = (b) => (b instanceof Uint8Array ? b : new Uint8Array(b))
 
 // Off-main-thread worker URL for the browser: `new Worker(engineWorkerURL(), { type: 'module' })`.
-// The worker speaks the 30단계 streaming protocol ({type:'layer'|'done'|'error'|'progress'}).
+// The worker speaks the stage-30 streaming protocol ({type:'layer'|'done'|'error'|'progress'}).
 export const engineWorkerURL = () => new URL('./src/slicer.worker.js', import.meta.url)
 
 // createSlicer(): load the WASM kernel and return a handle. Works in Node and the browser main thread.
@@ -15,7 +15,7 @@ export const engineWorkerURL = () => new URL('./src/slicer.worker.js', import.me
 //    - stl: ArrayBuffer|Uint8Array (binary STL)
 //    - params: kernel-params object OR JSON string (see web/GUIDE.md; use deriveKernelParams to build from UI settings)
 //    - onProgress(done,total): per-layer progress
-//    - onLayer({z,idx,gcode,paths,widths}): 30단계 streaming — emits + frees each layer; when set, the
+//    - onLayer({z,idx,gcode,paths,widths}): stage-30 streaming — emits + frees each layer; when set, the
 //      returned result carries stats only (assemble gcode/layers from the callbacks). When omitted, the
 //      result carries the whole { gcode, stats, layers }.
 //  paintPrepare/paint/paintClear/overlay: manual support enforcer/blocker painting (TriangleSelector).

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""OrcaSlicer 리버스 엔지니어링 산출물 추출기.
-출력: web/{ui-tree,config-schema,invalidation-map,toggle-rules}.json
-33단계 재구성: 원본 소스는 slicer/, 산출 JSON 은 web/(이 스크립트 위치). 경로는 __file__ 기준 유도(절대경로 하드코딩 제거).
+"""Extractor for the OrcaSlicer reverse-engineering artifacts.
+Output: web/{ui-tree,config-schema,invalidation-map,toggle-rules}.json
+Stage 33 restructure: upstream sources live in slicer/, generated JSON in web/ (where this script lives). Paths are derived from __file__ (no hardcoded absolute paths).
 """
 import re, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # .../<repo>/web
-REPO = os.path.dirname(HERE)                          # 저장소 루트
-SRC  = os.path.join(REPO, 'slicer')                   # 원본 OrcaSlicer 소스(33단계 이동)
-OUT  = os.path.join(HERE, 'packages', 'data')         # 33단계 Phase 3: 산출 JSON 은 @three-slicer/data 패키지로
+REPO = os.path.dirname(HERE)                          # repository root
+SRC  = os.path.join(REPO, 'slicer')                   # upstream OrcaSlicer sources (moved in stage 33)
+OUT  = os.path.join(HERE, 'packages', 'data')         # stage 33 phase 3: generated JSON goes into the @three-slicer/data package
 os.makedirs(OUT, exist_ok=True)
 
 def read(p):
@@ -18,7 +18,7 @@ def read(p):
 def extract_ui_tree():
     src = read('src/slic3r/GUI/Tab.cpp')
     lines = src.split('\n')
-    # 함수 경계: 모든 Tab 계열 멤버 함수
+    # Function boundaries: every Tab-family member function
     funcs = []  # (name, start_line_idx)
     for i, l in enumerate(lines):
         m = re.match(r'(?:void|PageShp|bool)\s+(Tab\w*)::(\w+)\(', l)
@@ -42,7 +42,7 @@ def extract_ui_tree():
             m = re.search(r'append_single_option_line\("([^"]+)"(?:\s*,\s*"([^"]*)")?', l)
             if m and cur_group is not None:
                 cur_group['options'].append(m.group(1)); continue
-            # optgroup->append_line(...) 커스텀 위젯 / Option 객체 경유
+            # optgroup->append_line(...) custom widgets / via an Option object
             if cur_group is not None and re.search(r'optgroup->append_line\(', l) \
                and 'append_single_option_line' not in l:
                 mm = re.search(r'get_option\("([^"]+)"\)', l)
@@ -53,7 +53,7 @@ def extract_ui_tree():
 
 # ---------------------------------------------------------------- config-schema
 def _unquote(expr):
-    """L("a" "b") / "a" → 파이썬 문자열. 인접 리터럴 연결."""
+    """L("a" "b") / "a" -> a Python string. Adjacent literals are concatenated."""
     parts = re.findall(r'"((?:[^"\\]|\\.)*)"', expr)
     if not parts:
         return None
@@ -61,7 +61,7 @@ def _unquote(expr):
     return s.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
 
 def _parse_macros():
-    """PrintConfigConstants.hpp의 #define 상수표."""
+    """The #define constant table from PrintConfigConstants.hpp."""
     out = {}
     try:
         for m in re.finditer(r'#define\s+(\w+)\s+([\w.\-]+)', read('src/libslic3r/PrintConfigConstants.hpp')):
@@ -77,7 +77,7 @@ def _parse_macros():
 
 def _parse_enum_maps(src):
     """s_keys_map_<Enum> { {"key", cppIdent}, ... }
-    엔트리 값은 `spAligned` / `Enum::Ident` / `int(Enum::Ident)` 등 → 마지막 식별자로 매칭."""
+    Entry values look like `spAligned` / `Enum::Ident` / `int(Enum::Ident)` -> matched on the last identifier."""
     ident2key, enum_keys, per_enum = {}, {}, {}
     for m in re.finditer(r'static (?:const )?t_config_enum_values s_keys_map_(\w+)\s*=?\s*\{(.*?)\n\};', src, re.S):
         name, body = m.group(1), m.group(2)
@@ -91,12 +91,12 @@ def _parse_enum_maps(src):
     return ident2key, enum_keys, per_enum
 
 def _parse_list_items(raw, macros):
-    """중괄호 리스트 내부 → 파이썬 값 리스트. 해석 불가 항목은 원문 문자열 유지."""
+    """Inside a brace list -> a Python value list. Items that cannot be parsed keep their source text."""
     items = []
-    pat = (r'"((?:[^"\\]|\\.)*)"'                                        # 1: 문자열
+    pat = (r'"((?:[^"\\]|\\.)*)"'                                        # 1: string
            r'|FloatOrPercent\(\s*([0-9.\-]+)\s*,\s*(true|false)\s*\)'    # 2,3: FloatOrPercent
-           r'|Vec2d\(\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)\s*\)'              # 4,5: 좌표
-           r'|([A-Za-z_][\w.]*|[0-9.\-]+)')                              # 6: 식별자/숫자
+           r'|Vec2d\(\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)\s*\)'              # 4,5: coordinates
+           r'|([A-Za-z_][\w.]*|[0-9.\-]+)')                              # 6: identifier/number
     for m in re.finditer(pat, raw):
         s, fov, fob, vx, vy, ident = m.groups()
         if s is not None:
@@ -117,8 +117,8 @@ def extract_schema():
     src = read('src/libslic3r/PrintConfig.cpp')
     macros = _parse_macros()
     ident2key, enum_keys_maps, per_enum_maps = _parse_enum_maps(src)
-    # 주석 제거는 토크나이저에서 문자열 인식하며 수행 (툴팁 속 https:// 보호)
-    # 어느 함수(init_common_params 등) 소속인지 추적용 오프셋 맵
+    # Comment stripping happens in the tokenizer, which recognizes strings (protecting https:// inside tooltips)
+    # Offset map used to track which function (init_common_params, …) a statement belongs to
     func_marks = [(m.start(), m.group(1)) for m in
                   re.finditer(r'void\s+\w+ConfigDef::(\w+)\(\)|(?:^|\n)(\w+ConfigDef)::\1?\(\)', src)]
     func_marks = [(m.start(), m.group(1) or 'ctor') for m in
@@ -135,26 +135,26 @@ def extract_schema():
     buf, depth, start, i, n = [], 0, 0, 0, len(src)
     while i < n:
         c = src[i]
-        if c == '"':                              # 문자열 리터럴 통째로 소비
+        if c == '"':                              # consume the whole string literal
             buf.append(c); i += 1
             while i < n:
                 if src[i] == '\\': buf.append(src[i:i+2]); i += 2; continue
                 buf.append(src[i]); i += 1
                 if src[i-1] == '"': break
             continue
-        if c == "'":                              # 문자 리터럴
+        if c == "'":                              # character literal
             j = i + 1
             while j < n and src[j] != "'":
                 if src[j] == '\\': j += 1
                 j += 1
             buf.append(src[i:j+1]); i = j + 1; continue
-        if c == '#' and (i == 0 or src[i-1] == '\n'):  # 전처리기 라인은 문장에서 제외
+        if c == '#' and (i == 0 or src[i-1] == '\n'):  # preprocessor lines are excluded from statements
             j = src.find('\n', i); i = n if j < 0 else j; continue
         if c == '/' and i + 1 < n and src[i+1] == '/':
             j = src.find('\n', i); i = n if j < 0 else j; continue
         if c == '/' and i + 1 < n and src[i+1] == '*':
             j = src.find('*/', i + 2); i = n if j < 0 else j + 2; continue
-        if c in '([': depth += 1                  # 중괄호는 무시: 함수 본문 안 문장을 자르기 위함
+        if c in '([': depth += 1                  # braces are ignored: the point is to split statements inside a function body
         elif c in ')]': depth -= 1
         elif c == ';' and depth <= 0:
             stmts.append((start, ''.join(buf).strip())); buf = []; i += 1; start = i
@@ -162,18 +162,18 @@ def extract_schema():
         buf.append(c); i += 1
 
     options = {}
-    named_defs = {}   # auto def_x = def; 추적
+    named_defs = {}   # tracks auto def_x = def;
     cur = None
     STR_FIELDS = ['label', 'full_label', 'category', 'tooltip', 'sidetext', 'cli',
                   'cli_params', 'ratio_over', 'gui_flags', 'plugin_type']
     NUM_FIELDS = ['min', 'max', 'max_literal', 'height', 'width']
     BOOL_FIELDS = ['multiline', 'full_width', 'is_code', 'readonly', 'nullable']
     for pos, st in stmts:
-        st_flat = ' '.join(st.split()).lstrip('{} ')  # 블록 여는/닫는 중괄호 잔재 제거
+        st_flat = ' '.join(st.split()).lstrip('{} ')  # drop leftover opening/closing braces of a block
         m = re.match(r'(?:auto (\w+) = )?def ?= ?this->add\(\s*"([^"]+)"\s*,\s*(co\w+)\s*\)', st_flat)
         if m:
             key, ctype = m.group(2), m.group(3)
-            # mode 미지정 시 C++ 기본값 comSimple (Config.hpp ConfigOptionDef)
+            # With no mode given, the C++ default is comSimple (Config.hpp ConfigOptionDef)
             cur = {'type': ctype, 'mode': 'simple', 'defined_in': func_of(pos), 'line': line_of(pos)}
             options[key] = cur
             if m.group(1):                      # auto def_x = def = this->add(...)
@@ -200,7 +200,7 @@ def extract_schema():
             elif field == 'gui_type':
                 cur['gui_type'] = val.split('::')[-1]
             elif field in ('enum_values', 'enum_labels'):
-                if val.startswith('{'):          # 중괄호 리터럴 리스트
+                if val.startswith('{'):          # brace literal list
                     cur[field] = re.findall(r'"((?:[^"\\]|\\.)*)"', val)
                 else:
                     mm = re.match(r'(\w+)->enum_(?:values|labels)$', val)
@@ -218,10 +218,10 @@ def extract_schema():
             cur.setdefault('enum_' + m.group(1), []).append(_unquote(m.group(2)) or m.group(2))
             continue
         m = re.match(r'def->set_default_value\(\s*new ConfigOptionEnum<(\w+)>\s*\(\s*(?:\w+::)?(\w+)\s*\)\s*\)$', st_flat)
-        if m:                                     # enum 기본값: cpp 식별자 → 직렬화 키
+        if m:                                     # enum default: cpp identifier -> serialization key
             cur['default_type'] = 'Enum<%s>' % m.group(1)
             cur['default_raw'] = m.group(2)
-            scoped = per_enum_maps.get(m.group(1), {})   # enum별 스코프 우선 (식별자 충돌 방지)
+            scoped = per_enum_maps.get(m.group(1), {})   # per-enum scope wins (avoids identifier collisions)
             key = scoped.get(m.group(2), ident2key.get(m.group(2)))
             if key is not None:
                 cur['default'] = key
@@ -246,7 +246,7 @@ def extract_schema():
             elif base == 'Point':
                 mm = re.match(r'Vec2d\(\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)\s*\)$', raw)
                 if mm: cur['default'] = [float(mm.group(1)), float(mm.group(2))]
-            elif base == 'EnumsGeneric':               # 벡터형 enum (per-extruder)
+            elif base == 'EnumsGeneric':               # vector enum (per-extruder)
                 idents = re.findall(r'\w+', raw)
                 key = next((ident2key[i] for i in reversed(idents) if i in ident2key), None)
                 if key is not None: cur['default'] = [key]
@@ -259,13 +259,13 @@ def extract_schema():
                           'FloatsOrPercents', 'Points'):
                 cur['default'] = _parse_list_items(raw, macros)
             continue
-    # enum_keys_map만 있고 enum_values가 없는 옵션: s_keys_map_* 테이블에서 보충
+    # Options that have enum_keys_map but no enum_values: filled in from the s_keys_map_* tables
     for o in options.values():
         et = o.get('enum_type')
         if et and et in enum_keys_maps and not o.get('enum_values'):
             o['enum_values'] = list(enum_keys_maps[et])
             o['enum_values_from'] = 'keys_map'
-    # 루프 생성 키 수동 전개: PrintConfig.cpp:4900- (for axis in X,Y,Z,E)
+    # Manual expansion of loop-generated keys: PrintConfig.cpp:4900- (for axis in X,Y,Z,E)
     for fam, label in [('machine_max_speed_', 'Maximum speed %s'),
                        ('machine_max_acceleration_', 'Maximum acceleration %s'),
                        ('machine_max_jerk_', 'Maximum jerk %s')]:
@@ -284,7 +284,7 @@ def extract_invalidation():
         i = src.find(fn_sig)
         if i < 0:
             return None
-        # 함수 본문: 첫 { 부터 균형 } 까지
+        # Function body: from the first { to the balanced }
         j = src.find('{', i); depth = 0; k = j
         while k < len(src):
             if src[k] == '{': depth += 1
@@ -294,7 +294,7 @@ def extract_invalidation():
             k += 1
         body = src[j:k]
         base_line = src.count('\n', 0, i) + 1
-        # if/else-if 체인: 조건 안의 opt_key == "..." 들 + 블록 안의 ps*/pos* 토큰
+        # if/else-if chains: the opt_key == "..." values in conditions + the ps*/pos* tokens inside the block
         branches = []
         for m in re.finditer(r'(?:else\s+)?if\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{((?:[^{}]|\{[^{}]*\})*)\}', body):
             cond, blk = m.group(1), m.group(2)
@@ -313,7 +313,7 @@ def extract_invalidation():
                         'Print::invalidate_state_by_config_options'),
         'PrintObject': parse('src/libslic3r/PrintObject.cpp',
                         'PrintObject::invalidate_state_by_config_options'),
-        'note': '조건에 없는 opt_key(기본 분기)는 전체 무효화. steps는 분기 블록에서 참조된 단계 토큰.'
+        'note': 'An opt_key absent from the conditions (the default branch) invalidates everything. steps are the step tokens referenced in the branch block.'
     }
 
 # ---------------------------------------------------------------- toggle-rules
@@ -326,7 +326,7 @@ def _extract_toggles_from(src, func_pat, call_pat):
         body = src[fpos:fend]
         base = fline
         rec = {'locals': {}, 'rules': []}
-        # 지역 bool 변수 = 조건식
+        # local bool variable = condition
         for m in re.finditer(r'\b(?:const\s+)?(?:bool|auto)\s+(\w+)\s*=\s*((?:[^;{]|\{[^}]*\})+);', body):
             if re.search(r'config->|opt_|have_|is_|==|!=|&&|\|\|', m.group(2)):
                 rec['locals'][m.group(1)] = ' '.join(m.group(2).split())
@@ -335,11 +335,11 @@ def _extract_toggles_from(src, func_pat, call_pat):
             keys = re.findall(r'"([^"]+)"', m.group(2))
             rec['rules'].append({'fields': keys, 'enable_if': ' '.join(m.group(4).split()),
                                  'kind': m.group(3), 'line': base + body.count('\n', 0, m.start())})
-        # 단건 toggle_xxx("key", cond[, idx])
+        # single toggle_xxx("key", cond[, idx])
         for m in re.finditer(call_pat + r'\(\s*"([^"]+)"\s*,\s*((?:[^();]|\([^()]*\))+?)\)\s*;', body):
             rec['rules'].append({'fields': [m.group(2)], 'enable_if': ' '.join(m.group(3).split()),
                                  'kind': m.group(1), 'line': base + body.count('\n', 0, m.start())})
-        # 파싱 안 된 toggle 호출 카운트(정직성)
+        # count of toggle calls that were not parsed (honesty)
         total = len(re.findall(call_pat + r'\(', body))
         covered = sum(len(r['fields']) if r['fields'] and r['fields'][0] != '<var>' else 1
                       for r in rec['rules'])

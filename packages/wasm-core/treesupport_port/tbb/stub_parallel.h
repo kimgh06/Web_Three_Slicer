@@ -1,9 +1,9 @@
-// (성능) tbb 스텁 실병렬 공통부 — treesupport_port 전용.
-//  기본은 기존과 동일한 직렬. 브릿지(generate_normal, grid/snug)가 ParallelScope 로 켠 구간에서만
-//  parallel_for/task_group 이 실제 스레드를 사용한다. tree 경로는 concurrent_* 스텁이 비스레드안전
-//  (std alias)이라 의도적으로 직렬 유지 — 플래그를 켜지 않는다.
-//  budget: 중첩 스폰으로 emscripten pthread 풀(hardwareConcurrency)을 초과하지 않도록 전역 예산제.
-//  예산 소진 시 호출자 스레드에서 직렬 실행(정합성 동일, 데드락 불가).
+// (performance) Shared part of the real-parallel tbb stubs — for treesupport_port only.
+//  Serial by default, exactly as before. parallel_for/task_group use real threads only inside a scope the bridge
+//  (generate_normal, grid/snug) opened with ParallelScope. The tree path stays serial on purpose because the concurrent_*
+//  stubs are not thread-safe (they are std aliases) — the flag is never set there.
+//  budget: a global budget so nested spawning cannot exceed the emscripten pthread pool (hardwareConcurrency).
+//  When the budget runs out the work runs serially on the calling thread (same results, deadlock impossible).
 #pragma once
 #include <atomic>
 #include <thread>
@@ -12,13 +12,13 @@ namespace tbb_stub {
 
 inline std::atomic<bool>& enabled() { static std::atomic<bool> v{false}; return v; }
 
-// 슬라이스 취소 플래그 — UI 스레드가 SAB 로 직접 기입(워커/wasm 은 블록 중이어도 관찰 가능).
-//  커널 루프·포트 canceled() 가 반복 단위로 폴링. slice() 진입 시 0 리셋.
+// Slice cancel flag — the UI thread writes it directly via SAB (observable even while the worker/wasm is blocked).
+//  Kernel loops and the ports' canceled() poll it per iteration. Reset to 0 when slice() is entered.
 inline std::atomic<unsigned>& cancel() { static std::atomic<unsigned> v{0}; return v; }
 
 inline std::atomic<int>& budget() {
-  // 폭 hw-1 — 초기 크래시는 task_group 스레딩 비활성화로 해소됐고(대형 모델 st==mt byte-identical),
-  //  parallel_for 단독 전폭 구성은 golden + 대형 모델 gcode 대조로 검증한다.
+  // Width hw-1 — the early crashes were resolved by disabling task_group threading (large models are st==mt byte-identical), and
+  //  the parallel_for-only full-width configuration is verified with golden plus a g-code comparison on large models.
   static std::atomic<int> b((int)(std::thread::hardware_concurrency() > 1
                                   ? std::thread::hardware_concurrency() - 1 : 0));
   return b;
@@ -33,11 +33,11 @@ inline int take(int want) {
 }
 inline void give(int k) { budget().fetch_add(k); }
 
-// 서포트 실진행 카운터 — parallel_for 인덱스 완료·task_group run 완료가 올린다.
-//  UI(메인 스레드)가 SAB 로 직접 폴링(콜백 불가 구간의 진행 표시). 단위: 대략 "레이어 처리 1회".
+// Real support progress counter — raised by completed parallel_for indices and completed task_group runs.
+//  The UI (main thread) polls it directly via SAB (progress display for stretches where callbacks are impossible). Unit: roughly "one layer processed".
 inline std::atomic<uint32_t>& prog() { static std::atomic<uint32_t> v{0}; return v; }
 
-// 브릿지가 병렬 허용 구간을 감싸는 RAII — 진입 시 진행 카운터 리셋
+// RAII wrapper the bridge uses around a parallel-capable scope — resets the progress counter on entry
 struct ParallelScope {
   ParallelScope()  { prog().store(0); enabled().store(true); }
   ~ParallelScope() { enabled().store(false); }

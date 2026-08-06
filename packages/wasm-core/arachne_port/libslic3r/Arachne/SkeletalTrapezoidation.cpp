@@ -1668,11 +1668,11 @@ SkeletalTrapezoidation::Beading SkeletalTrapezoidation::interpolate(const Beadin
     // TODO: don't use toolpath locations past the middle!
     // TODO: stretch bead widths and locations of the higher bead count beading to fit in the left over space
     coord_t next_inset_idx;
-    // WASM 포팅 수정: size()-1 을 **부호 있는 coord_t 로 캐스팅한 뒤** 빼야 한다.
-    //  toolpath_locations 가 비면 size_t(0)-1 은 x86-64 에서 2^64-1 → int64_t 로 -1 이 되어 아래
-    //  `next_inset_idx < 0` 가드가 잡지만, wasm32 는 size_t 가 32비트라 2^32-1 → int64_t 로 +4294967295
-    //  (양수!) 가 된다. 가드가 무력화되고 left.toolpath_locations[4294967295] (≈34GB 오프셋) 를 읽어
-    //  "memory access out of bounds" 로 커널이 죽는다. 업스트림이 64비트 전용이라 못 보는 결함.
+    // WASM port fix: size()-1 must be subtracted **after casting to the signed coord_t**.
+    //  When toolpath_locations is empty, size_t(0)-1 is 2^64-1 on x86-64 -> -1 as int64_t, which the
+    //  `next_inset_idx < 0` guard below catches; but on wasm32 size_t is 32-bit, so it is 2^32-1 -> +4294967295 as int64_t
+    //  (positive!). The guard is defeated and left.toolpath_locations[4294967295] (a ≈34GB offset) is read,
+    //  killing the kernel with "memory access out of bounds". A defect upstream cannot see because it is 64-bit only.
     for (next_inset_idx = coord_t(left.toolpath_locations.size()) - 1; next_inset_idx >= 0; next_inset_idx--)
     {
         if (switching_radius > left.toolpath_locations[next_inset_idx])
@@ -1691,8 +1691,8 @@ SkeletalTrapezoidation::Beading SkeletalTrapezoidation::interpolate(const Beadin
     }
     // ret follows the thicker of left/right, which can hold fewer insets than left when bead
     // count and thickness disagree; skip the adjustment rather than index ret past its end.
-    // right 도 같은 이유로 left 보다 짧을 수 있다 — 아래 new_ratio 식이 next_inset_idx 로
-    // right.toolpath_locations 를 직접 인덱싱하므로 함께 막는다(같은 계열의 OOB).
+    // right can be shorter than left for the same reason — the new_ratio expression below indexes
+    // right.toolpath_locations directly with next_inset_idx, so it is guarded as well (the same class of OOB).
     if (next_inset_idx >= coord_t(ret.toolpath_locations.size()) || next_inset_idx >= coord_t(right.toolpath_locations.size()))
     {
         return ret;

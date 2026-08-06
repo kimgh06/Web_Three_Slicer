@@ -1,8 +1,8 @@
-// printable_area 전용 커스텀 에디터 — 원본 BedShapeDialog(Rectangular/Circular/Custom)의 웹 등가물.
-// 어떤 모드든 출력은 항상 꼭짓점 배열(coPoints)이라 하류(엔진 bed 유도·플레이트 렌더)는 무변경.
-//  · 사각형: 폭×깊이 + 원점(rect_size/rect_origin 상당)
-//  · 원형: 지름 → 32각형 근사(원본 BedShapePanel 방식)
-//  · 커스텀: 좌표 JSON 직접 입력
+// Custom editor dedicated to printable_area — the web equivalent of the upstream BedShapeDialog (Rectangular/Circular/Custom).
+// Whatever the mode, the output is always a vertex array (coPoints), so everything downstream (engine bed derivation, plate rendering) is unchanged.
+//  · Rectangular: width x depth + origin (equivalent to rect_size/rect_origin)
+//  · Circular: diameter -> 32-gon approximation (as in the upstream BedShapePanel)
+//  · Custom: enter the coordinate JSON directly
 import React, { useEffect, useState } from 'react'
 
 const rectPts = (w, d, ox, oy) => [[ox, oy], [w + ox, oy], [w + ox, d + oy], [ox, d + oy]]
@@ -26,7 +26,7 @@ export default function BedShapeEditor({ value, onChange, disabled }) {
   const [dia, setDia] = useState(Math.round(b.w))
   const [json, setJson] = useState(JSON.stringify(pts))
   const [jsonErr, setJsonErr] = useState(false)
-  // 외부 리셋(값 삭제 → 기본값 복귀) 동기화
+  // Sync with external resets (value deleted -> back to the default)
   useEffect(() => {
     const nb = bbox(pts)
     setRect({ w: nb.w, d: nb.d, ox: nb.x0, oy: nb.y0 }); setDia(Math.round(nb.w)); setJson(JSON.stringify(pts)); setJsonErr(false)
@@ -47,25 +47,25 @@ export default function BedShapeEditor({ value, onChange, disabled }) {
   return (
     <div className="bse" data-testid="bed-shape-editor">
       <div className="bse-modes">
-        {[['rect', '사각형'], ['circle', '원형'], ['custom', '커스텀']].map(([k, l]) => (
+        {[['rect', 'Rectangular'], ['circle', 'Circular'], ['custom', 'Custom']].map(([k, l]) => (
           <button key={k} type="button" className={mode === k ? 'on' : ''} disabled={disabled} onClick={() => setMode(k)}>{l}</button>
         ))}
       </div>
       {mode === 'rect' && (
         <div className="bse-grid">
-          <label>폭 <input type="number" min="1" value={rect.w} disabled={disabled} data-testid="bed-w"
+          <label>Width <input type="number" min="1" value={rect.w} disabled={disabled} data-testid="bed-w"
             onChange={e => commitRect({ ...rect, w: num(e.target.value) })} /> mm</label>
-          <label>깊이 <input type="number" min="1" value={rect.d} disabled={disabled} data-testid="bed-d"
+          <label>Depth <input type="number" min="1" value={rect.d} disabled={disabled} data-testid="bed-d"
             onChange={e => commitRect({ ...rect, d: num(e.target.value) })} /> mm</label>
-          <label>원점 X <input type="number" value={rect.ox} disabled={disabled}
+          <label>Origin X <input type="number" value={rect.ox} disabled={disabled}
             onChange={e => commitRect({ ...rect, ox: num(e.target.value) })} /></label>
-          <label>원점 Y <input type="number" value={rect.oy} disabled={disabled}
+          <label>Origin Y <input type="number" value={rect.oy} disabled={disabled}
             onChange={e => commitRect({ ...rect, oy: num(e.target.value) })} /></label>
         </div>
       )}
       {mode === 'circle' && (
         <div className="bse-grid">
-          <label>지름 <input type="number" min="1" value={dia} disabled={disabled} data-testid="bed-dia"
+          <label>Diameter <input type="number" min="1" value={dia} disabled={disabled} data-testid="bed-dia"
             onChange={e => commitDia(num(e.target.value))} /> mm</label>
         </div>
       )}

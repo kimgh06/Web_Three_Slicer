@@ -1,6 +1,6 @@
 // Stage-30 streaming golden guard: proves the per-layer STREAMING emission path (set_layer_sink →
 //  chunk callback + heap release per layer) reassembles to a g-code that is BYTE-IDENTICAL to the
-//  legacy BATCH path (result.gcode). This is the "출력 동일성 절대 조건" for the OOM streaming round.
+//  legacy BATCH path (result.gcode). This is the "absolute output-identity requirement" for the OOM streaming round.
 //  Runs the same three default-path cases as golden.mjs; for each, slices twice (batch, stream) and
 //  asserts the concatenated stream chunks == batch bytes. Also asserts stats parity (segments/filament).
 import createSlicer from '../engine/src/slicer_core.js'
@@ -76,7 +76,7 @@ const cases = [
 for (const [name, stl, p] of cases) {
   const b = batch(stl, p)
   const s = stream(stl, p)
-  eq(name, b.gcode, s.gcode)                              // 절대 조건: 스트리밍 조립 == 배치, byte-identical
+  eq(name, b.gcode, s.gcode)                              // absolute requirement: streamed assembly == batch, byte-identical
   if (!s.streamed) { fail++; console.log(`  FAIL: ${name} — stats.streamed not set (streaming path not taken)`) }
   approx(`${name}: filament stat parity`, b.stats.filament_mm, s.stats.filament_mm)
   approx(`${name}: segment stat parity`, b.stats.path_segments, s.stats.path_segments, 0)

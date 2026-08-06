@@ -1,19 +1,19 @@
-// S1 검증: support_threshold_angle 의 방향이 원본과 같은가.
-//  원본 detect_overhangs(SupportMaterial.cpp:1439): lower_layer_offset = layer_height / tan(threshold)
-//  툴팁: "값이 작을수록 서포트 없이 출력 가능한 오버행이 가팔라진다" = 임계각↑ → 서포트↑
-//  ※ 33단계 이전 버그판은 tan 이 분자라 방향이 반대였고 45°(tan=1)에서만 우연히 일치했다.
+// S1 verification: does support_threshold_angle point in the same direction as upstream.
+//  Upstream detect_overhangs (SupportMaterial.cpp:1439): lower_layer_offset = layer_height / tan(threshold)
+//  Tooltip: "the lower the value, the steeper an overhang can be while still printing without support" = higher threshold -> more support
+//  Note: the buggy version before stage 33 had tan in the numerator, so the direction was inverted and only matched by coincidence at 45° (tan=1).
 //
-// 픽스처 선정 근거(실측):
-//  - table.stl 은 오버행이 완전 수평(0°)이라 어떤 임계각에서도 걸려 판별력이 0.
-//  - 층당 오버행 띠가 슬리버 제거 열림(openR=line_width*0.6)보다 얇으면 지워진다 →
-//    경사 25° 이상은 임계각 80° 에서도 서포트가 생기지 않는다(현 커널 특성).
-//  - 그래서 완만한 경사 3종(8°/16°/20°)을 쓴다.
-//  33단계: 형태학 열림을 면적 필터로 교체한 뒤 발동 임계각이 **실제 경사각과 일치**하게 됐다
-//    (이전엔 열림이 얇은 띠를 지워 16° 원뿔이 θ=60°, 20° 원뿔이 θ=80° 에서야 발동 — 임계각 왜곡).
-//    이제 오버행 조건 θ > 경사각 이 그대로 성립하므로, 각 경사각을 사이에 두고 샘플링한다.
+// Why these fixtures (measured):
+//  - table.stl's overhang is perfectly horizontal (0°), so it triggers at any threshold and discriminates nothing.
+//  - If the per-layer overhang band is thinner than the sliver-removal opening (openR=line_width*0.6) it gets erased ->
+//    slopes of 25° or more produce no support even at a threshold of 80° (a property of the current kernel).
+//  - Hence three gentle slopes (8°/16°/20°).
+//  Stage 33: after replacing the morphological opening with an area filter, the triggering threshold now **matches the real slope angle**
+//    (previously the opening erased thin bands, so a 16° cone only triggered at θ=60° and a 20° cone at θ=80° — a distorted threshold).
+//    Now the overhang condition θ > slope angle holds directly, so we sample on both sides of each slope angle.
 import createSlicer from '../engine/src/slicer_core.js'
 
-// 역원뿔: 꼭짓점(z=0) → 반지름 R 밑면(z=H). 측면 경사각 = atan(H/R) (90°=수직).
+// Inverted cone: apex (z=0) -> a base of radius R (z=H). Side slope angle = atan(H/R) (90° = vertical).
 function coneTris(cx, cy, R, slopeDeg, seg = 64) {
   const H = R * Math.tan(slopeDeg * Math.PI / 180)
   const apex = [cx, cy, 0], topC = [cx, cy, H]
@@ -38,13 +38,13 @@ const base = {
   enable_support: true, support_style: 'grid', support_density: 0.15,
   support_top_z_distance: 0.2, support_xy_distance: 0.35, support_interface_top_layers: 2,
   bed_width: 220, bed_depth: 220,
-  // 이 테스트는 "임계각 → 오버행 검출" 의미론만 본다. 원본 default true 인 작은-오버행 제거는
-  //  매끄러운 원뿔의 층당 얇은 띠를 걸러내 각도 판별을 가리므로 끈다(제거 로직 자체는 별도 확인).
+  // This test only looks at the "threshold -> overhang detection" semantics. Small-overhang removal (default true upstream)
+  //  filters out the thin per-layer bands of a smooth cone and hides the angle behavior, so it is turned off (the removal logic itself is checked separately).
   support_remove_small_overhang: false,
 }
 const M = await createSlicer()
 
-// 툴패스 stride 8, 타입 오프셋 +3 (toolpath_gpu.js buildSegmentData 계약). type 5=서포트 base, 6=interface.
+// Toolpath stride 8, type offset +3 (the buildSegmentData contract in toolpath_gpu.js). type 5 = support base, 6 = interface.
 const supportSegments = (angle) => {
   const r = M.slice(stl, JSON.stringify({ ...base, support_threshold_angle: angle }), () => {})
   if (r.error) throw new Error(String(r.error))
@@ -56,19 +56,19 @@ const supportSegments = (angle) => {
   return seg
 }
 
-// 각 원뿔(8°/16°/20°)의 발동 임계각 사이를 고른 지점 — 단계마다 대상이 하나씩 늘어야 한다.
+// Points chosen between the triggering thresholds of each cone (8°/16°/20°) — one more target should qualify at each step.
 const ANGLES = [5, 12, 18, 25]
 const rows = ANGLES.map(a => ({ a, seg: supportSegments(a) }))
-for (const r of rows) console.log(`  θ=${String(r.a).padStart(2)}°  서포트 세그먼트 ${String(r.seg).padStart(6)}`)
+for (const r of rows) console.log(`  θ=${String(r.a).padStart(2)}°  support segments ${String(r.seg).padStart(6)}`)
 
 let fail = 0
 for (let i = 1; i < rows.length; i++) {
   if (rows[i].seg <= rows[i - 1].seg) {
-    console.log(`FAIL 계단 증가 위반: θ=${rows[i - 1].a}°(${rows[i - 1].seg}) → θ=${rows[i].a}°(${rows[i].seg})`)
+    console.log(`FAIL monotonic increase violated: θ=${rows[i - 1].a}°(${rows[i - 1].seg}) -> θ=${rows[i].a}°(${rows[i].seg})`)
     fail++
   }
 }
-if (rows[0].seg !== 0) { console.log(`FAIL 최저 임계각(10°)에서 서포트가 생성됨(${rows[0].seg}) — 과다 검출`); fail++ }
+if (rows[0].seg !== 0) { console.log(`FAIL support generated at the lowest threshold (10°) (${rows[0].seg}) — over-detection`); fail++ }
 
-console.log(fail ? `\nSUPPORT ANGLE TEST FAILED (${fail})` : '\nSUPPORT ANGLE TEST PASSED — 임계각↑ = 서포트↑ (원본 방향 정합)')
+console.log(fail ? `\nSUPPORT ANGLE TEST FAILED (${fail})` : '\nSUPPORT ANGLE TEST PASSED — higher threshold = more support (matches upstream direction)')
 process.exit(fail ? 1 : 0)

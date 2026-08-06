@@ -48,7 +48,7 @@
 #include <ostream>
 #include <functional>
 #include <assert.h>
-#include "Int128.hpp"  // WASM 패치: libslic3r/Int128.hpp → 로컬 복사본
+#include "Int128.hpp"  // WASM patch: libslic3r/Int128.hpp -> local copy
 
 #ifdef CLIPPERLIB_NAMESPACE_PREFIX
 namespace CLIPPERLIB_NAMESPACE_PREFIX {
@@ -105,7 +105,7 @@ inline IType Round(double val)
     return static_cast<IType>(v);
 }
 
-// WASM 패치: IntPoint operator==/!= 는 clipper.hpp 로 이동함 (헤더 템플릿에서 필요).
+// WASM patch: the IntPoint operator==/!= moved into clipper.hpp (needed by the header templates).
 
 //------------------------------------------------------------------------------
 // PolyTree methods ...

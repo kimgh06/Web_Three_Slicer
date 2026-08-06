@@ -1,5 +1,5 @@
-// 22단계 검증용: 대형(>150k 세그먼트) STL 생성 + 세그먼트 수 실측.
-// 데스크톱 프리뷰(libvgcode)급 볼류메트릭 렌더 부하를 재현하기 위한 고밀도 모델.
+// For stage-22 verification: generates a large (>150k segment) STL and measures the segment count.
+// A high-density model that reproduces desktop-preview (libvgcode) class volumetric render load.
 import createSlicer from '../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
 
@@ -13,15 +13,15 @@ function trisToSTL(tris){
   for(const t of tris){off+=12;for(const p of t){buf.writeFloatLE(p[0],off);buf.writeFloatLE(p[1],off+4);buf.writeFloatLE(p[2],off+8);off+=12}buf.writeUInt16LE(0,off);off+=2}
   return buf
 }
-// 고해상도 원기둥: 곡면 벽 = 레이어당 다수의 짧은 세그먼트(실사용 모델의 세그먼트 폭증 재현).
-// N각형 × wall_loops = 레이어당 벽 세그먼트, × 레이어수 → 15만+ 세그먼트.
+// High-resolution cylinder: the curved wall means many short segments per layer (reproducing the segment explosion of real models).
+// N-gon x wall_loops = wall segments per layer, x layer count -> 150k+ segments.
 function cylTris(cx,cy,r,h,n){
   const tris=[]; const top=[], bot=[]
   for(let i=0;i<n;i++){const a=2*Math.PI*i/n; top.push([cx+r*Math.cos(a),cy+r*Math.sin(a),h]); bot.push([cx+r*Math.cos(a),cy+r*Math.sin(a),0])}
   for(let i=0;i<n;i++){const j=(i+1)%n
-    tris.push([bot[i],bot[j],top[j]],[bot[i],top[j],top[i]])        // 옆면
-    tris.push([[cx,cy,h],top[i],top[j]])                            // 윗뚜껑
-    tris.push([[cx,cy,0],bot[j],bot[i]])                            // 아랫뚜껑
+    tris.push([bot[i],bot[j],top[j]],[bot[i],top[j],top[i]])        // side wall
+    tris.push([[cx,cy,h],top[i],top[j]])                            // top cap
+    tris.push([[cx,cy,0],bot[j],bot[i]])                            // bottom cap
   }
   return tris
 }

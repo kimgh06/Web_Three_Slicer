@@ -1,15 +1,15 @@
-// 3MF 파서 — three 의 ThreeMFLoader 를 대체한다.
-// 이유: ThreeMFLoader 는 **production extension**(`p:path` 로 외부 .model 파트를 참조)을 모른다.
-//  OrcaSlicer/BambuStudio/PrusaSlicer 가 저장한 3mf 는 거의 전부 이 방식이라(3D/3dmodel.model 은
-//  components 껍데기만, 실제 mesh 는 3D/Objects/*.model), 로더가 빈 Group 을 돌려주고 "3MF 메시 없음" 이 났다.
-// 우리는 삼각형만 필요하므로(재질·텍스처·색 무관) zip → .model XML → 삼각형 스트림으로 바로 간다.
-// XML 은 정규식으로 읽는다: 3mf 의 vertex/triangle/component/item 은 전부 속성만 있는 self-closing 태그이고
-//  object 는 중첩되지 않아 스캐너가 필요 없다. DOMParser 의존이 없어 node 에서도 그대로 테스트된다.
+// 3MF parser — replaces three's ThreeMFLoader.
+// Why: ThreeMFLoader does not understand the **production extension** (`p:path` referencing external .model parts).
+//  Nearly every 3mf written by OrcaSlicer/BambuStudio/PrusaSlicer uses it (3D/3dmodel.model holds only component
+//  shells, the real meshes live in 3D/Objects/*.model), so the loader returned an empty Group and "no 3MF mesh" errors.
+// We only need triangles (materials/textures/colors are irrelevant), so we go straight from zip -> .model XML -> triangle stream.
+// The XML is read with regexes: vertex/triangle/component/item in 3mf are all attribute-only self-closing tags and
+//  objects do not nest, so no scanner is needed. With no DOMParser dependency it is testable under node as-is.
 import { unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 
 const IDENT = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
 
-// 3mf transform = 4x3 행우선(행벡터 규약, 마지막 행이 이동). combine(a,b) = a 먼저, 그다음 b.
+// A 3mf transform is 4x3 row-major (row-vector convention, translation in the last row). combine(a,b) = a first, then b.
 function mul(a, b) {
   const o = new Array(12)
   for (let r = 0; r < 4; r++) {
@@ -42,7 +42,7 @@ function parseMesh(body) {
   let m
   while ((m = VERT_FAST.exec(body))) verts.push(+m[1], +m[2], +m[3])
   if (!verts.length) {
-    // 속성 순서가 다른 writer 대비 (x/y/z 순서 무관)
+    // Tolerates writers with a different attribute order (x/y/z order irrelevant)
     for (const t of body.match(/<vertex\b[^>]*>/g) || []) verts.push(+attr(t, 'x'), +attr(t, 'y'), +attr(t, 'z'))
   }
   if (verts.length < 9) return null
@@ -57,7 +57,7 @@ function parseMesh(body) {
   return { verts, tris }
 }
 
-// 하나의 .model XML → { objects: Map(id → {mesh|components}), items: [{objectid, path, transform}] }
+// One .model XML -> { objects: Map(id -> {mesh|components}), items: [{objectid, path, transform}] }
 function parseModelXml(xml) {
   const objects = new Map()
   const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
@@ -91,11 +91,11 @@ function normPath(p) {
 }
 
 /**
- * 3MF(ArrayBuffer|Uint8Array) → [{name, tris: Float32Array(N*9)}]  (z-up mm, build 변환 베이크됨)
- * build item 하나 = 오브젝트 하나. item 이 없으면 mesh 를 가진 최상위 object 를 전부 쓴다.
+ * 3MF (ArrayBuffer|Uint8Array) -> [{name, tris: Float32Array(N*9)}]  (z-up mm, build transform baked in)
+ * One build item = one object. When there are no items, every top-level object with a mesh is used.
  */
 export function parse3MF(buffer, baseName = 'model') {
-  // TypedArray/Buffer 는 풀링된 ArrayBuffer 위에 얹혀 있을 수 있어 offset/length 를 반드시 살린다.
+  // TypedArray/Buffer may sit on a pooled ArrayBuffer, so offset/length must be preserved.
   const bytes = ArrayBuffer.isView(buffer)
     ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
     : new Uint8Array(buffer)
@@ -114,7 +114,7 @@ export function parse3MF(buffer, baseName = 'model') {
     return parsed
   }
 
-  // 루트 파트: _rels/.rels 의 3dmodel 관계 → 없으면 관례 경로
+  // Root part: the 3dmodel relationship in _rels/.rels -> the conventional path when absent
   let rootPath = '3D/3dmodel.model'
   const rels = files.get('_rels/.rels')
   if (rels) {
@@ -123,10 +123,10 @@ export function parse3MF(buffer, baseName = 'model') {
     }
   }
   const root = getModel(rootPath)
-  if (!root) throw new Error(`3MF 루트 모델 없음: ${rootPath}`)
+  if (!root) throw new Error(`3MF root model not found: ${rootPath}`)
 
   const out = []
-  // object 를 재귀 전개 → 삼각형을 tris 배열에 push. depth 로 순환 참조 차단.
+  // Expand objects recursively -> push triangles into the tris array. depth guards against circular references.
   const emit = (objectid, path, xf, sink, depth) => {
     if (depth > 16) return
     const model = getModel(path)

@@ -1,10 +1,10 @@
-// 25단계 S5.1: toggle-rules 부분 번역 — 원본 C++ toggle_options 조건식(enable_if) → JS.
-//  범위: 뷰어가 다루는 키에 관련된 규칙 중, 아래 하드코딩 로컬로 "완전히" 번역 가능한 것만 적용.
-//  번역 불가(모르는 로컬/enum 비교 등)는 fail-open(활성 유지) — 잘못된 비활성 방지(정직한 부분 구현).
-//  전체 907키·231규칙 완역은 범위 외(README 기록). 참조: toggle-rules.json 의 toggle_print_fff_options.locals.
+// Stage 25 S5.1: partial translation of toggle-rules — upstream C++ toggle_options conditions (enable_if) -> JS.
+//  Scope: among the rules touching keys the viewer handles, only those "fully" translatable with the hardcoded locals below.
+//  Untranslatable ones (unknown locals, enum comparisons, …) fail open (stay enabled) — avoids wrongly disabling (honest partial implementation).
+//  Translating all 907 keys / 231 rules is out of scope (noted in the README). Reference: toggle_print_fff_options.locals in toggle-rules.json.
 import { toggleRules as toggles, schema } from './data.js'
 
-// 설정값 접근기 (settings 맵 우선, 없으면 스키마 default). 퍼센트("15%")는 숫자로.
+// Settings value accessor (settings map first, schema default otherwise). Percentages ("15%") become numbers.
 export function makeCfg(settings) {
   const val = k => {
     let v = settings ? settings[k] : undefined
@@ -20,7 +20,7 @@ export function makeCfg(settings) {
   }
 }
 
-// 원본 locals 를 인라인 번역(뷰어 관련 조건만). 각 값은 boolean.
+// Upstream locals translated inline (viewer-related conditions only). Each value is a boolean.
 function makeLocals(cfg) {
   const have_raft = cfg.int('raft_layers') > 0
   const has_spiral_vase = cfg.bool('spiral_mode')
@@ -41,24 +41,24 @@ function makeLocals(cfg) {
   }
 }
 
-// enable_if(첫 콤마부) 를 boolean 으로 평가. 완전 번역 불가하면 null(=활성 유지).
+// Evaluates enable_if (up to the first comma) to a boolean. Returns null (= stays enabled) when not fully translatable.
 export function evalEnableIf(expr, locals, cfg) {
   let s = String(expr).split(',')[0].trim()
   if (!s) return null
-  // 직접 config 접근 패턴 → 값 치환
+  // Direct config access pattern -> value substitution
   s = s.replace(/config->opt_bool\(\s*"([^"]+)"\s*\)/g, (_, k) => cfg.bool(k) ? 'true' : 'false')
   s = s.replace(/config->opt_int\(\s*"([^"]+)"\s*\)/g, (_, k) => String(cfg.int(k)))
   s = s.replace(/config->opt_float\(\s*"([^"]+)"\s*\)/g, (_, k) => String(cfg.float(k)))
-  // 알려진 로컬 치환(긴 이름 먼저 — 부분매칭 방지)
+  // Substitute known locals (longest name first — prevents partial matches)
   for (const name of Object.keys(locals).sort((a, b) => b.length - a.length))
     s = s.replace(new RegExp('\\b' + name + '\\b', 'g'), locals[name] ? 'true' : 'false')
-  // 남은 문자열이 안전한 boolean 식인지(true/false/숫자/연산자/괄호만) — 아니면 미지 → null
+  // Check the remaining string is a safe boolean expression (only true/false/numbers/operators/parens) — otherwise unknown -> null
   const stripped = s.replace(/\btrue\b|\bfalse\b/g, '1')
   if (!/^[\s()!<>=&|0-9.]*$/.test(stripped)) return null
   try { return !!Function('"use strict";return (' + s + ')')() } catch { return null }
 }
 
-// 현재 설정에서 비활성 키 맵 { key: 조건식 }. 조건이 명확히 false 인 규칙만.
+// Map of keys disabled under the current settings { key: condition }. Only rules that are unambiguously false.
 export function disabledKeys(cfg) {
   const locals = makeLocals(cfg)
   const groups = ['toggle_print_fff_options', 'toggle_filament_options', 'toggle_printer_options',

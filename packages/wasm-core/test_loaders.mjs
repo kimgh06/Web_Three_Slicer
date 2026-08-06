@@ -1,10 +1,10 @@
-// 26단계 검증(node): STL/OBJ/PLY 로드 → modelPos → 바이너리 STL → 커널 슬라이스 → G-code.
-//  3MF/AMF 는 DOMParser 의존(브라우저) → playwright 에서 검증.
+// Stage 26 verification (node): load STL/OBJ/PLY -> modelPos -> binary STL -> kernel slice -> G-code.
+//  3MF/AMF depend on DOMParser (browser) -> verified under playwright.
 import { readFileSync } from 'node:fs'
 import createSlicer from '../engine/src/slicer_core.js'
 import { loadModel, SUPPORTED_EXT, fileExt } from '../viewer/src/model_loaders.js'
 
-function modelToSTL(pos) {   // N*9 z-up model → 바이너리 STL
+function modelToSTL(pos) {   // N*9 z-up model -> binary STL
   const nTri = pos.length / 9
   const buf = Buffer.alloc(84 + nTri * 50); buf.writeUInt32LE(nTri, 80)
   let off = 84, vi = 0

@@ -37,10 +37,10 @@
 #include <inttypes.h>
 #include <functional>
 
-// WASM 미니 커널 패치 (트랙 C 1단계): Eigen / oneTBB 의존 제거.
-//  - IntPoint / DoublePoint: Eigen::Matrix → 최소 POD 구조체 (.x()/.y() lvalue/rvalue 접근 유지)
+// WASM mini kernel patch (track C, stage 1): removing the Eigen / oneTBB dependency.
+//  - IntPoint / DoublePoint: Eigen::Matrix -> a minimal POD struct (keeping .x()/.y() lvalue/rvalue access)
 //  - Allocator: tbb::scalable_allocator → std::allocator
-// clipper.cpp 는 무수정. 좌표 접근은 전부 .x()/.y() 이고 .z() 는 CLIPPERLIB_USE_XYZ(OFF) 가드됨.
+// clipper.cpp is unmodified. All coordinate access goes through .x()/.y(), and .z() is guarded by CLIPPERLIB_USE_XYZ (OFF).
 
 #define CLIPPER_VERSION "6.2.6"
 
@@ -100,7 +100,7 @@ enum PolyFillType { pftEvenOdd, pftNonZero, pftPositive, pftNegative };
   static constexpr cInt const hiRange = 0x3FFFFFFFFFFFFFFFLL;
 #endif // CLIPPERLIB_INT32
 
-// --- WASM 패치: Eigen 없는 최소 포인트 타입 (2D, .x()/.y() 접근자) ---
+// --- WASM patch: a minimal Eigen-free point type (2D, with .x()/.y() accessors) ---
 struct IntPoint {
   cInt m_x, m_y;
   IntPoint() : m_x(0), m_y(0) {}
@@ -111,8 +111,8 @@ struct IntPoint {
   const cInt& y() const { return m_y; }
 };
 
-// WASM 패치: 원래 clipper.cpp 에 있던 IntPoint 비교 연산자를 헤더로 이동
-// (헤더 내 AddPaths 템플릿이 == 를 정의 시점에 필요로 함). Z 좌표는 비교 안 함(2D).
+// WASM patch: the IntPoint comparison operators originally in clipper.cpp moved into the header
+// (the AddPaths template in the header needs == at definition time). The Z coordinate is not compared (2D).
 inline bool operator==(const IntPoint &l, const IntPoint &r) { return l.x() == r.x() && l.y() == r.y(); }
 inline bool operator!=(const IntPoint &l, const IntPoint &r) { return l.x() != r.x() || l.y() != r.y(); }
 
@@ -128,7 +128,7 @@ struct DoublePoint {
 
 //------------------------------------------------------------------------------
 
-// --- WASM 패치: tbb::scalable_allocator → std::allocator ---
+// --- WASM patch: tbb::scalable_allocator -> std::allocator ---
 template<typename BaseType>
 using Allocator = std::allocator<BaseType>;
 using Path      = std::vector<IntPoint, Allocator<IntPoint>>;

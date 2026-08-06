@@ -10,10 +10,10 @@
 // This TU lives INSIDE treesupport_port/libslic3r/ so every Slic3r include below is file-relative
 // (resolves to the port-local facade / real headers) exactly like the Support/*.cpp — the em++ FS
 // sandbox does not reliably honor -I into the port tree, but file-relative includes always resolve.
-// WP2: generate_normal() 추가 — 같은 파사드 위에서 원본 PrintObjectSupportMaterial(SupportMaterial.cpp
-//  포트)을 구동한다. 파사드 구성은 build_facade() 로 공용화(tree/normal 이 config 의 type/style 만 다름).
+// WP2: generate_normal() added — it drives the upstream PrintObjectSupportMaterial (a port of SupportMaterial.cpp)
+//  on the same facade. Facade construction is shared via build_facade() (tree/normal differ only in the config type/style).
 #include "../../treesupport_bridge.h"   // file-relative -> wasm-core/treesupport_bridge.h (plain types)
-#include <tbb/stub_parallel.h>          // (WP-tbb) generate_normal 한정 병렬 허용 스코프 + 실진행 카운터
+#include <tbb/stub_parallel.h>          // (WP-tbb) parallel-capable scope limited to generate_normal + the real progress counter
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include <cstdint>
@@ -32,7 +32,7 @@ unsigned long cancel_addr() { return (unsigned long)(uintptr_t)&tbb_stub::cancel
 #include "Surface.hpp"
 #include "selector_state.hpp"   // (stage 20) painted enforcer/blocker its from the selector (port world)
 #include "Support/TreeSupport.hpp"
-#include "Support/SupportMaterial.hpp"  // WP2: 원본 normal(grid/snug) 서포트
+#include "Support/SupportMaterial.hpp"  // WP2: upstream normal (grid/snug) support
 
 using namespace Slic3r;
 
@@ -61,9 +61,9 @@ void flatten_entity(const ExtrusionEntity *ee, std::vector<treesupport_bridge::L
     if (const auto *path = dynamic_cast<const ExtrusionPath*>(ee)) {
         treesupport_bridge::Line ln;
         ln.width      = double(path->width);
-        ln.role       = int(path->role());        // WP3: base(14)/interface(15)/ironing(8) 구분 보존
-        ln.height     = double(path->height);     // WP3: 원본 압출 높이(브리징 접촉층 등에서 레이어높이와 다름)
-        ln.mm3_per_mm = path->mm3_per_mm;         // WP3: 원본 부피 유량 → 커널이 E 를 원본 그대로 재현 가능
+        ln.role       = int(path->role());        // WP3: preserves the base(14)/interface(15)/ironing(8) distinction
+        ln.height     = double(path->height);     // WP3: upstream extrusion height (differs from the layer height on bridging contact layers, etc.)
+        ln.mm3_per_mm = path->mm3_per_mm;         // WP3: upstream volumetric flow -> lets the kernel reproduce E exactly as upstream
         ln.pts.reserve(path->polyline.points.size());
         // ExtrusionPath::polyline is a Polyline3 (points carry Z); take X/Y only.
         for (const auto &pt : path->polyline.points) {
@@ -75,7 +75,7 @@ void flatten_entity(const ExtrusionEntity *ee, std::vector<treesupport_bridge::L
     }
 }
 
-// mm 링 목록 → scaled Polygons (3점 미만 링 무시)
+// List of mm rings -> scaled Polygons (rings with fewer than 3 points are ignored)
 Polygons rings_to_polys(const std::vector<treesupport_bridge::Ring> &rings)
 {
     Polygons polys;
@@ -89,8 +89,8 @@ Polygons rings_to_polys(const std::vector<treesupport_bridge::Ring> &rings)
     return polys;
 }
 
-// WP2: 공용 파사드 빌더 — config(공통부)/slicing_params/Layer 그래프/페인트 facets 까지.
-//  support_type/support_style 및 스타일별 config 는 각 진입점이 설정한다.
+// WP2: shared facade builder — config (common part), slicing_params, the Layer graph and the painted facets.
+//  support_type/support_style and the style-specific config are set by each entry point.
 void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
                   const std::vector<std::vector<treesupport_bridge::Ring>> &object_slices_mm,
                   const std::vector<double> &layer_print_z_mm,
@@ -104,21 +104,21 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
     po.m_config.enable_support.value = true;
     po.m_config.layer_height.value   = P.layer_height_mm;
     po.m_config.support_threshold_angle.value = int(P.support_threshold_angle);
-    if (P.support_line_width_mm > 0) {   // (19단계) explicit support extrusion width → support flow → per-path width
+    if (P.support_line_width_mm > 0) {   // (stage 19) explicit support extrusion width -> support flow -> per-path width
         po.m_config.support_line_width.value = P.support_line_width_mm;
         po.m_config.support_line_width.percent = false;
     }
-    if (P.line_width_mm > 0) {           // WP1: lslices_extrudable 얇은영역 필터 + auto-threshold flow 폴백 활성화
+    if (P.line_width_mm > 0) {           // WP1: enables the lslices_extrudable thin-region filter and the auto-threshold flow fallback
         po.m_config.line_width.value = P.line_width_mm;
         po.m_config.line_width.percent = false;
     }
-    // WP1: 이전에 파싱만 되고 버려지던 4개 파라미터 + z/xy gap 계열 배선 (원본 config 키 그대로)
+    // WP1: wires up the 4 parameters that used to be parsed and discarded, plus the z/xy gap family (upstream config key names kept)
     po.m_config.support_top_z_distance.value        = P.support_top_z_distance;
     po.m_config.support_bottom_z_distance.value     = P.support_bottom_z_distance;
     po.m_config.support_object_xy_distance.value    = P.support_xy_distance;
     po.m_config.support_object_first_layer_gap.value= P.first_layer_gap_mm;
     po.m_config.support_interface_top_layers.value  = P.interface_top_layers;
-    po.m_config.support_interface_bottom_layers.value = P.interface_bottom_layers; // -1 => top 과 동일(원본 규약)
+    po.m_config.support_interface_bottom_layers.value = P.interface_bottom_layers; // -1 => same as top (upstream convention)
     po.m_config.support_on_build_plate_only.value   = P.on_build_plate_only;
     po.m_config.support_angle.value                 = P.support_angle_deg;
     po.m_config.support_interface_spacing.value     = P.interface_spacing_mm;
@@ -136,7 +136,7 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
         : (P.base_pattern == "lightning")        ? smpLightning
         : (P.base_pattern == "none")             ? smpNone
         :                                          smpDefault;
-    // WP1: 트리 형상 키 (TreeSupportCommon.hpp:79~95 TreeSupportSettings 가 소비 — normal 경로 무해)
+    // WP1: tree shape keys (consumed by TreeSupportSettings, TreeSupportCommon.hpp:79~95 — harmless on the normal path)
     po.m_config.tree_support_branch_angle_organic.value    = P.branch_angle_deg;
     po.m_config.tree_support_angle_slow.value              = P.angle_slow_deg;
     po.m_config.tree_support_branch_diameter_organic.value = P.branch_diameter_mm;
@@ -145,28 +145,28 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
     po.m_config.tree_support_tip_diameter.value            = P.tip_diameter_mm;
     po.m_config.tree_support_top_rate.value                = P.top_rate_pct;
     po.m_config.tree_support_wall_count.value              = P.wall_count;
-    // 비-organic(slim/strong/hybrid) 경로가 읽는 쌍둥이 키(TreeSupport.cpp:651/2657/3405)도 같은 값으로 배선
+    // The twin keys read by the non-organic (slim/strong/hybrid) path (TreeSupport.cpp:651/2657/3405) get the same values
     po.m_config.tree_support_branch_angle.value    = P.branch_angle_deg;
     po.m_config.tree_support_branch_diameter.value = P.branch_diameter_mm;
     po.m_config.tree_support_branch_distance.value = P.branch_distance_mm;
-    // WP2: normal 경로 전용 키 (tree 경로 무해 — organic 은 미소비)
+    // WP2: keys used only by the normal path (harmless for tree — organic never reads them)
     po.m_config.support_expansion.value             = P.support_expansion_mm;
     po.m_config.bridge_no_support.value             = P.bridge_no_support;
     po.m_config.support_remove_small_overhang.value = P.remove_small_overhang;
     po.m_config.support_threshold_overlap.value     = P.threshold_overlap_pct;
     po.m_config.support_threshold_overlap.percent   = true;
 
-    // 31단계: 커널이 모델을 원점 중심(bbox center=0)으로 넘긴다(작은 좌표=안전 영역). printable_area 를 [0,bed]
-    //  양수 사분면으로 두면 TreeSupport 의 m_machine_border 클립(intersection_ex, TreeSupport.cpp:2188/2193/2197)이
-    //  모델의 음수-X/Y 절반 서포트를 통째로 잘라 "한쪽만 서포트" 버그가 난다. 베드를 **원점 중심**([-bed/2,bed/2])으로
-    //  둬 원점중심 모델이 온전히 안에 들어오게 한다(대칭 모델 → 좌우 대칭 서포트).
+    // Stage 31: the kernel hands over a model centered on the origin (bbox center = 0; small coordinates = the safe zone). Leaving printable_area in the
+    //  positive quadrant [0,bed] makes TreeSupport's m_machine_border clip (intersection_ex, TreeSupport.cpp:2188/2193/2197)
+    //  cut away all support on the model's negative X/Y half — the "support on one side only" bug. So the bed is placed **centered on the origin**
+    //  ([-bed/2,bed/2]) and an origin-centered model fits entirely inside (a symmetric model -> symmetric support).
     const double hw = P.bed_width_mm * 0.5, hd = P.bed_depth_mm * 0.5;
     pr.m_config.printable_area.values  = { Vec2d(-hw,-hd), Vec2d(hw,-hd), Vec2d(hw,hd), Vec2d(-hw,hd) };
     pr.m_config.nozzle_diameter.values = { P.nozzle_mm };
-    pr.m_config.printable_height.value = P.printable_height_mm;   // WP1: BuildVolume 높이 (이전엔 기본 100mm 고정)
-    pr.m_config.independent_support_layer_height.value = P.independent_support_layer_height; // WP1: 갭 양자화 스위치
-    // 33단계: 경로 단순화 허용오차 배선. TreeSupportCommon.hpp:56 이 이 값을 TreeSupportSettings::resolution
-    //  으로 받아 TreeSupport3D 의 polygons_simplify 에 쓴다. 미설정 시 PrintConfig 기본 0.01 이 적용된다.
+    pr.m_config.printable_height.value = P.printable_height_mm;   // WP1: BuildVolume height (previously hardcoded to 100mm)
+    pr.m_config.independent_support_layer_height.value = P.independent_support_layer_height; // WP1: gap quantization switch
+    // Stage 33: wires up the path simplification tolerance. TreeSupportCommon.hpp:56 takes this as TreeSupportSettings::resolution
+    //  and uses it in TreeSupport3D's polygons_simplify. When unset, the PrintConfig default of 0.01 applies.
     if (P.resolution_mm > 0.0) pr.m_config.resolution.value = P.resolution_mm;
 
     PrintInstance inst; inst.print_object = &po; inst.shift = Point(0,0);
@@ -177,15 +177,15 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
     po.m_slicing_params.layer_height             = lh;
     po.m_slicing_params.min_layer_height         = lh;
     po.m_slicing_params.max_layer_height         = lh;
-    po.m_slicing_params.max_suport_layer_height  = lh;   // 원본 create_from_config: 서포트 있으면 max_layer_height
-    // (19단계 z 정합→WP1 확장) 커널 z 그리드가 first_layer_height + idx*layer_height 이므로 첫층 높이를 그대로
-    // 반영한다(원본 initial_layer_print_height 대응). first_layer_height 미전달(0)이면 기존과 동일하게 lh.
+    po.m_slicing_params.max_suport_layer_height  = lh;   // upstream create_from_config: max_layer_height when support is enabled
+    // (stage-19 z alignment -> extended in WP1) The kernel z grid is first_layer_height + idx*layer_height, so the first layer height is
+    // carried over verbatim (matching upstream initial_layer_print_height). With first_layer_height unset (0) it stays lh as before.
     po.m_slicing_params.first_print_layer_height  = flh;
     po.m_slicing_params.first_object_layer_height = flh;
     po.m_slicing_params.object_print_z_min       = 0.0;
-    // ---- WP1: 원본 SlicingParameters::create_from_config (Slicing.cpp:80~190) 의 갭 수식 이식 ----
-    // 이전에는 gap_support_object / gap_object_support 가 0 으로 남아 z_distance_top_layers=0
-    // (서포트가 모델에 밀착)이었다. zero-gap 인터페이스 검출 + independent 여부에 따른 레이어 양자화까지 동일.
+    // ---- WP1: port of the gap formulas from upstream SlicingParameters::create_from_config (Slicing.cpp:80~190) ----
+    // Previously gap_support_object / gap_object_support stayed 0, giving z_distance_top_layers=0
+    // (support glued to the model). Zero-gap interface detection and the layer quantization based on independent mode are ported identically.
     {
         const double top_gap    = P.support_top_z_distance;
         const double bottom_gap = P.support_bottom_z_distance;
@@ -196,7 +196,7 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
         po.m_slicing_params.zero_gap_interface_bottom = (bot_iface_layers > 0) && (bottom_gap == 0.0 || zero_topZ);
         auto quantize = [&](double gap) {
             if (P.independent_support_layer_height) return gap;
-            return std::round(gap / lh + EPSILON) * lh;   // 원본: round(gap/layer_height + EPSILON)*layer_height
+            return std::round(gap / lh + EPSILON) * lh;   // upstream: round(gap/layer_height + EPSILON)*layer_height
         };
         po.m_slicing_params.gap_support_object = po.m_slicing_params.zero_gap_interface_top    ? 0.0 : quantize(top_gap);
         po.m_slicing_params.gap_object_support = po.m_slicing_params.zero_gap_interface_bottom ? 0.0 : quantize(bottom_gap);
@@ -208,10 +208,10 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
         const double pz = layer_print_z_mm[i];
         Layer *L = po.add_layer(int(i), (i == 0 ? flh : lh), pz, pz - (i == 0 ? flh : lh) * 0.5);
         L->lower_layer = prev;
-        if (prev) prev->upper_layer = L;   // WP1: 원본 레이어 그래프와 동일하게 상방 링크도 연결
-        // WP1: LayerRegion 1개 연결 — support_threshold_angle=0("auto")일 때 TreeSupport3D.cpp:251~256 이
-        //  lower_layer.regions() 의 외벽 flow 로 임계 오프셋을 계산한다. 이전엔 regions 가 비어 0/0=NaN.
-        //  단일 리전 커널이므로 공유 PrintRegion 하나면 원본과 동치(외벽폭은 line_width 폴백으로 산출).
+        if (prev) prev->upper_layer = L;   // WP1: link upward too, exactly like the upstream layer graph
+        // WP1: attach one LayerRegion — when support_threshold_angle=0 ("auto"), TreeSupport3D.cpp:251~256 computes the
+        //  threshold offset from the outer wall flow of lower_layer.regions(). Previously regions was empty, giving 0/0=NaN.
+        //  This is a single-region kernel, so one shared PrintRegion is equivalent to upstream (the outer wall width comes from the line_width fallback).
         L->add_region(&reg);
         Polygons polys = rings_to_polys(object_slices_mm[i]);
         for (const Polygon &p : polys)
@@ -226,7 +226,7 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
         prev = L;
     }
     if (bbox_init) po.m_bbox = BoundingBox(Point(minx, miny), Point(maxx, maxy));
-    if (N > 0) {   // WP1: 원본 create_from_config 의 object_print_z_max(오브젝트 높이) 대응
+    if (N > 0) {   // WP1: matches object_print_z_max (object height) in upstream create_from_config
         po.m_slicing_params.object_print_z_max = layer_print_z_mm[N-1];
         po.m_slicing_params.valid = true;
     }
@@ -236,7 +236,7 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
     po.set_custom_facets(selector_enforcer_its(), selector_blocker_its());
 }
 
-// SupportLayer::support_fills → LayerOut 목록 (tree/normal 공용)
+// SupportLayer::support_fills -> list of LayerOut (shared by tree/normal)
 std::vector<treesupport_bridge::LayerOut> collect_output(const PrintObject &po)
 {
     std::vector<treesupport_bridge::LayerOut> result;
@@ -264,7 +264,7 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
     Print pr; PrintRegion reg; PrintObject po;
     build_facade(pr, reg, po, object_slices_mm, layer_print_z_mm, P);
     po.m_config.support_type.value   = P.support_auto ? stTreeAuto : stTree;  // manual => only painted enforcers
-    po.m_config.support_style.value  =            // WP1: 스타일 하드코딩 해제 (slim/strong/hybrid 는 비-organic 경로)
+    po.m_config.support_style.value  =            // WP1: style is no longer hardcoded (slim/strong/hybrid go down the non-organic path)
           (P.tree_style == "slim")   ? smsTreeSlim
         : (P.tree_style == "strong") ? smsTreeStrong
         : (P.tree_style == "hybrid") ? smsTreeHybrid
@@ -289,14 +289,14 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
     po.m_config.support_type.value  = P.support_auto ? stNormalAuto : stNormal;
     po.m_config.support_style.value = (P.normal_style == "snug") ? smsSnug : smsGrid;
 
-    // WP2: LayerRegion 표면 데이터 주입 — SupportMaterial 이 소비하는 최소 표면:
-    //  · raw_slices (sharp-tail 검출), · slices 의 stTop (bottom contact 검출) / stBottom / stInternal 파티션.
-    //  perimeters/unsupported_bridge_edges 는 미공급 → bridge_no_support 의 브리지 검출은 no-op (문서화된 근사;
-    //  커널 페리미터를 ExtrusionEntity 로 재구성하는 어댑터가 생기면 승격).
-    // (WP-tbb) grid/snug 원본 서포트만 tbb 스텁 실병렬 허용(tree 는 concurrent_* 스텁 비안전으로 직렬).
-    //  스코프를 표면 주입 루프 앞으로 확장 — facade 구축도 병렬 수혜.
+    // WP2: inject LayerRegion surface data — the minimal surfaces SupportMaterial consumes:
+    //  · raw_slices (sharp-tail detection), · the stTop (bottom contact detection) / stBottom / stInternal partitions of slices.
+    //  perimeters/unsupported_bridge_edges are not supplied -> bridge_no_support's bridge detection is a no-op (a documented approximation;
+    //  it can be promoted once an adapter reconstructs kernel perimeters as ExtrusionEntity).
+    // (WP-tbb) Only the upstream grid/snug support may use the real-parallel tbb stubs (tree stays serial because the concurrent_* stubs are unsafe).
+    //  The scope is extended to before the surface injection loop — facade construction benefits from the parallelism too.
     tbb_stub::ParallelScope par;
-    // [병렬] 표면 파티션은 레이어 독립(자기 Layer/LayerRegion 만 쓰기) — facade 0.43s 실측의 주성분.
+    // [parallel] Surface partitioning is per-layer independent (it only writes its own Layer/LayerRegion) — the main component of the measured 0.43s facade time.
     tbb::parallel_for(tbb::blocked_range<size_t>(0, N), [&](const tbb::blocked_range<size_t>& __r) {
     for (size_t i = __r.begin(); i < __r.end(); ++i) {
         Layer *L = po.get_layer(int(i));

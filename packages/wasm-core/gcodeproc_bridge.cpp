@@ -98,10 +98,10 @@ void estimate_begin(const Limits& lim) {
     g_gp->apply_config(cfg);
     g_fil_total = 0.0; g_fil_e_abs = 0.0; g_fil_relative = false;
 }
-// ponytail: 무브 상주 캡 — GCodeProcessor 는 무브당 ~100B 를 result.moves 에 상주시키고(4.45M 무브
-//  실측 시 추정 단독 +1.04GB), 블록이 절대 인덱스로 시간을 역기입해 중간 드레인이 불가하다.
-//  캡 초과 시 추정기를 통째로 해제 → 스트리밍은 "stream-notime", 배치(mt 오버랩)는 기존
-//  transcribed 폴백으로 자연 강등. 대형 모델 시간추정을 살리려면 무브 증분 집계 포트 수술이 필요.
+// ponytail: resident move cap — GCodeProcessor keeps ~100B per move resident in result.moves (measured at 4.45M moves,
+//  an estimated +1.04GB on its own), and blocks write times back by absolute index, so draining midway is impossible.
+//  Past the cap the estimator is released entirely -> streaming degrades to "stream-notime" and batch (mt overlap) falls back
+//  to the existing transcribed path. Reviving time estimation for large models needs port surgery toward incremental move aggregation.
 static const size_t MOVES_CAP = 2000000;
 
 void estimate_feed(const std::string& chunk) {

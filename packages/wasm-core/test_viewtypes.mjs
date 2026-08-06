@@ -1,4 +1,4 @@
-// 25단계 검증(CPU): 뷰 타입 컬러링(computeColors) — 6종 무결성 + 속도/폭 범위 + 히트맵 팔레트.
+// Stage 25 verification (CPU): view-type coloring (computeColors) — integrity of all 6 + speed/width ranges + heatmap palette.
 import createSlicer from '../engine/src/slicer_core.js'
 import { buildSegmentData, computeColors, VIEW_TYPES, DEFAULT_RANGES_COLORS } from '../viewer/src/toolpath_gpu.js'
 function boxTris(ox,oy,oz,sx,sy,sz){const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz]);const q=(a,b,cc,d)=>[[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]];return[...q(0,1,2,3),...q(4,5,6,7),...q(0,1,5,4),...q(1,2,6,5),...q(2,3,7,6),...q(3,0,4,7)]}

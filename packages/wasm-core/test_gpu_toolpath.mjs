@@ -1,5 +1,5 @@
-// 24단계 검증(CPU 측): buildSegmentData 가 원본 libvgcode 데이터 모델을 올바로 생성하는지.
-//  NaN/거대좌표 없음 · 폭 차이 보존 · 마이터 각도(연결 벽) 존재 · 레이어 프리픽스 == 총합.
+// Stage 24 verification (CPU side): does buildSegmentData produce the upstream libvgcode data model correctly.
+//  No NaN or huge coordinates · width differences preserved · miter angles present on connected walls · layer prefix == total.
 import createSlicer from '../engine/src/slicer_core.js'
 import { buildSegmentData } from '../viewer/src/toolpath_gpu.js'
 function boxTris(ox,oy,oz,sx,sy,sz){const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz]);const q=(a,b,cc,d)=>[[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]];return[...q(0,1,2,3),...q(4,5,6,7),...q(0,1,5,4),...q(1,2,6,5),...q(2,3,7,6),...q(3,0,4,7)]}
@@ -10,7 +10,7 @@ const M=await createSlicer()
 const slice=(stl,p)=>M.slice(new Uint8Array(stl),JSON.stringify(p),()=>{})
 let fail=0; const ok=(c,m)=>{console.log((c?'  ok: ':'  FAIL: ')+m);if(!c)fail++}
 
-// ① cube — 무결성 + 프리픽스
+// (1) cube — integrity + prefix
 const rc=slice(trisToSTL(boxTris(0,0,0,20,20,20)),base)
 const dc=buildSegmentData(rc.layers, base.line_width)
 console.log(`  cube: layers=${dc.layerCount} nV=${dc.nV} nSeg=${dc.nSeg} nTrav=${dc.nTrav} maxAbs=${dc.maxAbs.toFixed(1)}`)
@@ -24,24 +24,24 @@ ok(dc.travelPrefix[dc.layerCount] === dc.nTrav, 'travelPrefix[L] == nTrav')
 let idOk=true; for(let s=0;s<dc.nSeg;s++){const a=dc.segIndex[s*4]; if(a+1>=dc.nV) idOk=false}
 ok(idOk, 'every segment id_a+1 within vertex range (shader id_b=id_a+1 safe)')
 
-// ② 마이터 조인: 연결된 벽에서 non-zero 각도 존재
+// (2) Miter joins: connected walls have non-zero angles
 let nzAngle=0, maxAngle=0; for(let i=0;i<dc.nV;i++){const a=Math.abs(dc.hwa[i*4+2]); if(a>1e-3)nzAngle++; if(a>maxAngle)maxAngle=a}
 ok(nzAngle>0, `miter join angles present (${nzAngle} vertices with |angle|>0, max=${maxAngle.toFixed(3)}rad)`)
 ok(maxAngle<=Math.PI+1e-3, 'angles within [-pi,pi]')
 
-// ③ 폭 차이 보존 (외벽 0.6 / 내벽 0.42) → hwa.width 에 두 값 공존
+// (3) Width difference preserved (outer wall 0.6 / inner wall 0.42) -> both values appear in hwa.width
 const rw=slice(trisToSTL(boxTris(0,0,0,20,20,20)),{...base,outer_wall_line_width:0.6,inner_wall_line_width:0.42})
 const dw=buildSegmentData(rw.layers, 0.42)
 const ws=new Set(); for(let i=0;i<dw.nV;i++) ws.add(Math.round(dw.hwa[i*4+1]*100)/100)
 console.log(`  wall-width set (outer0.6/inner0.42): [${[...ws].sort((a,b)=>a-b)}]`)
 ok(ws.has(0.6)&&ws.has(0.42), 'per-feature widths preserved in hwa (0.6 AND 0.42)')
 
-// ④ 대형 원기둥(고세그먼트) — 무결성 + z 센터링
+// (4) Large cylinder (many segments) — integrity + z centering
 const rb=slice(trisToSTL(cylTris(0,0,60,40,256)),base)
 const db=buildSegmentData(rb.layers, 0.42)
 console.log(`  big cyl: layers=${db.layerCount} nV=${db.nV} nSeg=${db.nSeg} maxAbs=${db.maxAbs.toFixed(1)}`)
 ok(!db.hasNaN && db.nSeg>100000, `large model integrity (nSeg=${db.nSeg}, no NaN)`)
-// z 센터링: 첫 레이어 정점 z = z0-0.5h 여야(원본 position.z -= 0.5*height). 첫 압출 세그먼트 확인
+// z centering: the first layer's vertex z must be z0-0.5h (upstream position.z -= 0.5*height). Checked on the first extrusion segment
 const firstZ = db.position[2], firstH = db.hwa[0]
 ok(firstZ < rb.layers[0].z, `position.z pushed down by ~0.5*height (center ${firstZ.toFixed(3)} < layerTop ${rb.layers[0].z})`)
 

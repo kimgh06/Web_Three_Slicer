@@ -1,5 +1,5 @@
-# ponytail: 단일 스테이지 + vite preview. COOP/COEP 헤더가 vite.config 에 이미 있어 nginx conf 를 안 쓴다.
-# 이미지 크기가 문제되면 multi-stage + 정적 서버로 교체.
+# ponytail: a single stage + vite preview. The COOP/COEP headers are already in vite.config, so no nginx conf is used.
+# If the image size becomes a problem, switch to multi-stage + a static server.
 FROM node:20-alpine
 WORKDIR /app
 COPY . .

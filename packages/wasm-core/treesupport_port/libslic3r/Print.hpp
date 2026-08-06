@@ -6,7 +6,7 @@
 // custom-facets are legitimately empty, documented). Real heavy header kept as Print_real.hpp.bak.
 #ifndef slic3r_Print_facade_hpp_
 #define slic3r_Print_facade_hpp_
-#include <tbb/stub_parallel.h>   // G002: 취소 플래그(canceled() 배선)
+#include <tbb/stub_parallel.h>   // G002: the cancel flag (wiring canceled())
 
 #include "libslic3r.h"
 #include "Point.hpp"
@@ -89,7 +89,7 @@ struct PrintObjectRegions { std::vector<PrintRegion*> all_regions; };
 class Print {
 public:
     const PrintConfig& config() const { return m_config; }
-    bool  canceled() const { return tbb_stub::cancel().load(std::memory_order_relaxed) != 0; }   // G002: SAB 취소 플래그 배선
+    bool  canceled() const { return tbb_stub::cancel().load(std::memory_order_relaxed) != 0; }   // G002: wired to the SAB cancel flag
     void  set_status(int /*percent*/, const std::string& /*msg*/, unsigned /*flags*/ = 0) const {}
     const Vec3d get_plate_origin() const { return m_origin; }
     Flow  brim_flow() const { return Flow(0.45f, 0.2f, 0.4f); }   // used only for brim width; kernel does brim separately
@@ -110,7 +110,7 @@ public:
     // ---- layers ----
     size_t         layer_count() const { return m_layers.size(); }
     size_t         support_layer_count() const { return m_support_layers.size(); }
-    // WP2: 원본 Print.hpp:387 verbatim — SupportMaterial.cpp 가 배열 크기 산정에 사용
+    // WP2: upstream Print.hpp:387 verbatim — SupportMaterial.cpp uses it to size arrays
     size_t         total_layer_count() const { return this->layer_count() + this->support_layer_count(); }
     const Layer*   get_layer(int idx) const { return m_layers[idx]; }
     Layer*         get_layer(int idx)       { return m_layers[idx]; }

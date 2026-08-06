@@ -36,10 +36,10 @@ struct Result {
 // the time breakdown from GCodeProcessorResult (modes[Normal].time) + per-move aggregation.
 Result estimate(const std::string& gcode, const Limits& lim);
 
-// 30단계 스트리밍 시간추정: 커널이 레이어 청크를 만드는 대로 먹여(process_buffer 는 상태를 유지하는
-//  스트리밍 파서 — 청크가 '\n' 경계라 여러 번 호출해도 한 번에 먹인 것과 동일) 전체 g-code 문자열을
-//  한꺼번에 상주시키지 않는다. begin(apply_config 1회) → feed(청크마다 process_buffer + 필라멘트 누적)
-//  → end(finalize + Result 추출). 한 번에 하나의 스트림만(파일 static 상태).
+// Stage 30 streaming time estimate: the kernel feeds layer chunks as it produces them (process_buffer is a stateful
+//  streaming parser — chunks end on '\n' boundaries, so many calls behave exactly like one big feed), which avoids
+//  keeping the whole g-code string resident. begin (apply_config once) -> feed (process_buffer + filament accumulation per chunk)
+//  -> end (finalize + extract Result). Only one stream at a time (file-static state).
 void   estimate_begin(const Limits& lim);
 void   estimate_feed(const std::string& chunk);
 Result estimate_end();

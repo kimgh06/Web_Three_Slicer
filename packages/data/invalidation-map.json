@@ -627,5 +627,5 @@
    "line": 1533
   }
  ],
- "note": "조건에 없는 opt_key(기본 분기)는 전체 무효화. steps는 분기 블록에서 참조된 단계 토큰."
+ "note": "An opt_key absent from the conditions (the default branch) invalidates everything. steps are the step tokens referenced in the branch block."
 }

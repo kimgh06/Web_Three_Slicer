@@ -1,8 +1,8 @@
-// three-slicer/data/config-schema.json — OrcaSlicer 원본에서 추출한 907개 옵션 정의.
-// ponytail: 값을 리터럴로 좁히지 않는다. 907키 × 33필드를 리터럴로 추론시키면 소비자 tsc 가 기어간다.
-//   키 단위 정확도가 필요하면 SlicerSettings(three-slicer/settings) 쪽을 쓸 것.
+// three-slicer/data/config-schema.json — the 907 option definitions extracted from upstream OrcaSlicer.
+// ponytail: values are not narrowed to literals. Inferring 907 keys x 33 fields as literals crawls in consumer tsc.
+//   Use SlicerSettings (three-slicer/settings) when you need per-key accuracy.
 
-/** 원본 ConfigOptionDef 의 coXxx 타입 태그 */
+/** The coXxx type tag from the upstream ConfigOptionDef */
 export type ConfigOptionType =
   | 'coBool' | 'coBools'
   | 'coInt' | 'coInts'
@@ -13,10 +13,10 @@ export type ConfigOptionType =
   | 'coEnum' | 'coEnums'
   | 'coPoint' | 'coPoints' | 'coPointsGroups'
 
-/** 907키 중 `type` 과 `defined_in` 만 전부 존재한다. 나머지는 전부 optional. */
+/** Of the 907 keys, only `type` and `defined_in` always exist. Everything else is optional. */
 export interface ConfigOption {
   type: ConfigOptionType
-  /** 추출된 원본 함수명 (예: 'init_common_params') */
+  /** Name of the source function it was extracted from (e.g. 'init_common_params') */
   defined_in: string
   line?: number
   mode?: string

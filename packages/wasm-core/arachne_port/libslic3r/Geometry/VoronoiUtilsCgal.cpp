@@ -26,7 +26,7 @@ namespace Slic3r::Geometry {
 
 // stage-14 debug counter: incremented each time the REAL CGAL planarity check runs (exposed via
 // arachne_bridge to prove the check is invoked, not the old always-true stub).
-// (mt) std::atomic — PASS 1 레이어 병렬화(-pthread 빌드)에서 증가 손실 방지. 문서화된 최소 수정.
+// (mt) std::atomic — prevents lost increments when PASS 1 layers run in parallel (-pthread build). A documented minimal edit.
 std::atomic<int> g_cgal_planar_angle_calls{0};
 
 using PolygonsSegmentIndexConstIt = std::vector<Arachne::PolygonsSegmentIndex>::const_iterator;
@@ -136,10 +136,10 @@ namespace impl {
         }
     };
 
-    // 19단계 (정밀 술어 승격): wasm 에는 방향 라운딩(directed rounding)이 없어 인터벌 필터(FK=Interval_nt_advanced)가
-    //  부정확한 경계를 내어 필터가 틀린 확정값을 반환할 수 있다. 그래서 필터 스테이지를 인터벌이 아닌 **exact 술어**
-    //  (EK=Simple_cartesian<MP_Float>, Boost.MP 계열)로 치환한다 — Filtered_predicate 의 필터 predicate/converter 를
-    //  EK/C2E 로 둠으로써 인터벌 단계를 건너뛰고 항상 정확히 평가. 평면성 검사는 레이어당 1회라 비용 허용(perf 실측).
+    // Stage 19 (promoting to exact predicates): wasm has no directed rounding, so the interval filter (FK=Interval_nt_advanced)
+    //  produces inaccurate bounds and the filter can return a wrong definite answer. So the filter stage is replaced with **exact predicates**
+    //  instead of intervals (EK=Simple_cartesian<MP_Float>, the Boost.MP family) — putting EK/C2E in Filtered_predicate's filter predicate/converter
+    //  skips the interval stage and always evaluates exactly. The planarity check runs once per layer, so the cost is acceptable (measured).
     using ParabolicTangentToSegmentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToSegmentOrientationPredicate<EK>, ParabolicTangentToSegmentOrientationPredicate<EK>, C2E, C2E>;
     using ParabolicTangentToParabolicTangentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToParabolicTangentOrientationPredicate<EK>, ParabolicTangentToParabolicTangentOrientationPredicate<EK>, C2E, C2E>;
 } // namespace impl

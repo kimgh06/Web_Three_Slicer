@@ -1,31 +1,8 @@
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #222; }
+body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #222; background: #000; }
 .prepare { position: absolute; inset: 0; }
-.app header { display: flex; gap: 16px; align-items: center; padding: 8px 16px;
-  border-bottom: 1px solid #ddd; position: sticky; top: 0; background: #fff; z-index: 2; }
-.app header .brand { flex: 0 0 auto; color: #111; font-weight: 700; }
-.app header nav { display: flex; gap: 10px; flex: 1 1 auto; min-width: 0;
-  overflow-x: auto; white-space: nowrap; }
-.app header a { text-decoration: none; color: #0a7d4f; font-weight: 600; flex: 0 0 auto; }
-.app header form { flex: 0 0 auto; }
-.app header input { padding: 4px 8px; width: 220px; }
-
-.tab { display: flex; }
-.tab aside { width: 180px; padding: 12px; border-right: 1px solid #eee;
-  position: sticky; top: 45px; align-self: flex-start; }
-.tab aside button { display: block; width: 100%; text-align: left; margin: 2px 0;
-  padding: 6px 8px; border: 0; background: none; cursor: pointer; border-radius: 6px; }
-.tab aside button.on { background: #e6f5ee; color: #0a7d4f; font-weight: 700; }
-.tab aside .modes { margin-top: 14px; border-top: 1px solid #eee; padding-top: 8px; }
-.tab aside .modes button { font-size: 12px; }
-.tab main { flex: 1; padding: 12px 20px; max-width: 900px; }
-
 section { margin-bottom: 18px; }
 h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px; }
-
-.detail { padding: 16px 24px; max-width: 900px; }
-.detail pre { background: #f7f7f7; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
-.tip { color: #555; background: #fbf8e9; padding: 8px 10px; border-radius: 6px; }
 
 .landing {
   --lp-bg: #0e1216;

@@ -13,15 +13,15 @@ namespace treesupport_bridge {
 using Ring = std::vector<std::pair<double,double>>;
 
 // One support extrusion polyline (mm) with its extrusion width (mm).
-// WP3: 원본 ExtrusionPath 의 role/height/mm3_per_mm 를 보존한다 — 이전엔 XY+width 만 남기고 버려
-//  base/interface 구분과 원본 E 계산 근거가 소실됐다. role 은 ExtrusionRole 정수값 그대로
-//  (erSupportMaterial=14, erSupportMaterialInterface=15, erIroning=8 등).
+// WP3: preserves role/height/mm3_per_mm of the upstream ExtrusionPath — previously only XY+width survived, losing
+//  the base/interface distinction and the basis for the upstream E calculation. role is the raw ExtrusionRole integer
+//  (erSupportMaterial=14, erSupportMaterialInterface=15, erIroning=8, …).
 struct Line {
     std::vector<std::pair<double,double>> pts;
     double width       = 0.0;
     int    role        = 14;   // erSupportMaterial
-    double height      = 0.0;  // 레이어 높이(mm, ExtrusionPath::height)
-    double mm3_per_mm  = 0.0;  // 원본 부피 유량 — 커널 E 재계산 대신 이 값 사용 가능
+    double height      = 0.0;  // layer height (mm, ExtrusionPath::height)
+    double mm3_per_mm  = 0.0;  // upstream volumetric flow — usable instead of recomputing E in the kernel
 };
 
 // Support toolpaths at one support layer (its print_z in mm + the polylines).
@@ -29,22 +29,22 @@ struct LayerOut { double print_z_mm; std::vector<Line> lines; };
 
 struct Params {
     double layer_height_mm      = 0.2;
-    double first_layer_height_mm = 0.0;    // WP1: 첫 레이어 높이(mm). 0 => layer_height. 원본 initial_layer_print_height 대응
+    double first_layer_height_mm = 0.0;    // WP1: first layer height (mm). 0 => layer_height. Matches the upstream initial_layer_print_height
     double nozzle_mm            = 0.4;
-    double line_width_mm        = 0.0;     // WP1: 오브젝트 line_width. TreeSupport3D 의 lslices_extrudable 필터 + auto-threshold flow 폴백에 쓰인다
+    double line_width_mm        = 0.0;     // WP1: the object's line_width. Used by TreeSupport3D's lslices_extrudable filter and the auto-threshold flow fallback
     double support_threshold_angle = 30.0; // deg (0 => auto)
-    double support_top_z_distance  = 0.2;  // mm  (WP1: → SlicingParameters::gap_support_object, 원본 수식)
+    double support_top_z_distance  = 0.2;  // mm  (WP1: -> SlicingParameters::gap_support_object, upstream formula)
     double support_bottom_z_distance = 0.2;// mm  (WP1: → gap_object_support)
     double support_xy_distance     = 0.35; // mm  (WP1: → support_object_xy_distance config)
-    double first_layer_gap_mm      = 0.2;  // WP1: support_object_first_layer_gap (원본 default 0.2)
+    double first_layer_gap_mm      = 0.2;  // WP1: support_object_first_layer_gap (upstream default 0.2)
     int    interface_top_layers    = 2;
-    int    interface_bottom_layers = 0;    // WP1: -1 => top 과 동일(원본 규약), 기본 0
-    bool   independent_support_layer_height = false; // WP1: 커널 z 그리드 제약상 기본 false(갭을 레이어 배수로 양자화 — 원본 동일 수식)
+    int    interface_bottom_layers = 0;    // WP1: -1 => same as top (upstream convention), default 0
+    bool   independent_support_layer_height = false; // WP1: false by default because of the kernel z grid constraint (the gap is quantized to layer multiples — same formula as upstream)
     bool   support_auto            = true; // true=auto overhang detect (stTreeAuto); false=manual (only painted enforcers)
     double support_line_width_mm   = 0.0;  // 0 => auto (line_width); >0 => explicit support extrusion width
-    double support_angle_deg       = 0.0;  // WP1: 서포트 인필 기준 각(SupportParameters::base_angle)
+    double support_angle_deg       = 0.0;  // WP1: base angle for support infill (SupportParameters::base_angle)
     bool   on_build_plate_only     = false;// WP1: support_on_build_plate_only
-    // WP1: 트리 형상 키 (원본 config 기본값과 동일한 기본값 — 미설정 시 기존/원본 기본 동작 유지)
+    // WP1: tree shape keys (defaults identical to the upstream config defaults — unset keys keep the previous/upstream behavior)
     std::string tree_style         = "organic"; // organic|slim|strong|hybrid → smsTree*
     double branch_angle_deg        = 40.0; // tree_support_branch_angle_organic
     double angle_slow_deg          = 25.0; // tree_support_angle_slow
@@ -53,24 +53,24 @@ struct Params {
     double branch_diameter_angle_deg = 5.0;// tree_support_branch_diameter_angle
     double tip_diameter_mm         = 0.8;  // tree_support_tip_diameter
     double top_rate_pct            = 30.0; // tree_support_top_rate (%)
-    int    wall_count              = 0;    // tree_support_wall_count (organic 은 내부에서 max(1,·))
+    int    wall_count              = 0;    // tree_support_wall_count (organic applies max(1,·) internally)
     std::string interface_pattern  = "auto";    // auto|rectilinear|concentric|rectilinear_interlaced|grid
     std::string base_pattern       = "default"; // default|rectilinear|rectilinear-grid|honeycomb|lightning|none
     double interface_spacing_mm    = 0.5;  // support_interface_spacing
     double base_pattern_spacing_mm = 2.5;  // support_base_pattern_spacing
     double bed_width_mm            = 200.0;
     double bed_depth_mm            = 200.0;
-    double printable_height_mm     = 250.0; // WP1: → PrintConfig::printable_height (BuildVolume 높이)
-    // WP2: normal(grid/snug) 서포트 포트 전용 키 — 원본 config 기본값과 동일한 기본값
+    double printable_height_mm     = 250.0; // WP1: -> PrintConfig::printable_height (BuildVolume height)
+    // WP2: keys used only by the normal (grid/snug) support port — defaults identical to the upstream config defaults
     std::string normal_style       = "grid";  // grid|snug → smsGrid|smsSnug
     double support_expansion_mm    = 0.0;     // support_expansion (detect_overhangs xy_expansion)
-    bool   bridge_no_support       = false;   // bridge_no_support (perimeters 미공급 시 사실상 no-op — 문서화)
+    bool   bridge_no_support       = false;   // bridge_no_support (effectively a no-op while perimeters are not supplied — documented)
     bool   remove_small_overhang   = true;    // support_remove_small_overhang
-    double threshold_overlap_pct   = 50.0;    // support_threshold_overlap (%, θ=0 일 때 겹침 기준)
-    // 33단계: print_config "resolution"(경로 단순화 허용오차, mm). 원본 TreeSupportCommon.hpp:56 이
-    //  TreeSupportSettings::resolution 을 여기서 받아 TreeSupport3D 의 polygons_simplify 에 쓴다.
-    //  브릿지가 이 값을 안 넘기면 PrintConfig 기본값(0.01)이 적용된다 — 곡면 가지에서 현 길이 ≈0.4mm.
-    //  값을 키우면 세그먼트가 줄어 G-code 가 작아진다(디테일과의 트레이드오프).
+    double threshold_overlap_pct   = 50.0;    // support_threshold_overlap (%, the overlap criterion when θ=0)
+    // Stage 33: print_config "resolution" (path simplification tolerance, mm). Upstream TreeSupportCommon.hpp:56 takes
+    //  TreeSupportSettings::resolution from here and uses it in TreeSupport3D's polygons_simplify.
+    //  If the bridge does not pass it, the PrintConfig default (0.01) applies — a chord length of ≈0.4mm on curved branches.
+    //  Raising it means fewer segments and smaller G-code (traded against detail).
     double resolution_mm           = 0.01;
 };
 
@@ -87,26 +87,26 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
                                const std::vector<double>&            layer_print_z_mm,
                                const Params&                         params);
 
-// WP2: 레이어별 표면 데이터(mm) — normal 서포트 포트의 stTop/stBottom 표면 공급용.
-//  top = 위가 노출된 면(원본 stTop 대응, 커널 topSurf), bottom = 아래가 노출된 면(stBottom, 커널 botSurf).
+// WP2: per-layer surface data (mm) — supplies stTop/stBottom surfaces to the normal support port.
+//  top = faces exposed upward (upstream stTop, the kernel's topSurf), bottom = faces exposed downward (stBottom, the kernel's botSurf).
 struct LayerSurf { std::vector<Ring> top, bottom; };
 
-// WP2: 원본 normal(grid/snug) 서포트 — PrintObjectSupportMaterial::generate() (SupportMaterial.cpp 원본
-//  포트, 11단계 파이프라인: top/bottom contact → 중간층 → SupportGridPattern(AGG) → 인터페이스 → 툴패스).
-//  surfs 는 슬라이스와 같은 길이(비면 stTop/stBottom 없이 동작 — bottom contact 미생성).
-//  출력은 generate() 와 동일한 LayerOut(role/height/mm3 보존 툴패스).
+// WP2: the upstream normal (grid/snug) support — PrintObjectSupportMaterial::generate() (a port of the upstream
+//  SupportMaterial.cpp; the stage-11 pipeline: top/bottom contact -> intermediate layers -> SupportGridPattern (AGG) -> interfaces -> toolpaths).
+//  surfs has the same length as the slices (when empty it runs without stTop/stBottom — no bottom contact is generated).
+//  The output is the same LayerOut as generate() (toolpaths preserving role/height/mm3).
 __attribute__((visibility("default")))
 std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& object_slices_mm,
                                       const std::vector<double>&            layer_print_z_mm,
                                       const std::vector<LayerSurf>&         surfs,
                                       const Params&                         params);
 
-// 서포트 실진행 카운터(tbb 스텁 atomic)의 wasm 힙 주소 — mt 에서 UI 스레드가 SAB 로 직접 폴링.
-//  generate_normal 진입 시 0 리셋, parallel_for 인덱스/task_group run 완료마다 증가(≈레이어 처리 단위).
+// wasm heap address of the real support progress counter (a tbb stub atomic) — under mt the UI thread polls it directly via SAB.
+//  Reset to 0 when generate_normal is entered, incremented per parallel_for index / completed task_group run (≈ one layer of work).
 __attribute__((visibility("default")))
 unsigned long progress_addr();
 
-// 취소 플래그(u32) 주소 — slice() 진입 시 0 리셋, UI 가 SAB 로 1 기입 시 커널·포트가 조기 중단.
+// Address of the cancel flag (u32) — reset to 0 when slice() is entered; when the UI writes 1 via SAB, the kernel and ports abort early.
 __attribute__((visibility("default")))
 unsigned long cancel_addr();
 

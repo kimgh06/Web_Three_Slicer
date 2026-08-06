@@ -1559,9 +1559,9 @@ void generate_support_toolpaths(
         const auto fill_type_first_layer  = ipRectilinear;
         for (size_t support_layer_id = range.begin(); support_layer_id < range.end(); ++ support_layer_id)
         {
-            // [결정성] 필러를 레이어당 생성 — 레인지당 공유 필러의 상태 이월이 파티션 의존 출력
-            //  (바이모달 실측)의 원인이었다. 레이어당 생성으로 파티션 무관 결정적 → 병렬 복원 가능.
-            //  (구 레인지 조건 range.begin()==0/==n_raft 는 생성 회피 최적화 — 사용처의 레이어 조건이 선택을 담당)
+            // [determinism] Create the filler per layer — carrying filler state across a shared per-range filler was the cause of
+            //  partition-dependent output (measured as bimodal). Creating it per layer makes the result deterministic regardless of partitioning -> parallelism can be restored.
+            //  (The old range conditions range.begin()==0/==n_raft were an optimization to avoid creating it — the layer condition at the use site drives the choice.)
             auto filler_interface       = std::unique_ptr<Fill>(Fill::new_from_type(support_params.contact_fill_pattern));
             auto filler_first_layer_ptr = std::unique_ptr<Fill>(support_params.contact_fill_pattern != fill_type_first_layer ? Fill::new_from_type(fill_type_first_layer) : nullptr);
             auto filler_first_layer     = filler_first_layer_ptr ? filler_first_layer_ptr.get() : filler_interface.get();

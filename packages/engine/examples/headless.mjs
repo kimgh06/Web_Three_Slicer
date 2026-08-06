@@ -1,7 +1,7 @@
 // three-slicer headless SDK example + independence proof: drive the engine from Node using ONLY the
 // public API (no UI, no viewer). Generates a 20mm cube STL, slices it, prints stats + G-code length.
 //   run: node packages/engine/examples/headless.mjs
-import { createSlicer } from 'three-slicer'   // 워크스페이스 심링크로 해석 — 외부 소비자와 동일한 경로
+import { createSlicer } from 'three-slicer'   // resolved via the workspace symlink — same path an external consumer takes
 
 // minimal binary-STL writer for a box (public API takes a binary-STL ArrayBuffer)
 function boxTris(ox, oy, oz, sx, sy, sz) {
@@ -27,7 +27,7 @@ const slicer = await createSlicer()
 const r = slicer.slice(cube, params)
 console.log(`batch : layers=${r.stats.layers} segments=${r.stats.path_segments} filament=${r.stats.filament_mm.toFixed(1)}mm gcode=${r.gcode.length} chars`)
 
-// (b) streaming slice via onLayer (30단계) — assemble G-code from per-layer chunks
+// (b) streaming slice via onLayer (stage 30) — assemble G-code from per-layer chunks
 let chunks = 0, gbytes = 0
 const rs = slicer.slice(cube, params, { onLayer: ({ gcode }) => { chunks++; gbytes += gcode.length } })
 console.log(`stream: layers=${chunks} streamed=${rs.stats.streamed} assembled-gcode=${gbytes} chars`)

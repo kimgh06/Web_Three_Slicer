@@ -1,5 +1,5 @@
-// STUB → 실뮤텍스 (WP-tbb): 병렬 구간에서 layer_storage 등 공유 상태 보호에 실제로 쓰인다.
-//  pthreads 미지원 빌드는 기존 no-op 유지(직렬이라 락 불필요).
+// STUB -> real mutex (WP-tbb): genuinely used inside parallel scopes to protect shared state such as layer_storage.
+//  Builds without pthreads keep the old no-op (serial execution needs no lock).
 #pragma once
 #ifdef __EMSCRIPTEN_PTHREADS__
 #include <mutex>

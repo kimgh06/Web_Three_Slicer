@@ -1,17 +1,17 @@
-// 26단계 검증 픽스처: 20mm 큐브를 OBJ/PLY/3MF/AMF 로 생성(three 로더가 읽는 최소 유효 파일).
-//  STL 은 기존 cube20.stl 재사용. 3MF zip 은 three 번들 fflate 로 조립.
+// Stage 26 verification fixtures: a 20mm cube written as OBJ/PLY/3MF/AMF (the minimal valid files three's loaders accept).
+//  STL reuses the existing cube20.stl. The 3MF zip is assembled with fflate from the three bundle.
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { zipSync, strToU8 } from '../viewer/node_modules/three/examples/jsm/libs/fflate.module.js'
 
 const S = 20
-// z-up 큐브 8정점(0..S) + 12삼각형(outward). boxTris 와 동일 위상.
+// z-up cube: 8 vertices (0..S) + 12 triangles (outward). Same topology as boxTris.
 const V = [[0,0,0],[S,0,0],[S,S,0],[0,S,0],[0,0,S],[S,0,S],[S,S,S],[0,S,S]]
 const q = (a,b,c,d) => [[a,b,c],[a,c,d]]
 const F = [...q(0,1,2,3), ...q(4,5,6,7), ...q(0,1,5,4), ...q(1,2,6,5), ...q(2,3,7,6), ...q(3,0,4,7)]  // 12 tris, 0-indexed
 
 mkdirSync('fixtures', { recursive: true })
 
-// OBJ (텍스트, z-up). f 는 1-indexed.
+// OBJ (text, z-up). f is 1-indexed.
 let obj = '# cube20 z-up\n'
 for (const v of V) obj += `v ${v[0]} ${v[1]} ${v[2]}\n`
 for (const f of F) obj += `f ${f[0]+1} ${f[1]+1} ${f[2]+1}\n`
@@ -25,7 +25,7 @@ for (const v of V) ply += `${v[0]} ${v[1]} ${v[2]}\n`
 for (const f of F) ply += `3 ${f[0]} ${f[1]} ${f[2]}\n`
 writeFileSync('testing_files/cube.ply', ply)
 
-// AMF (XML, millimeter, z-up). 단일 object/volume.
+// AMF (XML, millimeter, z-up). A single object/volume.
 let amf = `<?xml version="1.0" encoding="UTF-8"?>\n<amf unit="millimeter" version="1.1">\n <object id="0">\n  <mesh>\n   <vertices>\n`
 for (const v of V) amf += `    <vertex><coordinates><x>${v[0]}</x><y>${v[1]}</y><z>${v[2]}</z></coordinates></vertex>\n`
 amf += `   </vertices>\n   <volume>\n`

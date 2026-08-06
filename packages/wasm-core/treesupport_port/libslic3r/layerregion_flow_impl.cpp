@@ -1,9 +1,9 @@
-// WP2 (normal 서포트 포트): LayerRegion 의 flow 계열 3 메서드만 발췌한 최소 TU.
-// LayerRegion.cpp 전체(1,130줄)는 BridgeDetector/PerimeterGenerator 등 페리미터 생성 스택을 통째로
-// 끌고 들어오는데, SupportMaterial.cpp 가 실제로 링크 요구하는 것은 flow/bridging_flow 뿐이다.
-// 본문은 LayerRegion.cpp:21~60 에서 verbatim 복사 (수정 0) — 원본 갱신 시 재복사만 하면 된다.
-// ponytail: 최소 발췌 TU. SupportMaterial 이 LayerRegion 의 다른 메서드를 요구하게 되면 이 파일 대신
-//  LayerRegion.cpp 본체 컴파일로 승격.
+// WP2 (normal support port): a minimal TU containing only LayerRegion's 3 flow-related methods.
+// The full LayerRegion.cpp (1,130 lines) drags in the whole perimeter generation stack (BridgeDetector, PerimeterGenerator, …),
+// while all SupportMaterial.cpp actually needs to link is flow/bridging_flow.
+// The bodies are copied verbatim from LayerRegion.cpp:21~60 (zero edits) — when upstream changes, just re-copy.
+// ponytail: a minimal excerpt TU. If SupportMaterial ever needs other LayerRegion methods, promote this to compiling
+//  LayerRegion.cpp itself instead.
 #include "Layer.hpp"
 #include "Print.hpp"
 #include "Flow.hpp"

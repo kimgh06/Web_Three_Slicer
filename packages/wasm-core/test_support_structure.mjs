@@ -16,8 +16,8 @@ const towerArm=()=>trisToSTL([...boxTris(-15,-15,0,30,30,5),...boxTris(-2,-2,5,4
 const base={layer_height:0.2,first_layer_height:0.2,line_width:0.42,wall_loops:2,infill_density:0.15,nozzle_diameter:0.4,filament_diameter:1.75,print_speed:60,first_layer_speed:20,travel_speed:150,nozzle_temp:210,bed_temp:60,top_shell_layers:3,bottom_shell_layers:3,skirt_loops:0,time_engine:'transcribed',enable_support:true,support_threshold_angle:40,support_top_z_distance:0.2,support_xy_distance:0.35}
 const M=await createSlicer()
 const slice=(stl,p)=>M.slice(new Uint8Array(stl),JSON.stringify({...base,...p}),()=>{})
-// yr(선택): y 범위 필터 — WP2 포트가 원본의 1층 플랜지(raft_first_layer_expansion 2mm)로 기둥을 "감싸는"
-//  세그먼트를 만들 수 있어, "솔리드 내부" 판정은 x·y 모두 기둥 범위 안일 때만 참이어야 한다(3D 컬럼 의도).
+// yr (optional): y range filter — the WP2 port can emit segments that "wrap" the column with the upstream first-layer flange
+//  (raft_first_layer_expansion 2mm), so "inside the solid" must only be true when both x and y are within the column (the intended 3D column).
 const count5=(r,xr,zr,yr)=>{let n=0;for(const L of r.layers){const z=L.z;if(z<zr[0]||z>=zr[1])continue;const p=L.paths;if(!p)continue;for(let k=0;k<p.length;k+=8){if(p[k+3]===5){const mx=(p[k]+p[k+4])/2;if(mx<xr[0]||mx>=xr[1])continue;if(yr){const my=(p[k+1]+p[k+5])/2;if(my<yr[0]||my>=yr[1])continue}n++}}}return n}
 const total5=(r)=>{let n=0;for(const L of r.layers){const p=L.paths;if(p)for(let k=0;k<p.length;k+=8)if(p[k+3]===5)n++;}return n}
 const lowest5=(r,xr)=>{let z=1e9;for(const L of r.layers){const p=L.paths;if(!p)continue;for(let k=0;k<p.length;k+=8){if(p[k+3]===5){const mx=(p[k]+p[k+4])/2;if(mx>=xr[0]&&mx<xr[1]&&L.z<z)z=L.z}}}return z}

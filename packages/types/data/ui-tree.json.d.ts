@@ -1,10 +1,10 @@
-// three-slicer/data/ui-tree.json — 원본 Tab.cpp 의 페이지/그룹 트리.
-// 최상위 키 = 빌더명(예: 'TabPrint::build'), 값 = 그 빌더가 만드는 페이지들.
+// three-slicer/data/ui-tree.json — the page/group tree from upstream Tab.cpp.
+// Top-level key = builder name (e.g. 'TabPrint::build'), value = the pages that builder creates.
 
 export interface UIGroup {
   group: string
   line?: number
-  /** config-schema 의 옵션 키들 */
+  /** The config-schema option keys */
   options: string[]
 }
 

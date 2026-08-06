@@ -1,17 +1,20 @@
-# web/ 개발 프로세스 관리. 포트는 .env 로 지정 (.env.example 복사).
+# Managing the web/ development processes. The port comes from .env (copy .env.example).
 -include .env
 export
 
 DEV_PORT ?= 5173
 UP_PORT  ?= 8080
 
-.PHONY: dev up down logs kill
+.PHONY: dev up down logs kill pkg
 
-dev:   ## vite dev 서버 (DEV_PORT, 점유 중이면 kill 후 기동)
+pkg:   ## rebuild the three-slicer package dist (viewer/components bundles)
+	cd .. && npm run build -w three-slicer
+
+dev: pkg  ## vite dev server (DEV_PORT; kills whatever holds the port first)
 	@$(MAKE) --no-print-directory kill PORT=$(DEV_PORT)
 	cd viewer && npx vite --port $(DEV_PORT) --strictPort
 
-up:    ## docker compose 로 기동 (UP_PORT)
+up:    ## start with docker compose (UP_PORT)
 	@$(MAKE) --no-print-directory kill PORT=$(UP_PORT)
 	docker compose up -d --build
 
@@ -21,6 +24,6 @@ down:
 logs:
 	docker compose logs -f
 
-kill:  ## PORT=n 을 점유한 프로세스 종료
+kill:  ## kill the process holding PORT=n
 	@pids=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
-	if [ -n "$$pids" ]; then echo "포트 $(PORT) 점유 중 → kill $$pids"; kill -9 $$pids; fi
+	if [ -n "$$pids" ]; then echo "port $(PORT) in use -> kill $$pids"; kill -9 $$pids; fi

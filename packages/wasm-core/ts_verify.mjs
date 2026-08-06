@@ -54,7 +54,7 @@ ok(dTree !== dLite, 'per-layer support distribution differs from tree_lite (orga
 const rTree2 = slice({ ...params, support_style: 'tree' })
 ok(rTree.gcode === rTree2.gcode, 'determinism: two tree runs produce identical g-code')
 
-// (4) 19단계 per-path width: widths[k] parallels segment k (stride-8 paths). Prove the bridge carries the
+// (4) Stage 19 per-path width: widths[k] parallels segment k (stride-8 paths). Prove the bridge carries the
 //     REAL per-path support width end-to-end (config -> support flow -> ExtrusionPath::width -> E + ribbon)
 //     by showing the emitted support width TRACKS support_line_width config (0.4 default vs explicit 0.6).
 //     (Note: this port's support_material_flow/interface_flow share one width key, so interface==body width.)
@@ -73,7 +73,7 @@ console.log(`  support widths — default: [${tw.join(',')}]  support_line_width
 ok(tw.length >= 1 && tw.every(x=>x>0), 'default: support paths carry real per-path width (non-zero, from support flow)')
 ok(tw06.includes(0.6) && !tw.includes(0.6), 'support width tracks config (0.6) — per-path width propagated to E + widths[]')
 
-// (5) 19단계 z 정합: z_resid_max ≈ 0 (support layers sit exactly on the object z grid)
+// (5) Stage 19 z alignment: z_resid_max ≈ 0 (support layers sit exactly on the object z grid)
 const zr = rTree.gcode.match(/tree_support layers=(\d+) z_resid_max=([0-9.]+)mm/)
 ok(!!zr, 'g-code has tree_support z-alignment diagnostic')
 if (zr) {
