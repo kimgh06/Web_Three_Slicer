@@ -6,14 +6,26 @@ import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from './make_worker.js'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
-import { buildSegmentData, makeToolpath, computeColors, roleRatios, VIEW_TYPES, DEFAULT_RANGES_COLORS, TYPE_COLOR } from './toolpath_gpu.js'
+import { buildSegmentData, roleRatios } from './toolpath_segments.js'
+import { makeToolpath } from './toolpath_mesh.js'
+import { computeColors } from './toolpath_views.js'
 import { loadModel, SUPPORTED_EXT, fileExt, splitConnectedComponents } from './model_loaders.js'
-// Stage 27: reuses the upstream desktop toolbar icons (resources/images -> assets, same project license).
-import {
-  moveIcon, rotateIcon, scaleIcon, paintIcon, openIcon, addIcon, deleteIcon, arrangeIcon, orientIcon,
-  onbedIcon, duplicateIcon, splitIcon, deleteallIcon, cutIcon, booleanIcon, negativeIcon,
-  seamIcon, mmuIcon, textmarkIcon, measureIcon, varlayerIcon,
-} from './icons.js'
+import { objectTools } from './toolbar_items.js'
+import { makeKeyHandler } from './shortcut_keymap.js'
+// Stage 27: the desktop-style shell, split into presentational components (one file per panel).
+import TopBar from './ui/TopBar.jsx'
+import GizmoRail from './ui/GizmoRail.jsx'
+import ObjectToolbar from './ui/ObjectToolbar.jsx'
+import ContextMenu from './ui/ContextMenu.jsx'
+import HelpOverlay from './ui/HelpOverlay.jsx'
+import PaintPanel from './ui/PaintPanel.jsx'
+import PlateBar from './ui/PlateBar.jsx'
+import PreviewControls from './ui/PreviewControls.jsx'
+import StatsCard from './ui/StatsCard.jsx'
+import PrinterCard from './ui/PrinterCard.jsx'
+import FilamentCard from './ui/FilamentCard.jsx'
+import ObjectList from './ui/ObjectList.jsx'
+import SliceBar from './ui/SliceBar.jsx'
 
 // 3D viewport + browser-only slicing (WASM, track C stage 4).
 //  - Slice parameters are derived from the right-hand editor panel values (deriveKernelParams) — no duplicate form.
@@ -990,31 +1002,16 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   function toggleObjVisible(id) { const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
   function togglePaintGizmo() { setPaintMode(paintMode === 'off' ? 'enforcer' : 'off') }
 
-  // ---- Object toolbar definition ----
-  //  Follows the upstream toolbar (GLToolbar) layout. Entries without run render as disabled, and the tooltip says what it is and why it is unavailable.
-  //  When adding buttons, edit this array instead of duplicating JSX.
-  const OBJECT_TOOLS = [
-    { id: 'add', icon: addIcon, label: 'Add', tip: 'Add a model file to the current plate (existing objects are kept)', run: () => fileInputRef.current?.click() },
-    { id: 'delete', icon: deleteIcon, label: 'Delete', tip: 'Delete the selected object (Del)', run: deleteSelected },
-    { id: 'delete-all', icon: deleteallIcon, label: 'Delete all', tip: 'Delete every object on the plate', run: deleteAllObjects, disabled: () => objects.length === 0 },
-    { sep: true },
-    { id: 'duplicate', icon: duplicateIcon, label: 'Duplicate', tip: 'Duplicate the selected object (Ctrl+K)', run: duplicateSelected },
-    { id: 'split', icon: splitIcon, label: 'Split', tip: 'Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)', run: splitSelected },
-    { id: 'onbed', icon: onbedIcon, label: 'Place on bed', tip: 'Drop every object onto the bed (Z=0) — to re-seat after lifting with the gizmo', run: () => apiRef.current?.placeOnBed() },
-    { sep: true },
-    { id: 'arrange', icon: arrangeIcon, label: 'Arrange', tip: 'Auto arrange — lay objects out on the bed without overlap. Not implemented (needs the libslic3r Arrange port)' },
-    { id: 'orient', icon: orientIcon, label: 'Orient', tip: 'Auto orient — rotate to the orientation needing the least support. Not implemented (needs the libslic3r Orient port)' },
-    { sep: true },
-    { id: 'cut', icon: cutIcon, label: 'Cut', tip: 'Cut — slice the model with a plane into two pieces. Not implemented (needs cut-surface re-stitching)' },
-    { id: 'boolean', icon: booleanIcon, label: 'Boolean', tip: 'Mesh boolean — union/difference/intersection of two objects. Not implemented (needs the CGAL boolean port)' },
-    { id: 'negative', icon: negativeIcon, label: 'Negative part', tip: 'Add a negative/modifier part — put a part with different properties inside one object. Not implemented (no part concept)' },
-    { sep: true },
-    { id: 'seam', icon: seamIcon, label: 'Seam painting', tip: 'Seam painting — brush where the layer seam goes. Not implemented (needs kernel seam wiring)' },
-    { id: 'mmu', icon: mmuIcon, label: 'Color painting', tip: 'Color painting — assign multi-material colors per facet. Not implemented (needs the MMU paint codec wiring)' },
-    { id: 'text', icon: textmarkIcon, label: 'Text', tip: 'Text/SVG emboss — engrave letters or shapes onto the model surface. Not implemented (needs font rasterization)' },
-    { id: 'measure', icon: measureIcon, label: 'Measure', tip: 'Measure — distance and angle between two points or faces. Not implemented' },
-    { id: 'varlayer', icon: varlayerIcon, label: 'Variable layers', tip: 'Variable layer height — different layer heights per band. Not implemented (the kernel has no variable z)' },
-  ]
+  // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
+  const OBJECT_TOOLS = objectTools({
+    add: () => fileInputRef.current?.click(),
+    remove: deleteSelected,
+    removeAll: deleteAllObjects,
+    duplicate: duplicateSelected,
+    split: splitSelected,
+    placeOnBed: () => apiRef.current?.placeOnBed(),
+    objectCount: () => objects.length,
+  })
 
   // ---- Keyboard shortcuts (upstream SPECS §4 + PrusaSlicer/Cura conventions) ----
   //  Which keys are live depends on Prepare/Preview. All are ignored while an input widget has focus.
@@ -1069,104 +1066,35 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   }
   function setGizmo(m) { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.setMode(m) }   // leave paint mode first (same path as the toolbar)
 
-  keyRef.current = (e) => {
-    // Shadow DOM: at window level e.target is retargeted to the shadow host -> use composedPath to find the real target
-    const t = e.composedPath ? e.composedPath()[0] : e.target
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
-    const k = e.key, low = typeof k === 'string' ? k.toLowerCase() : ''
-    const mod = e.ctrlKey || e.metaKey
-    const preview = canvasModeRef.current === 'preview'
-    const stop = () => { e.preventDefault(); e.stopPropagation() }
+  keyRef.current = makeKeyHandler({
+    slicing,
+    isPreview: () => canvasModeRef.current === 'preview',
+    slice: onSlice, copy: copySelected, paste: pasteClipboard, remove: deleteSelected, duplicate: duplicateSelected,
+    stepLayer: (d) => { const v = layerHiRef.current + d; singleLayer ? setRange(v, v) : setRange(layerLoRef.current, v) },
+    toggleSingleLayer: toggleSingle,
+    toggleTravel: () => onToggleTravel({ target: { checked: !showTravelRef.current } }),
+    zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
+    leavePreview: () => setCanvasMode('prepare'),
+    setGizmo,
+    cancelTool: () => { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() },
+    rotateSelected: (rad) => apiRef.current?.rotateSelectedY(rad),
+    nudgeSelected: (dx, dy) => apiRef.current?.nudgeSelected(dx, dy),
+    toggleHelp: () => setShowHelp(v => !v),
+  })
 
-    if (mod) {                                            // ---- Ctrl/⌘ combinations (both modes) ----
-      if (low === 'r') { stop(); if (!slicing) onSlice('current') }        // slice (upstream Ctrl+R)
-      else if (low === 'c') { stop(); copySelected() }
-      else if (low === 'v') { stop(); pasteClipboard() }
-      else if (low === 'x') { stop(); copySelected(); deleteSelected() }
-      else if (low === 'k' || low === 'd') { stop(); duplicateSelected() }  // Ctrl+K (upstream) / ⌘D (macOS convention)
-      return
-    }
-
-    if (preview) {                                        // ---- Preview: layer inspection ----
-      const step = e.shiftKey ? 10 : 1
-      if (k === 'ArrowUp')        { stop(); const v = layerHiRef.current + step; singleLayer ? setRange(v, v) : setRange(layerLoRef.current, v) }
-      else if (k === 'ArrowDown') { stop(); const v = layerHiRef.current - step; singleLayer ? setRange(v, v) : setRange(layerLoRef.current, v) }
-      else if (low === 'l')       { stop(); toggleSingle() }
-      else if (low === 't')       { stop(); onToggleTravel({ target: { checked: !showTravelRef.current } }) }
-      else if (low === 'z')       { stop(); apiRef.current?.frame() }
-      else if (low === 'b')       { stop(); apiRef.current?.frameBed() }
-      else if (k === 'Escape')    { stop(); setCanvasMode('prepare') }
-      return
-    }
-
-    // ---- Prepare: object manipulation ----
-    if (low === 'm' || low === 'g') { stop(); setGizmo('translate') }       // M = upstream, G = Blender convention (kept)
-    else if (low === 'r')           { stop(); setGizmo('rotate') }
-    else if (low === 's')           { stop(); setGizmo('scale') }
-    else if (low === 'z')           { stop(); apiRef.current?.frame() }
-    else if (low === 'b')           { stop(); apiRef.current?.frameBed() }
-    else if (k === 'Delete' || k === 'Backspace') { stop(); deleteSelected() }
-    else if (k === 'Escape')        { stop(); if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() }
-    else if (k === 'PageUp')        { stop(); apiRef.current?.rotateSelectedY(Math.PI / 4) }
-    else if (k === 'PageDown')      { stop(); apiRef.current?.rotateSelectedY(-Math.PI / 4) }
-    else if (k.startsWith?.('Arrow')) {                                     // nudge: 10mm, Shift = 1mm (Prusa convention)
-      stop(); const d = e.shiftKey ? 1 : 10
-      apiRef.current?.nudgeSelected(k === 'ArrowLeft' ? -d : k === 'ArrowRight' ? d : 0,
-                                    k === 'ArrowUp' ? -d : k === 'ArrowDown' ? d : 0)
-    }
-    else if (k === '?')             { stop(); setShowHelp(v => !v) }
-  }
   const nozzleDia = kp.nozzle_diameter || settingRaw(settings, 'nozzle_diameter') || '0.4'
   three.current.invalidate?.()   // render on demand: invalidate one frame per React re-render (slider/toggle/state change)
 
   // Preview controls (view type + dual slider + legend) — placed in the sidebar
   const previewControls = layerCount > 0 && (
-    <div className="slice-layer" data-testid="preview-controls">
-      <label className="view-type-row">View type
-        <select value={viewType} onChange={onViewType} data-testid="view-type-select" title="What the toolpath colors represent — feature type, speed, layer height, width, fan, temperature">
-          {VIEW_TYPES.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
-        </select>
-      </label>
-      <label>Layer <b data-testid="layer-range">{singleLayer ? (layerHi + 1) : `${layerLo + 1}..${layerHi + 1}`}</b> / {layerCount}
-        <span className="muted"> ({segCount.toLocaleString()} segments)</span></label>
-      <div className="dual-slider">
-        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerLo} onChange={onLo} data-testid="layer-lo" title="Lowest layer to show (also adjustable with ↓/↑)" />
-        <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerHi} onChange={onHi} data-testid="layer-hi" title="Highest layer to show (↓/↑, hold Shift for steps of 10)" />
-      </div>
-      <div className="layer-ctl">
-        <button className={singleLayer ? 'on' : ''} onClick={toggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
-        <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="Show non-extruding moves as gray lines (T)" /> Travel</label>
-      </div>
-      {colorRange && colorRange.cont ? (
-        <div className="grad-legend" data-testid="view-legend">
-          <div className="grad-title">{colorRange.label} <span className="muted">{colorRange.unit}</span></div>
-          <div className="grad-bar" data-testid="gradient-bar" style={{ background: `linear-gradient(to right, ${DEFAULT_RANGES_COLORS.map(c => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`).join(',')})` }} />
-          <div className="grad-minmax"><span data-testid="grad-min">{colorRange.min.toFixed(colorRange.unit === 'mm' ? 2 : 0)}</span><span data-testid="grad-max">{colorRange.max.toFixed(colorRange.unit === 'mm' ? 2 : 0)}</span></div>
-        </div>
-      ) : (
-        <div className="role-legend" data-testid="view-legend">
-          {roleLegend.map(r => (
-            <span key={r.type} className="role-item">
-              <i style={{ background: `rgb(${Math.round(r.color[0] * 255)},${Math.round(r.color[1] * 255)},${Math.round(r.color[2] * 255)})` }} />
-              {r.label} <b>{r.pct.toFixed(0)}%</b>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
+    <PreviewControls
+      viewType={viewType} onViewType={onViewType} layerCount={layerCount}
+      layerLo={layerLo} layerHi={layerHi} segCount={segCount} singleLayer={singleLayer}
+      onLayerLo={onLo} onLayerHi={onHi} onToggleSingle={toggleSingle}
+      showTravel={showTravel} onToggleTravel={onToggleTravel}
+      colorRange={colorRange} roleLegend={roleLegend} />
   )
-  const statsBlock = stats && (
-    <>
-      <div><b>{stats.layers}</b> layers · <b>{stats.segments}</b> segments</div>
-      <div>Filament <b>{stats.filament.toFixed(1)}</b> mm</div>
-      {typeof stats.timeSec === 'number' && stats.timeSec > 0 && (() => {
-        const s = Math.round(stats.timeSec)
-        const t = `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m ${String(s % 60).padStart(2, '0')}s`
-        return <div data-testid="print-time">⏱ Estimated print <b>{t}</b></div>
-      })()}
-      {overBed && <div className="slice-warn" data-testid="over-bed">⚠ Model extends beyond the bed</div>}
-    </>
-  )
+  const statsBlock = <StatsCard stats={stats} overBed={overBed} />
 
   // registerLoader() can add formats, so this is computed at render time.
   const EXT_LABEL = SUPPORTED_EXT.map(e => e.toUpperCase()).join(' · ')
@@ -1177,34 +1105,14 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       {/* Shared hidden file input */}
       <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={onFiles} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
 
-      {/* S1 top bar */}
-      <header className="topbar">
-        <div className="tb-left">
-          <a href="/" className="tb-logo"><b>Three</b>Slicer <span className="tb-re">RE</span></a>
-          <button className="tb-btn" onClick={() => fileInputRef.current?.click()} title="Open a model file — every existing object is cleared" data-testid="open-file"><img src={openIcon} alt="" /><span>Open</span></button>
-        </div>
-        {ok && (
-          <div className="tb-tabs" role="tablist" aria-label="Canvas mode">
-            <button role="tab" className={canvasMode === 'prepare' ? 'on' : ''} onClick={() => setCanvasMode('prepare')} data-testid="mode-prepare" title="Arrange, transform and paint supports">Prepare</button>
-            <button role="tab" className={canvasMode === 'preview' ? 'on' : ''} onClick={() => setCanvasMode('preview')} disabled={layerCount === 0} data-testid="mode-preview" title="Preview the sliced toolpaths (enabled after slicing)">Preview</button>
-          </div>
-        )}
-        <div className="tb-right">
-          <button className="tb-icon" disabled title="Undo — not implemented (needs an action history stack)">↶</button>
-          <button className="tb-icon" disabled title="Redo — not implemented (needs an action history stack)">↷</button>
-        </div>
-      </header>
+      <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
+        previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()} />
 
       <div className="app-body">
-        {/* S3 left gizmo toolbar */}
         {ok && canvasMode === 'prepare' && (
-          <nav className="left-rail" role="toolbar" aria-label="Gizmo tools">
-            <button className={gmode === 'translate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('translate') }} title="Move the object — drag a gizmo axis or use arrow keys for 10mm (Shift 1mm) (M/G)" data-testid="gizmo-move"><img src={moveIcon} alt="Move" /></button>
-            <button className={gmode === 'rotate' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('rotate') }} title="Rotate the object — PageUp/PageDown rotates in 45° steps (R)" data-testid="gizmo-rotate"><img src={rotateIcon} alt="Rotate" /></button>
-            <button className={gmode === 'scale' && paintMode === 'off' ? 'on' : ''} onClick={() => { setPaintMode('off'); apiRef.current?.setMode('scale') }} title="Scale the object (S)" data-testid="gizmo-scale"><img src={scaleIcon} alt="Scale" /></button>
-            <div className="rail-sep" />
-            <button className={paintMode !== 'off' ? 'on' : ''} onClick={togglePaintGizmo} title="Brush facets to enforce or block support — the wheel changes the brush size" data-testid="gizmo-paint"><img src={paintIcon} alt="Support painting" /></button>
-          </nav>
+          <GizmoRail gizmoMode={gmode} paintMode={paintMode}
+            onGizmo={m => { setPaintMode('off'); apiRef.current?.setMode(m) }}
+            onTogglePaint={togglePaintGizmo} />
         )}
 
         {/* Center viewport */}
@@ -1222,89 +1130,23 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
             )}
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
             {ctxMenu && (
-              <>
-                <div className="ctx-scrim" onPointerDown={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null) }} />
-                <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} data-testid="ctx-menu">
-                  {ctxMenu.onObject ? (<>
-                    <button onClick={() => { setCtxMenu(null); duplicateSelected() }} data-testid="ctx-duplicate" title="Duplicate the selected object at the same scale and rotation, placed beside it">Duplicate <span className="ctx-key">Ctrl+K</span></button>
-                    <button onClick={() => { setCtxMenu(null); copySelected() }} data-testid="ctx-copy" title="Copy the selected object to the buffer (paste to add it)">Copy <span className="ctx-key">Ctrl+C</span></button>
-                    <button onClick={() => { setCtxMenu(null); splitSelected() }} data-testid="ctx-split" title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)">Split</button>
-                    <button onClick={() => { setCtxMenu(null); apiRef.current?.placeOnBed() }} data-testid="ctx-seat" title="Drop every object onto the bed (Z=0)">Place on bed</button>
-                    <hr />
-                    <button className="danger" onClick={() => { setCtxMenu(null); deleteSelected() }} data-testid="ctx-delete" title="Remove the selected object from the scene">Delete <span className="ctx-key">Del</span></button>
-                  </>) : (<>
-                    <button onClick={() => { setCtxMenu(null); fileInputRef.current?.click() }} data-testid="ctx-open" title="Open a model file and add it to the current plate">Open model…</button>
-                    <button disabled={!clipboardRef.current} onClick={() => { setCtxMenu(null); pasteClipboard() }} data-testid="ctx-paste" title="Add the copied object to the current plate">Paste <span className="ctx-key">Ctrl+V</span></button>
-                    <hr />
-                    <button onClick={() => { setCtxMenu(null); apiRef.current?.frame() }} data-testid="ctx-zoom-all" title="Fit the camera so every object is visible">Zoom all <span className="ctx-key">Z</span></button>
-                    <button onClick={() => { setCtxMenu(null); apiRef.current?.frameBed() }} data-testid="ctx-zoom-bed" title="Fit the camera to the whole selected plate">Zoom bed <span className="ctx-key">B</span></button>
-                  </>)}
-                </div>
-              </>
+              <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
+                actions={{
+                  duplicate: duplicateSelected, copy: copySelected, split: splitSelected,
+                  placeOnBed: () => apiRef.current?.placeOnBed(), remove: deleteSelected,
+                  openFile: () => fileInputRef.current?.click(), paste: pasteClipboard,
+                  zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
+                }} />
             )}
-            {showHelp && (
-              <div className="help-overlay" data-testid="help-overlay" onClick={() => setShowHelp(false)}>
-                <div className="help-card" onClick={e => e.stopPropagation()}>
-                  <h3>Shortcuts <span className="muted">(press ? to close)</span></h3>
-                  <div className="help-cols">
-                    <section>
-                      <h4>Prepare</h4>
-                      <dl>
-                        <dt>M / G</dt><dd>Move</dd><dt>R</dt><dd>Rotate</dd><dt>S</dt><dd>Scale</dd>
-                        <dt>Arrow keys</dt><dd>Move 10mm (Shift 1mm)</dd>
-                        <dt>PageUp/Down</dt><dd>Rotate 45°</dd>
-                        <dt>Del</dt><dd>Delete selection</dd><dt>Esc</dt><dd>Clear selection / leave paint</dd>
-                      </dl>
-                    </section>
-                    <section>
-                      <h4>Preview</h4>
-                      <dl>
-                        <dt>↑ / ↓</dt><dd>Layer (Shift steps of 10)</dd>
-                        <dt>L</dt><dd>Single layer</dd><dt>T</dt><dd>Travel</dd>
-                        <dt>Esc</dt><dd>Back to Prepare</dd>
-                      </dl>
-                    </section>
-                    <section>
-                      <h4>Common</h4>
-                      <dl>
-                        <dt>Ctrl+R</dt><dd>Slice</dd>
-                        <dt>Ctrl+K / ⌘D</dt><dd>Duplicate</dd>
-                        <dt>Ctrl+C/V/X</dt><dd>Copy / paste / cut</dd>
-                        <dt>Z / B</dt><dd>Zoom all / zoom bed</dd>
-                      </dl>
-                    </section>
-                  </div>
-                </div>
-              </div>
-            )}
+            {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
           </div>
 
-          {/* Object toolbar at the top of the viewport */}
-          {ok && canvasMode === 'prepare' && (
-            <div className="vp-top-toolbar" role="toolbar" aria-label="Object tools">
-              {OBJECT_TOOLS.map((t, i) => t.sep
-                ? <span key={'sep' + i} className="vtt-sep" />
-                : <button key={t.id} onClick={t.run} disabled={t.disabled?.() ?? !t.run}
-                    title={t.tip} data-testid={`tool-${t.id}`}><img src={t.icon} alt={t.label} /></button>)}
-            </div>
-          )}
+          {ok && canvasMode === 'prepare' && <ObjectToolbar tools={OBJECT_TOOLS} />}
 
-          {/* Floating painting panel */}
           {ok && canvasMode === 'prepare' && paintMode !== 'off' && (
-            <div className="brush-panel" data-testid="paint-tools">
-              <div className="bp-title">Support painting</div>
-              <div className="bp-modes">
-                <button className={paintMode === 'enforcer' ? 'on enf' : 'enf'} onClick={() => setPaintMode('enforcer')} title="Force support under the painted facets" data-testid="paint-enforcer">enforcer</button>
-                <button className={paintMode === 'blocker' ? 'on blk' : 'blk'} onClick={() => setPaintMode('blocker')} title="Block support under the painted facets" data-testid="paint-blocker">blocker</button>
-                <button onClick={clearPaint} data-testid="paint-clear" title="Clear every painted enforcer/blocker area">Clear</button>
-                <button onClick={() => setPaintMode('off')} data-testid="paint-off" title="Leave painting mode (Esc)">Close</button>
-              </div>
-              <label className="bp-radius">Brush radius {brushRadius}mm
-                <input type="range" min="1" max="15" step="0.5" value={brushRadius}
-                  onChange={e => { const v = parseFloat(e.target.value); setBrushRadius(v); brushRadiusRef.current = v }} data-testid="brush-radius" />
-              </label>
-              <div className="muted bp-counts" data-testid="paint-counts">enforcer {paintCounts.enf} · blocker {paintCounts.blk} · drag over the model to paint</div>
-            </div>
+            <PaintPanel paintMode={paintMode} onPaintMode={setPaintMode} onClear={clearPaint}
+              brushRadius={brushRadius} paintCounts={paintCounts}
+              onBrushRadius={v => { setBrushRadius(v); brushRadiusRef.current = v }} />
           )}
 
           {/* Preview stats card, bottom left */}
@@ -1312,15 +1154,9 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
             <div className="stats-card" data-testid="slice-stats">{statsBlock}</div>
           )}
 
-          {/* Stage 29-2: plate tab bar (selection/labels + add/remove) */}
           {ok && (
-            <div className="plate-bar" data-testid="plate-bar" role="tablist" aria-label="Plates">
-              {Array.from({ length: plateCount }, (_, i) => (
-                <button key={i} role="tab" className={'plate-tab' + (i === selectedPlate ? ' on' : '')} onClick={() => selectPlate(i)} title={`Select plate ${i + 1} — in Preview this switches to that plate's result`} data-testid={`plate-${i}`}>{i + 1}</button>
-              ))}
-              <button className="plate-add" onClick={addPlate} disabled={plateCount >= MAX_PLATES} title="Add an empty plate (max 9) — each plate slices and exports separately" data-testid="plate-add">+</button>
-              {plateCount > 1 && <button className="plate-del" onClick={deletePlate} title="Delete the last plate and its slice result" data-testid="plate-del">−</button>}
-            </div>
+            <PlateBar plateCount={plateCount} selectedPlate={selectedPlate} maxPlates={MAX_PLATES}
+              onSelect={selectPlate} onAdd={addPlate} onDelete={deletePlate} />
           )}
 
           {ok && <div className="vp-status" data-testid="vp-status">{status}</div>}
@@ -1330,63 +1166,16 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         {ok && (
           <aside className="sidebar">
             <div className="sidebar-scroll">
-              {/* (1) Printer */}
-              <section className="side-card">
-                <div className="sc-head">🖨 Printer</div>
-                <div className="sc-info"><span>Bed</span>
-                  {/* Direct width x depth editing (rectangular). Origin, circular and custom shapes live in the process panel's printable_area editor. */}
-                  <span className="sc-bed" title="Plate size — applied on Enter or blur. Circular/custom shapes come from the printable_area option">
-                    <input type="number" min="1" key={`w${Math.round(kp.bed_width)}`} defaultValue={Math.round(kp.bed_width)}
-                      onBlur={e => setBedSize(+e.target.value, kp.bed_depth)}
-                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }} data-testid="bed-w-card" />
-                    ×
-                    <input type="number" min="1" key={`d${Math.round(kp.bed_depth)}`} defaultValue={Math.round(kp.bed_depth)}
-                      onBlur={e => setBedSize(kp.bed_width, +e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }} data-testid="bed-d-card" />
-                    mm
-                  </span>
-                </div>
-                <div className="sc-info"><span>Nozzle Ø</span><b>{nozzleDia} mm</b></div>
-              </section>
+              <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize} />
 
-              {/* (2) Filament */}
-              <section className="side-card" data-testid="filament-section">
-                <div className="sc-head">🧵 Filament <span className="sc-count">{extruderColors.length}</span>
-                  <span className="sc-head-btns">
-                    <button onClick={addFilament} disabled={extruderColors.length >= 4} title="Add a filament (extruder) — up to 4, assignable per object" data-testid="filament-add">+</button>
-                    <button onClick={removeFilament} disabled={extruderColors.length <= 1} title="Remove the last filament — objects using it are reassigned to a remaining number" data-testid="filament-del">−</button>
-                  </span>
-                </div>
-                {extruderColors.map((c, i) => (
-                  <div className="filament-row" key={i}>
-                    <input type="color" value={c} onChange={e => setExtColor(i, e.target.value)} title={`T${i + 1} filament color`} data-testid={`filament-color-${i}`} />
-                    <span className="fil-t">T{i + 1}</span>
-                    <span className="fil-swatch" style={{ background: c }} />
-                    <span className="fil-hex muted">{c}</span>
-                  </div>
-                ))}
-              </section>
+              <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament} />
 
-              {/* (4) Object list */}
               {objects.length > 0 && (
-                <section className="side-card" data-testid="object-section">
-                  <div className="sc-head">📦 Objects <span className="sc-count">{objects.length}</span></div>
-                  <ul className="obj-list2" data-testid="obj-list">
-                    {objects.map(o => (
-                      <li key={o.id} className={o.visible === false ? 'obj-hidden' : ''}>
-                        <button className="obj-eye" onClick={() => toggleObjVisible(o.id)} title="Include/exclude this object from printing — excluding it keeps it in the scene" data-testid={`eye-${o.id}`}>{o.visible === false ? '🚫' : '👁'}</button>
-                        <span className="obj-name" title={o.name}>{o.name}</span>
-                        <select className="obj-ext" value={o.extruder ?? 1} onChange={e => setObjExtruder(o.id, +e.target.value)} title="Which filament (extruder) prints this object" data-testid={`ext-${o.id}`}>
-                          {extruderColors.map((c, i) => <option key={i} value={i + 1}>T{i + 1}</option>)}
-                        </select>
-                        <button className="obj-split" onClick={() => { apiRef.current?.selectObject(o.id); splitSelected() }} title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="Split" /></button>
-                        <button className="obj-del" onClick={() => removeObject(o.id)} title="Remove this object from the scene">✕</button>
-                      </li>
-                    ))}
-                  </ul>
-                  <label className="slice-support"><input type="checkbox" checked={supportOn} onChange={onToggleSupport} title="Generate support structures under overhangs (same as enable_support in the settings panel)" data-testid="support-toggle" /> Generate support</label>
-                  <label className="slice-support"><input type="checkbox" checked={wipeTowerReal} onChange={e => setWipeTowerReal(e.target.checked)} title="Use the upstream WipeTower to compute purge volumes on multi-material tool changes (off = a simple square ring)" data-testid="wipe-tower-real-toggle" /> Real wipe tower <span className="muted">(MM)</span></label>
-                </section>
+                <ObjectList objects={objects} extruderColors={extruderColors}
+                  onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
+                  onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }} onRemove={removeObject}
+                  supportOn={supportOn} onToggleSupport={onToggleSupport}
+                  wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)} />
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}
@@ -1408,29 +1197,11 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               </section>
             </div>
 
-            {/* (5) Fixed bottom button bar */}
-            <div className="side-bottom">
-              <label className="auto-slice" data-testid="auto-slice" title="Re-slice automatically 0.8s after a settings change (the first slice is manual; a running slice is canceled and restarted)">
-                <input type="checkbox" checked={autoSlice} onChange={e => setAutoSlice(e.target.checked)} /> Auto slice
-              </label>
-              <div className="slice-dd">
-                <button className="slice-btn" title={slicing ? 'Click to cancel the slice' : (plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)')} onClick={() => (slicing ? cancelSlice() : (plateCount > 1 ? setSliceMenu(v => !v) : onSlice('current')))} disabled={objects.length === 0} data-testid="slice-btn">
-                  {slicing ? `Slicing… ${Math.round(progress * 100)}%` : (plateCount > 1 ? 'Slice ▾' : 'Slice')}
-                </button>
-                {sliceMenu && plateCount > 1 && (
-                  <div className="slice-menu" data-testid="slice-menu">
-                    <button onClick={() => onSlice('current')} data-testid="slice-current" title="Slice only the selected plate (Ctrl+R)">Current plate (P{selectedPlate + 1})</button>
-                    <button onClick={() => onSlice('all')} data-testid="slice-all" title="Slice every plate in turn — switch tabs to inspect the results">All plates ({plateCount})</button>
-                    {slicedPlateCount > 0 && (
-                      <button onClick={exportAllGcode} data-testid="export-all" title="Save the G-code of every sliced plate as its own file">Export all G-code ({slicedPlateCount})</button>
-                    )}
-                  </div>
-                )}
-              </div>
-              {gcodeUrl
-                ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</a>
-                : <button className="export-btn" disabled title="Export G-code — enabled after slicing">Export G-code</button>}
-            </div>
+            <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
+              plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
+              onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
+              canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
+              onExportAll={exportAllGcode} gcodeUrl={gcodeUrl} />
           </aside>
         )}
       </div>
