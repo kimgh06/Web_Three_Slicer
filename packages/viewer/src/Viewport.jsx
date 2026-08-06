@@ -627,7 +627,16 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
         else if (d.type === 'overlay') { rebuildPaintOverlay(d.enf, d.blk) }
       }
       // 30단계 OOM 감지: worker error/messageerror → 진행 중 슬라이스를 거부(사다리가 절약 재시도 판정).
-      const killPending = (msg) => { stopSupPoll(); supSabRef.current = null; const pnd = pendingSliceRef.current; if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); try { wk.terminate() } catch {} workerRef.current = null; pnd.reject(new Error(msg)) } else { setError(msg); setSlicing(false) } }
+      // 이미 버려진 워커의 뒤늦은 error 는 무시한다. emscripten abort 는 pthread 마다 error 이벤트를 올려
+      //  같은 워커가 여러 번 onerror 를 때린다 — 첫 번째가 대기 중 슬라이스를 거부하고 워커를 교체한 뒤,
+      //  나머지가 setError 로 배너를 덮어써서 사다리가 성공해도 실패 문구가 남았다.
+      const killPending = (msg) => {
+        if (workerRef.current !== wk) return
+        stopSupPoll(); supSabRef.current = null
+        const pnd = pendingSliceRef.current
+        if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); try { wk.terminate() } catch {} workerRef.current = null; pnd.reject(new Error(msg)) }
+        else { setError(msg); setSlicing(false) }
+      }
       wk.onerror = (ev) => killPending('Worker 종료(메모리 초과 추정): ' + (ev.message || 'worker error'))
       wk.onmessageerror = () => killPending('Worker 메시지 오류(구조화 복제 실패)')
       workerRef.current = wk
@@ -768,12 +777,27 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     })
   }
   function recreateWorker() { try { workerRef.current?.terminate() } catch {} ; workerRef.current = null; getWorker() }
-  // OOM 재시도 사다리: ① 정상(스트리밍) → 실패(오류/abort/워치독) 시 ② 워커 재생성 + 절약 모드(툴패스·시간
-  //  추정 생략, g-code 만)로 완주. 둘 다 실패면 throw → 호출부가 다운그레이드(간소화) 제안. 부분 g-code 는 주지 않음.
+  // OOM 재시도 사다리: ① 정상(스트리밍) → 실패(오류/abort/워치독) 시 ② 워커 재생성 + **classic 벽** 재시도
+  //  → ③ 워커 재생성 + 절약 모드(툴패스·시간 추정 생략, g-code 만)로 완주. 전부 실패면 throw → 호출부가
+  //  다운그레이드(간소화) 제안. 부분 g-code 는 주지 않는다.
+  //
+  // ②가 있는 이유(실측): Arachne 벽 생성은 Voronoi 다이어그램을 만드는데, CAD 테셀레이션(STEP/OCCT)처럼
+  //  정점이 용접되지 않고 슬라이버 삼각형이 섞인 메시의 슬라이스 폴리곤에서 퇴화 셀이 나와
+  //  "memory access out of bounds" 로 워커가 죽는다(업스트림 디버그 빌드에선 Voronoi.cpp:334 assert).
+  //  같은 모델이 wall_generator=classic 으로는 정상 완주 → 절약 모드보다 먼저 이 계단을 밟는다
+  //  (절약 모드는 인필만 줄여서 Arachne 크래시엔 무력하다).
   async function sliceLadder(buf, params) {
+    const isCancel = (e) => String(e?.message || e).includes('canceled')
     try { const r = await sliceOne(buf, JSON.stringify(params)); return { r, economy: !!(r.stats && r.stats.economy) } }
     catch (e1) {
-      if (String(e1?.message || e1).includes('canceled')) throw e1   // G002: 취소는 재시도 없이 전파
+      if (isCancel(e1)) throw e1   // G002: 취소는 재시도 없이 전파
+      if (params.wall_generator !== 'classic') {
+        recreateWorker()
+        try {
+          const r = await sliceOne(buf, JSON.stringify({ ...params, wall_generator: 'classic', keep_stages: false, reuse_stages: 0 }))
+          return { r, economy: !!(r.stats && r.stats.economy), classicWalls: true }
+        } catch (e2) { if (isCancel(e2)) throw e2 }
+      }
       recreateWorker()
       // 절약 재시도: 스테이지 캐시 미보존(힙 최소화) + 재사용 무효(새 워커라 캐시도 없음)
       const r = await sliceOne(buf, JSON.stringify({ ...params, economy: true, keep_stages: false, reuse_stages: 0 }))   // 실패 시 throw 전파
@@ -851,23 +875,26 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     lineWidthRef.current = deriveKernelParams(settings).line_width
     if (scope === 'all') {
       setSlicing(true); setProgress(0)
-      let sliced = 0, anyEconomy = false; const failed = []
+      let sliced = 0, anyEconomy = false, anyClassic = false; const failed = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
           const params = buildParams(merged)
           const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
-          const { r, economy } = await sliceLadder(merged.buf, params)   // 정상 실패 시 절약 재시도
-          lastGeomRef.current = economy ? null : dig   // 절약 완주면 캐시 미보존 → 재사용 불가
+          const { r, economy, classicWalls } = await sliceLadder(merged.buf, params)   // 정상 실패 시 classic 벽 → 절약 재시도
+          lastGeomRef.current = (economy || classicWalls) ? null : dig   // 절약/classic 완주면 파라미터가 달라 캐시 재사용 불가
           plateResultsRef.current[i] = r; refreshSlicedCount(); sliced++   // 자동 다운로드 없음 — 탭 전환으로 조회, 저장은 명시적 내보내기로
           if (economy) anyEconomy = true
+          if (classicWalls) anyClassic = true
         } catch (e) { lastGeomRef.current = null; failed.push(i + 1) }   // E1: 실패해도 이미 완주한 플레이트 g-code 는 보존/제공됨
       }
       setSlicing(false)
       if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('모든 플레이트 슬라이스 실패(절약 모드 포함) — 간소화 재시도를 시도하세요'); return }
       if (failed.length) setError(`플레이트 ${failed.join(', ')} 실패 — 완주한 ${sliced}개 결과는 유지됨(탭에서 조회·내보내기)`)
+      else { setError(''); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('메모리 압박 — 일부 플레이트를 절약 모드로 완주(프리뷰 없음, G-code 정상)')
+      else if (anyClassic) setSliceNotice('Arachne 벽 생성 실패(퇴화 지오메트리) — classic 벽으로 완주(G-code 정상)')
       showPlateResult(plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0])
     } else {
       const __tm0 = performance.now()   // [vp-prof] 전처리 계측(임시)
@@ -879,11 +906,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       try {
         const params = buildParams(merged)
         const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
-        const { r, economy } = await sliceLadder(merged.buf, params)
-        lastGeomRef.current = economy ? null : dig
+        const { r, economy, classicWalls } = await sliceLadder(merged.buf, params)
+        lastGeomRef.current = (economy || classicWalls) ? null : dig
         if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); setSlicing(false); showPlateResult(idx0)
+        setError(''); setDowngradeOffer(null)   // 사다리 하위 계단이 성공 — 실패한 첫 시도의 배너를 남기지 않는다
         if (economy) setSliceNotice('메모리 압박 — 절약 모드로 완주(프리뷰 없음, G-code 는 다운로드 가능)')
+        else if (classicWalls) setSliceNotice('Arachne 벽 생성 실패(퇴화 지오메트리) — classic 벽으로 완주(G-code 정상)')
       } catch (e) {
         setSlicing(false); lastGeomRef.current = null
         if (String(e?.message || e).includes('canceled')) { setSliceNotice('슬라이스 취소됨'); return }
@@ -1139,11 +1168,14 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     </>
   )
 
+  // registerLoader() 로 포맷이 늘어날 수 있으므로 렌더 시점에 계산한다.
+  const EXT_LABEL = SUPPORTED_EXT.map(e => e.toUpperCase()).join(' · ')
+
   return (
     <ShadowHost css={shadowCss}>
     <div className="app-shell">
       {/* 공용 숨김 파일 입력 */}
-      <input ref={fileInputRef} type="file" accept=".stl,.obj,.3mf,.amf,.ply" multiple onChange={onFiles} title="STL·OBJ·3MF·AMF·PLY (여러 개 선택 가능)" data-testid="stl-input" style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={onFiles} title={`${EXT_LABEL} (여러 개 선택 가능)`} data-testid="stl-input" style={{ display: 'none' }} />
 
       {/* S1 상단바 */}
       <header className="topbar">
@@ -1184,8 +1216,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               <div className="empty-hint" data-testid="empty-hint">
                 <div className="eh-icon">📦</div>
                 <div className="eh-title">파일을 드래그하거나 선택하세요</div>
-                <div className="eh-sub">STL · OBJ · 3MF · AMF · PLY</div>
-                <button className="eh-btn" onClick={() => fileInputRef.current?.click()} data-testid="empty-pick" title="STL·OBJ·3MF·AMF·PLY 파일 선택 (여러 개 가능)">파일 선택</button>
+                <div className="eh-sub">{EXT_LABEL}</div>
+                <button className="eh-btn" onClick={() => fileInputRef.current?.click()} data-testid="empty-pick" title={`${EXT_LABEL} 파일 선택 (여러 개 가능)`}>파일 선택</button>
               </div>
             )}
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">여기에 놓기 (STL/OBJ/3MF/AMF/PLY)</div>}
