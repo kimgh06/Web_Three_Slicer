@@ -96,6 +96,7 @@ TS=treesupport_port; TL=$TS/libslic3r
 TS_UNIQUE_SRC="
   $TL/treesupport_bridge_impl.cpp $TL/selector_bridge_impl.cpp $TL/TriangleSelector.cpp
   $TL/Support/SupportCommon.cpp $TL/Support/TreeModelVolumes.cpp $TL/Support/TreeSupport3D.cpp $TL/Support/TreeSupport.cpp
+  $TL/Support/SupportMaterial.cpp $TL/layerregion_flow_impl.cpp
   $TL/Flow.cpp $TL/Layer.cpp $TL/MutablePolygon.cpp $TL/BuildVolume.cpp $TL/SurfaceCollection.cpp
   $TL/TriangleMesh.cpp $TL/TriangleMeshSlicer.cpp
   $TL/Fill/FillLightning.cpp $TL/MinimumSpanningTree.cpp $TL/ExtrusionEntity.cpp

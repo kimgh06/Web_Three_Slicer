@@ -58,6 +58,9 @@
 #include <emscripten/emscripten.h>  // emscripten_get_now() — 스테이지 계측
 #include <thread>    // (mt) PASS 1 레이어 병렬 — __EMSCRIPTEN_PTHREADS__ 빌드에서만 실사용
 #include <atomic>
+#include <mutex>     // (mt) 시간추정 오버랩 큐 — __EMSCRIPTEN_PTHREADS__ 빌드에서만 실사용
+#include <condition_variable>
+#include <deque>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -121,6 +124,19 @@ struct Params {
   int    support_interface_bottom_layers=0;             // support_interface_bottom_layers (0=없음)
   bool   support_grid_snap=true;                        // 원본 SupportGridPattern 상당(grid 스타일 기본 동작)
   double tree_lite_shrink=0.5, tree_lite_min_radius=1.5;// tree_lite 테이퍼 상수(자체 근사 — 대응 원본 키 없음)
+  // WP1: 실 트리 서포트(support_style=tree) 형상 키 — 기본값은 원본 PrintConfig 기본값과 동일
+  std::string tree_style="organic";                     // organic|slim|strong|hybrid (원본 support_style smsTree*)
+  double tree_support_branch_angle=40.0;                // tree_support_branch_angle_organic (deg)
+  double tree_support_angle_slow=25.0;                  // tree_support_angle_slow (deg)
+  double tree_support_branch_diameter=2.0;              // tree_support_branch_diameter_organic (mm)
+  double tree_support_branch_distance=1.0;              // tree_support_branch_distance_organic (mm)
+  double tree_support_branch_diameter_angle=5.0;        // tree_support_branch_diameter_angle (deg)
+  double tree_support_tip_diameter=0.8;                 // tree_support_tip_diameter (mm)
+  double tree_support_top_rate=30.0;                    // tree_support_top_rate (%)
+  int    tree_support_wall_count=0;                     // tree_support_wall_count (organic 은 내부 max(1,·))
+  double printable_height=250.0;                        // printable_height (mm) — 트리 BuildVolume 높이
+  bool   independent_support_layer_height=false;        // 커널 z 그리드 제약상 기본 false(갭 레이어 양자화)
+  double support_object_first_layer_gap=0.2;            // support_object_first_layer_gap (mm)
   int    raft_layers=0;                                // raft_layers
   double raft_expansion=1.5;                           // raft_expansion (mm). 원본 default 1.5 (기존 하드코딩 3.0)
   double raft_contact_distance=0.1;                    // raft_contact_distance (mm)
@@ -287,6 +303,19 @@ static Params parse_params(const std::string& j) {
   p.support_grid_snap             = jbool(j,"support_grid_snap",p.support_grid_snap);
   p.tree_lite_shrink              = jget(j,"tree_lite_shrink",p.tree_lite_shrink);
   p.tree_lite_min_radius          = jget(j,"tree_lite_min_radius",p.tree_lite_min_radius);
+  // WP1: 실 트리 서포트 형상 키 파싱 — 원본 UI 키(organic 접미사 포함)를 우선, 무접미사 키 폴백
+  p.tree_style                    = jstr(j,"tree_style",p.tree_style);
+  p.tree_support_branch_angle     = jget(j,"tree_support_branch_angle_organic",jget(j,"tree_support_branch_angle",p.tree_support_branch_angle));
+  p.tree_support_angle_slow       = jget(j,"tree_support_angle_slow",p.tree_support_angle_slow);
+  p.tree_support_branch_diameter  = jget(j,"tree_support_branch_diameter_organic",jget(j,"tree_support_branch_diameter",p.tree_support_branch_diameter));
+  p.tree_support_branch_distance  = jget(j,"tree_support_branch_distance_organic",jget(j,"tree_support_branch_distance",p.tree_support_branch_distance));
+  p.tree_support_branch_diameter_angle = jget(j,"tree_support_branch_diameter_angle",p.tree_support_branch_diameter_angle);
+  p.tree_support_tip_diameter     = jget(j,"tree_support_tip_diameter",p.tree_support_tip_diameter);
+  p.tree_support_top_rate         = jget(j,"tree_support_top_rate",p.tree_support_top_rate);
+  p.tree_support_wall_count       = (int)jget(j,"tree_support_wall_count",p.tree_support_wall_count);
+  p.printable_height              = jget(j,"printable_height",p.printable_height);
+  p.independent_support_layer_height = jbool(j,"independent_support_layer_height",p.independent_support_layer_height);
+  p.support_object_first_layer_gap= jget(j,"support_object_first_layer_gap",p.support_object_first_layer_gap);
   p.raft_expansion                = jget(j,"raft_expansion",p.raft_expansion);
   p.raft_contact_distance         = jget(j,"raft_contact_distance",p.raft_contact_distance);
   p.raft_first_layer_height       = jget(j,"raft_first_layer_height",p.raft_first_layer_height);
@@ -702,6 +731,33 @@ static void rotate_seam(Path& p, int mode, SeamCtx& sc, double nozX, double nozY
 }
 
 // ---- G-code 라이터 (상대 E, z_hop, 파라미터 리트랙션) --------------------------
+// (성능) G-code 핫패스 고정소수점 포매터 — snprintf 대비 ~5배(fmt_bench2 실측: 데이터셋 2종×2회, 불일치 0/2M).
+//  반올림 경계(|frac−0.5|<1e-6)는 nullptr 반환 → 호출부가 원래 snprintf 로 폴백해 byte-identical 보장.
+//  부호는 signbit(v)로 결정(−0.0 포함) — snprintf 의 "-0.000" 출력과 일치.
+static const long long FMT_P10[] = {1,10,100,1000,10000,100000};
+static inline char* fmt_fixed_safe(char* p, double v, int prec) {
+  double av = std::fabs(v);
+  double t  = av * FMT_P10[prec];
+  double fr = t - std::floor(t);
+  if (fr > 0.5 - 1e-6 && fr < 0.5 + 1e-6) return nullptr;   // 반올림 경계 → snprintf 폴백
+  long long sc = (long long)llround(t);
+  if (std::signbit(v)) *p++ = '-';
+  long long ip = sc / FMT_P10[prec], fp = sc % FMT_P10[prec];
+  char tmp[24]; int n = 0;
+  do { tmp[n++] = (char)('0' + ip % 10); ip /= 10; } while (ip);
+  while (n) *p++ = tmp[--n];
+  *p++ = '.';
+  for (int k = prec - 1; k >= 0; --k) { p[k] = (char)('0' + fp % 10); fp /= 10; }
+  return p + prec;
+}
+static inline char* fmt_i(char* p, int v) {
+  if (v < 0) { *p++ = '-'; v = -v; }
+  char tmp[12]; int n = 0;
+  do { tmp[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+  while (n) *p++ = tmp[--n];
+  return p;
+}
+
 struct GW {
   std::string s;
   double px=0, py=0, z=0;
@@ -765,26 +821,47 @@ struct GW {
     double fa = PI * p.filament_diameter * p.filament_diameter / 4.0;
     e_per_mm = A / fa * p.flow_ratio;
   }
+  // WP3: 원본 부피 유량(mm³/mm, ExtrusionPath::mm3_per_mm) 직접 설정 — 트리 서포트가 원본 Flow 가 계산한
+  //  유량(브리징 접촉층 등 폭·높이 사각근사와 다른 경우 포함)을 그대로 재현한다.
+  void set_e_per_mm_vol(double mm3, const Params& p) {
+    if (mm3 < 0) mm3 = 0;
+    double fa = PI * p.filament_diameter * p.filament_diameter / 4.0;
+    e_per_mm = mm3 / fa * p.flow_ratio;
+  }
   void raw(const char* c){ s += c; s += '\n'; }
+  // 핫패스 라인 방출 — fast path(고정소수점) 실패 시 원래 snprintf 포맷으로 폴백(byte-identical).
+  inline void line_xyf(const char* head, double a, double b, int f, const char* fbfmt) {
+    char* q = buf; size_t hl = strlen(head); memcpy(q, head, hl); q += hl;
+    char* r = fmt_fixed_safe(q, a, 3);
+    if (r) { memcpy(r, " Y", 2); r = fmt_fixed_safe(r+2, b, 3); }
+    if (r) { memcpy(r, " F", 2); r = fmt_i(r+2, f); *r = '\0'; raw(buf); return; }
+    std::snprintf(buf, sizeof buf, fbfmt, a, b, f); raw(buf);
+  }
+  inline void line_vf(const char* head, double v, int prec, int f, const char* fbfmt) {
+    char* q = buf; size_t hl = strlen(head); memcpy(q, head, hl); q += hl;
+    char* r = fmt_fixed_safe(q, v, prec);
+    if (r) { memcpy(r, " F", 2); r = fmt_i(r+2, f); *r = '\0'; raw(buf); return; }
+    std::snprintf(buf, sizeof buf, fbfmt, v, f); raw(buf);
+  }
   // 리트랙션 포함 직선 트래블 (원본 동작)
   void travel_raw(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
     bool retract = d > retract_min_travel && retract_len > 0;
     if (retract) {
-      std::snprintf(buf,sizeof buf,"G1 E-%.4f F%d", retract_len, retractF); raw(buf);
-      if (z_hop > 0) { std::snprintf(buf,sizeof buf,"G1 Z%.3f F%d", z + z_hop, fTravel); raw(buf); }
+      line_vf("G1 E-", retract_len, 4, retractF, "G1 E-%.4f F%d");
+      if (z_hop > 0) line_vf("G1 Z", z + z_hop, 3, fTravel, "G1 Z%.3f F%d");
     }
-    std::snprintf(buf,sizeof buf,"G0 X%.3f Y%.3f F%d", x+offX, y+offY, fTravel); raw(buf);
+    line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
     if (retract) {
-      if (z_hop > 0) { std::snprintf(buf,sizeof buf,"G1 Z%.3f F%d", z, fTravel); raw(buf); }
-      std::snprintf(buf,sizeof buf,"G1 E%.4f F%d", retract_len, retractF); raw(buf);
+      if (z_hop > 0) line_vf("G1 Z", z, 3, fTravel, "G1 Z%.3f F%d");
+      line_vf("G1 E", retract_len, 4, retractF, "G1 E%.4f F%d");
     }
     px=x; py=y; curF=-1;
   }
   // 우회 내부 이동 (리트랙션 생략 — 재료 안쪽 유지, §6.5 데스크톱 동작)
   void travel_hop(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
-    std::snprintf(buf,sizeof buf,"G0 X%.3f Y%.3f F%d", x+offX, y+offY, fTravel); raw(buf);
+    line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
     px=x; py=y; curF=-1;
   }
   // 직선 A→B 가 아일랜드(벽 안쪽) 안에 (거의) 전부 들어오면 true
@@ -817,9 +894,34 @@ struct GW {
     return way;
   }
   // 스마트 트래블: 벽 횡단 검출 → (avoid 시) 경계 우회, 아니면 직선+횡단 카운트
+  // 빠른 가드(통계 전용) — avoid_walls=false 면 판정이 wall_crossings 카운터에만 쓰인다(G-code 무영향).
+  //  Clipper clip_open(트래블당 ~20µs, 방출 직렬부 최대 단일 비용으로 실측)을 정수 orientation 교차판정
+  //  + 중점 even-odd PIP 로 대체. 접선·공선 등 경계 케이스만 clip 판정과 다를 수 있음(카운터 오차 허용).
+  //  avoid_walls=true 는 우회 경로(G-code)가 판정에 의존 → 기존 seg_inside(clip_open) 유지.
+  bool seg_inside_fast(double ax,double ay,double bx,double by){
+    const cInt x1=(cInt)std::llround(ax*SCALE), y1=(cInt)std::llround(ay*SCALE);
+    const cInt x2=(cInt)std::llround(bx*SCALE), y2=(cInt)std::llround(by*SCALE);
+    auto orient=[](cInt ox,cInt oy,cInt px_,cInt py_,cInt qx,cInt qy)->int{
+      long long v=(long long)(px_-ox)*(long long)(qy-oy)-(long long)(py_-oy)*(long long)(qx-ox);
+      return v>0?1:(v<0?-1:0); };
+    for (const Path& poly : island){
+      size_t n=poly.size(); if (n<3) continue;
+      for (size_t i=0;i<n;++i){
+        const IntPoint& c=poly[i]; const IntPoint& d=poly[(i+1)%n];
+        int o1=orient(x1,y1,x2,y2,c.x(),c.y()), o2=orient(x1,y1,x2,y2,d.x(),d.y());
+        if (o1*o2>=0) continue;
+        int o3=orient(c.x(),c.y(),d.x(),d.y(),x1,y1), o4=orient(c.x(),c.y(),d.x(),d.y(),x2,y2);
+        if (o3*o4<0) return false;               // 진성 교차 → 경계 횡단
+      }
+    }
+    IntPoint m((x1+x2)/2,(y1+y2)/2);             // 비횡단 → 중점 포함 여부로 전체 판정
+    int cnt=0;
+    for (const Path& poly : island){ int r=PointInPolygon(m,poly); if (r==-1) return true; if (r!=0) ++cnt; }
+    return (cnt&1)==1;
+  }
   void travel(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
-    if (!island.empty() && !seg_inside(px,py,x,y)) {
+    if (!island.empty() && !(avoid_walls ? seg_inside(px,py,x,y) : seg_inside_fast(px,py,x,y))) {
       if (avoid_walls) {
         std::vector<DPt> way = detour_path(px,py,x,y);
         if (!way.empty()) { for (auto& wp:way) travel_hop(wp.x,wp.y,fTravel); travel_hop(x,y,fTravel); return; }
@@ -832,8 +934,16 @@ struct GW {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) return;
     int fUse = pe_feed(d, fPrint);               // PE-lite: 유량 변화율 한도 적용(off 면 fPrint)
     double dE = e_per_mm * d; filament += dE; ++segments;
-    if (fUse != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f F%d", x+offX,y+offY,dE,fUse); curF=fUse; }
-    else              { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f",     x+offX,y+offY,dE); }
+    char* r = buf; memcpy(r, "G1 X", 4); r += 4;
+    r = fmt_fixed_safe(r, x+offX, 3);
+    if (r) { memcpy(r, " Y", 2); r = fmt_fixed_safe(r+2, y+offY, 3); }
+    if (r) { memcpy(r, " E", 2); r = fmt_fixed_safe(r+2, dE, 5); }
+    if (r) {                                     // fast path 성공 — F 는 변경 시만
+      if (fUse != curF) { memcpy(r, " F", 2); r = fmt_i(r+2, fUse); }
+      *r = '\0';
+    } else if (fUse != curF) std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f F%d", x+offX,y+offY,dE,fUse);
+    else                     std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f",     x+offX,y+offY,dE);
+    curF = fUse;
     raw(buf); px=x; py=y;
   }
   // 스파이럴용: Z 를 함께 올리는 압출
@@ -957,16 +1067,23 @@ static void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, doubl
   }
   if (anyRun) gw.pe_end_run();
 }
-// 19단계: 오가닉 트리 서포트 방출 — 열린 폴리라인 + per-path 폭. 각 path 마다 set_e_per_mm_width 로 E 계산,
-//  g_seg_w_cur 로 리본 렌더 폭 기록(인터페이스/본체 폭 차이가 E·렌더에 반영). 방출 후 기본 폭/E 복원.
-static void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<std::pair<Path,float>>& lines,
+// 19단계→WP3: 실 트리 서포트 툴패스 1개 — per-path 폭 + 원본 ExtrusionPath 의 role/height/mm3_per_mm 보존.
+struct TreePath { Path pl; float w; int role; float h; float mm3; };
+// 19단계→WP3: 트리 서포트 방출 — 열린 폴리라인 + per-path 폭. E 는 원본 mm3_per_mm 가 있으면 그대로
+//  (set_e_per_mm_vol — 브리징 접촉층 등 원본 Flow 유량 재현), 없으면 기존 폭×높이 사각근사.
+//  PE role 은 path 별 원본 role(base 14 / interface 15)로 런을 나눠 원본 역할 구분을 유지한다.
+static void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& lines,
                           double z, double h, const Params& p, float type, int fPrint, int fTravel){
-  bool anyRun=false;
+  int curRole = -1;
   for (const auto& lw : lines) {
-    const Path& ln = lw.first;
+    const Path& ln = lw.pl;
     if (ln.size() < 2) continue;
-    if (!anyRun) { gw.pe_begin_run(pe_role_of(type), fPrint); anyRun=true; }
-    gw.set_e_per_mm_width(lw.second, h, p); g_seg_w_cur = lw.second;
+    const int role = (lw.role > 0) ? lw.role : pe_role_of(type);
+    if (role != curRole) { if (curRole >= 0) gw.pe_end_run(); gw.pe_begin_run(role, fPrint); curRole = role; }
+    const double ph = (lw.h > 1e-6) ? lw.h : h;
+    if (lw.mm3 > 1e-9) gw.set_e_per_mm_vol(lw.mm3, p);
+    else               gw.set_e_per_mm_width(lw.w, ph, p);
+    g_seg_w_cur = lw.w;
     std::vector<DPt> pts; pts.reserve(ln.size());
     for (auto& q:ln) pts.push_back({q.x()*INV, q.y()*INV});
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
@@ -974,7 +1091,7 @@ static void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<std:
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
     gw.extrude_run(pts, fPrint);
   }
-  if (anyRun) gw.pe_end_run();
+  if (curRole >= 0) gw.pe_end_run();
   g_seg_w_cur = (float)p.line_width; gw.set_e_per_mm(h, p);   // 기본 폭/E 복원
 }
 // 7단계: 이식된 실제 Arachne 가변폭 벽 방출. 세그먼트별 폭으로 E 계산(set_e_per_mm_width) + widths 기록.
@@ -1080,8 +1197,10 @@ struct LayerData {
   Paths fill;                    // 인필 영역 (최내벽 -w/2)
   Paths topSurf, botSurf;        // 노출 표면 (이웃 Difference)
   Paths supBase, supIface;       // 서포트 본체(sparse) / 인터페이스(solid)
-  std::vector<std::pair<Path,float>> supTree;  // 18/19단계: 실 오가닉 트리 서포트 툴패스(폴리라인+per-path 폭, type5)
+  // 18/19단계→WP3: 실 트리 서포트 툴패스(TreePath: 폭+원본 role/height/mm3_per_mm 보존)
+  std::vector<TreePath> supTree;
   Paths thin;                    // 씬월(폭<2w) 영역 — 중심선 1줄로 처리
+  Paths island;                  // 트래블 유지 구역(contour −w/2) — PASS1(병렬)에서 선계산, 방출 시 move
   std::vector<arachne_bridge::WLine> arachneWalls;  // 7단계: 실제 Arachne 가변폭 벽 (arachne 모드)
 };
 
@@ -1231,6 +1350,49 @@ static void strip_pe_tags(std::string& g) {
   g.swap(out);
 }
 
+#ifdef __EMSCRIPTEN_PTHREADS__
+// (mt) 시간추정 오버랩 — 방출 스레드(생산자)가 '\n' 경계 청크를 큐에 넣고, 워커 1개(소비자)가
+//  gcodeproc_bridge::estimate_begin/feed 를 전담 실행한다. 브릿지 상태(file-static g_gp)는 begin~feed 동안
+//  워커만 접근, finish() 의 join 이 happens-before 를 보장한 뒤 estimate_end() 를 호출자 스레드에서 수행.
+//  청크 내용·순서 불변 → 추정 결과 동일, G-code 무영향(golden 안전). 방출과 파싱이 겹쳐 벽시계만 단축.
+struct TimeFeeder {
+  std::thread th; std::mutex mu; std::condition_variable cv;
+  std::deque<std::string> q; bool done = false;
+  void begin(const gcodeproc_bridge::Limits& gl) {
+    th = std::thread([this, gl]{
+      gcodeproc_bridge::estimate_begin(gl);
+      for (;;) {
+        std::string c;
+        { std::unique_lock<std::mutex> lk(mu);
+          cv.wait(lk, [&]{ return !q.empty() || done; });
+          if (q.empty()) break;                       // done && 큐 소진 → 종료
+          c = std::move(q.front()); q.pop_front(); }
+        gcodeproc_bridge::estimate_feed(c);
+      }
+    });
+  }
+  void feed(std::string c) {
+    if (c.empty()) return;
+    { std::lock_guard<std::mutex> lk(mu); q.push_back(std::move(c)); }
+    cv.notify_one();
+  }
+  gcodeproc_bridge::Result finish() {
+    { std::lock_guard<std::mutex> lk(mu); done = true; }
+    cv.notify_one(); th.join();
+    return gcodeproc_bridge::estimate_end();
+  }
+};
+#endif
+
+// PASS2 레이어별 사전계산(기하 분리·인필 라인 생성) 결과 — 방출(직렬, gw/seam 상태)과 분리.
+//  레이어별 결정적·독립 계산만 담으므로 mt 빌드에서 워커 선계산 가능(결과 동일, golden 로 검증).
+struct ThinRun { Paths line; double flow; };
+struct EmitPre {
+  Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supI, supB, flExtra, ironLines;
+  std::vector<ThinRun> thinRuns;
+  bool brim=false; int fPrint=0, fBridge=0, fSup=0;
+};
+
 // slice(Uint8Array stl, string paramsJson, function onProgress) → { gcode, stats, layers[] }
 // =============================================================================
 em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
@@ -1271,10 +1433,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // z 레벨 수 세기 (진행률 total)
   int N = 0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
-  int total = 2*N;
+  int total = 2*N + 2;   // +2 = 표면·서포트 완료 틱. 종전엔 PASS1(50%) 후 서포트가 끝날 때까지 무보고 → "50%에서 멈춤"으로 보였다.
 
   // 스테이지 계측 (stats 로만 노출 — g-code 무영향, golden 안전)
   double tw0 = emscripten_get_now(), tw_p1 = 0, tw_p15 = 0, tw_sup = 0;
+  double t_flush = 0;          // flush_layer(JS 경계: to_f32/layersArr/sink + 추정 피드) 누적 — 나머지가 G1 포매팅 몫
 
   // ---- PASS 1: 레이어별 윤곽·벽·인필영역 ----
   //  레이어 간 의존 0 (읽기: tris/p 공유 불변, 쓰기: L[i] 독립) → -pthread 빌드에서 레이어 병렬.
@@ -1291,6 +1454,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       Paths loops = chain_polys(segs);
       ld.contour = SimplifyPolygons(loops, pftEvenOdd);
       if (!ld.contour.empty()) {
+        ld.island = offset_paths(ld.contour, -w*0.5);   // 트래블 가드 구역 — 방출 루프의 직렬 offset 을 여기(병렬)로 이동
         // 씬월(Arachne-lite): 폭<2w 라 벽 오프셋이 소실되는 영역 검출 → 벽 대신 중심선 1줄.
         //  두꺼운 코어(morph_open, 폭≥2w)에서만 벽 생성 → 얇은 부위 이중압출 방지.
         //  ⚠ 완전한 Arachne(가변폭 스켈레톤) 아님 — 단일 중심선 근사.
@@ -1375,11 +1539,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   tw_p15 = emscripten_get_now();
+  report(N+1, total);                            // 표면 검출 완료 틱 (서포트 생성 진입 표시)
 
   // ---- PASS 1.6: 서포트 (오버행 검출 → 수직 투영 → iface/base) ----
   double treeZMaxResid = -1.0; int treeSupLayers = 0;   // 19단계: 트리 서포트 z 정합 진단(오브젝트 z 그리드와 오차)
   if (p.enable_support) {
-   if (p.support_style == "tree") {
+   // WP2: "grid"/"snug" 도 이제 원본 포트(PrintObjectSupportMaterial) 경로 — 자체 재구현은 tree_lite
+   //  (및 명시적 "grid_kernel" 폴백)만 사용한다. tree 와 동일한 파사드/좌표 변환/rebind 를 공유한다.
+   const bool portNormal = (p.support_style == "grid" || p.support_style == "snug");
+   if (p.support_style == "tree" || portNormal) {
     // 18단계: 실 오가닉 TreeSupport(generate_tree_support_3D) — 커널 lslices(mm)로 파사드 PrintObject
     //  그래프 구성 → TreeSupport::generate() → SupportLayer::support_fills(브랜치 툴패스)를 type5 로 방출.
     //  grid/tree_lite(단순 하강 근사)와 별개 경로. treesupport_bridge 가 ODR 경계(포트 타입 격리).
@@ -1393,9 +1561,17 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     const double tcx = p.auto_center ? 0.0 : cx, tcy = p.auto_center ? 0.0 : cy;
     std::vector<std::vector<treesupport_bridge::Ring>> slices(N);
     std::vector<double> zs(N);
+    // [초고밀도 윤곽 가드] arachne 가드와 동일 규칙: 레이어당 2만 점 초과 시에만 5µm 감량.
+    //  원본 OrcaSlicer 는 resolution 단순화를 거친 윤곽을 서포트에 넘기지만 커널 PASS1 은 생략하므로
+    //  대형 모델(774k tri 실측)에서 포트 서포트 비용이 점수에 비례 폭증. 임계 미만(골든 픽스처)은 무변경.
+    auto sanitized = [&](const Paths& src) -> Paths {
+      size_t npts = 0; for (const Path& q : src) npts += q.size();
+      if (npts <= 20000) return src;
+      Paths out = src; CleanPolygons(out, SCALE * 0.005); return out;
+    };
     for (int j=0;j<N;++j) {
       zs[j] = L[j].z;
-      for (const Path& ring : L[j].contour) {
+      for (const Path& ring : sanitized(L[j].contour)) {
         treesupport_bridge::Ring r; r.reserve(ring.size());
         for (const IntPoint& pt : ring) r.emplace_back(pt.x()*INV - tcx, pt.y()*INV - tcy);
         if (r.size()>=3) slices[j].push_back(std::move(r));
@@ -1403,15 +1579,59 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     }
     treesupport_bridge::Params tsp;
     tsp.layer_height_mm=p.layer_height; tsp.nozzle_mm=p.nozzle_diameter;
+    tsp.first_layer_height_mm=p.first_layer_height;                 // WP1: 원본 initial_layer_print_height 대응
+    tsp.line_width_mm=p.line_width;                                 // WP1: lslices_extrudable 필터 + auto-threshold flow
     tsp.support_threshold_angle=p.support_threshold_angle;
     tsp.support_top_z_distance=p.support_top_z_distance;
+    tsp.support_bottom_z_distance=p.support_bottom_z_distance;      // WP1: → gap_object_support
     tsp.support_xy_distance=p.support_xy_distance;
+    tsp.first_layer_gap_mm=p.support_object_first_layer_gap;        // WP1
     tsp.interface_top_layers=p.support_interface_top_layers;
+    tsp.interface_bottom_layers=p.support_interface_bottom_layers;  // WP1: -1 => top 과 동일
+    tsp.independent_support_layer_height=p.independent_support_layer_height; // WP1: 갭 양자화 스위치
     tsp.support_auto=p.support_auto;                                // 20단계: 자동/수동(페인트 enforcer만)
     tsp.support_line_width_mm=p.support_line_width;                 // 19단계: 실 서포트 압출폭(config→flow→per-path)
+    tsp.support_angle_deg=p.support_angle;                          // WP1: SupportParameters::base_angle
+    tsp.on_build_plate_only=p.support_on_build_plate_only;          // WP1
+    tsp.tree_style=p.tree_style;                                    // WP1: organic|slim|strong|hybrid
+    tsp.branch_angle_deg=p.tree_support_branch_angle;               // WP1: 트리 형상 키 일괄 배선
+    tsp.angle_slow_deg=p.tree_support_angle_slow;
+    tsp.branch_diameter_mm=p.tree_support_branch_diameter;
+    tsp.branch_distance_mm=p.tree_support_branch_distance;
+    tsp.branch_diameter_angle_deg=p.tree_support_branch_diameter_angle;
+    tsp.tip_diameter_mm=p.tree_support_tip_diameter;
+    tsp.top_rate_pct=p.tree_support_top_rate;
+    tsp.wall_count=p.tree_support_wall_count;
+    tsp.interface_pattern=p.support_interface_pattern;              // WP1: 인터페이스/베이스 패턴·간격
+    tsp.base_pattern=p.support_base_pattern;
+    tsp.interface_spacing_mm=p.support_interface_spacing;
+    tsp.base_pattern_spacing_mm=p.support_base_pattern_spacing;
     tsp.bed_width_mm=p.bed_width; tsp.bed_depth_mm=p.bed_depth;
+    tsp.printable_height_mm=p.printable_height;                     // WP1: BuildVolume 높이(이전 기본 100mm 고정)
     tsp.resolution_mm=p.gcode_resolution;   // 33단계: 트리 경로 단순화 허용오차(원본 print_config "resolution")
-    std::vector<treesupport_bridge::LayerOut> tlayers = treesupport_bridge::generate(slices, zs, tsp);
+    std::vector<treesupport_bridge::LayerOut> tlayers;
+    if (portNormal) {
+      // WP2: 원본 normal(grid/snug) 서포트 — PASS 1.5 표면(topSurf/botSurf)을 stTop/stBottom 으로 공급
+      //  (bottom contact 검출·sharp-tail 이 원본 그대로 동작). 좌표는 슬라이스와 동일하게 −tcx/−tcy 이동.
+      tsp.normal_style = p.support_style;                           // grid|snug → smsGrid|smsSnug
+      tsp.support_expansion_mm = p.support_expansion;
+      tsp.bridge_no_support    = p.bridge_no_support;
+      tsp.remove_small_overhang= p.support_remove_small_overhang;
+      tsp.threshold_overlap_pct= p.support_threshold_overlap * 100.0; // 커널 비율(0.5) → 원본 %(50)
+      std::vector<treesupport_bridge::LayerSurf> surfs(N);
+      auto toRings=[&](const Paths& psRaw, std::vector<treesupport_bridge::Ring>& out){
+        Paths ps = sanitized(psRaw);               // 표면도 동일 가드(대형 모델 한정 감량)
+        for (const Path& ring : ps) {
+          treesupport_bridge::Ring r; r.reserve(ring.size());
+          for (const IntPoint& pt : ring) r.emplace_back(pt.x()*INV - tcx, pt.y()*INV - tcy);
+          if (r.size()>=3) out.push_back(std::move(r));
+        }
+      };
+      for (int j=0;j<N;++j) { toRings(L[j].topSurf, surfs[j].top); toRings(L[j].botSurf, surfs[j].bottom); }
+      tlayers = treesupport_bridge::generate_normal(slices, zs, surfs, tsp);
+    } else {
+      tlayers = treesupport_bridge::generate(slices, zs, tsp);
+    }
     for (const treesupport_bridge::LayerOut& lo : tlayers) {
       // 19단계 z 정합: 서포트 레이어는 오브젝트 레이어와 동기(layer_z 가 동일 slicing_params 사용)되므로
       //  print_z 가 오브젝트 z 그리드 위에 정확히 놓인다. 최소잔차 오브젝트 레이어에 바인딩하고 잔차를 기록
@@ -1424,7 +1644,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         Path pl; pl.reserve(ln.pts.size());
         for (const auto& xy : ln.pts)
           pl.push_back(IntPoint((cInt)std::llround((xy.first+tcx)*SCALE),(cInt)std::llround((xy.second+tcy)*SCALE)));  // 28단계: 모델 위치로 복귀
-        if (pl.size()>=2) L[best].supTree.push_back({std::move(pl), (float)ln.width});  // per-path 폭 보존(19단계)
+        if (pl.size()>=2) L[best].supTree.push_back({std::move(pl), (float)ln.width,
+                              ln.role, (float)ln.height, (float)ln.mm3_per_mm});  // WP3: role/height/mm3 보존
       }
     }
    } else {
@@ -1672,17 +1893,41 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   for (int k=0;k<4;++k){ gl.max_speed[k]=glim.max_speed[k]; gl.max_accel[k]=glim.max_accel[k]; gl.max_jerk[k]=glim.max_jerk[k]; }
   gl.accel_print=glim.accel_print; gl.accel_travel=glim.accel_travel; gl.accel_retract=glim.accel_retract;
   gl.min_extrude_rate=glim.min_extrude_rate; gl.min_travel_rate=glim.min_travel_rate;
+#ifdef __EMSCRIPTEN_PTHREADS__
+  // (mt) 오버랩 대상: 스트리밍 full 추정 + 배치 full 추정(realPE 는 전체 문자열 후처리가 필요해 제외,
+  //  transcribed 는 다른 엔진이라 기존 경로 유지). 배치는 gw.s 누적분을 flush 시점마다 잘라 피드한다.
+  TimeFeeder feeder;
+  const bool overlapBatch = !streaming && !realPE && p.time_engine != "transcribed";
+  size_t fedOff = 0;                            // 배치 오버랩: gw.s 에서 이미 피드한 오프셋
+  if (streamTime || overlapBatch) feeder.begin(gl);
+  auto feed_batch_tail = [&]{                   // 마지막 flush 이후분(푸터 포함) 피드
+    std::string c = gw.s.substr(fedOff); fedOff = gw.s.size();
+    if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(c);   // 배치도 추정 입력은 스트리밍과 동일하게 태그 제거
+    feeder.feed(std::move(c));
+  };
+#else
   if (streamTime) gcodeproc_bridge::estimate_begin(gl);
+#endif
   // 레이어 방출: 배치=layersArr 누적, 스트리밍=청크(gw.s 직전 flush 이후분)+툴패스 방출 후 gw.s 해제.
   //  프리앰블은 첫 flush 청크에, 마무리는 마지막 flush 청크에 포함 → 청크 이어붙이면 배치 gw.s 와 byte-identical.
   auto flush_layer = [&](double z, int idx, std::vector<float>& tp, std::vector<float>& widths) {
+    double tf0 = emscripten_get_now();
+    struct TF { double& acc, t0; ~TF(){ acc += emscripten_get_now() - t0; } } tf{t_flush, tf0};
     if (!streaming) {
       em::val Lo=em::val::object(); Lo.set("z",z); Lo.set("paths",to_f32(tp)); Lo.set("widths",to_f32(widths));
-      layersArr.call<void>("push", Lo); return;
+      layersArr.call<void>("push", Lo);
+#ifdef __EMSCRIPTEN_PTHREADS__
+      if (overlapBatch) feed_batch_tail();               // 레이어 경계('\n' 정렬)마다 추정 워커에 증분 피드
+#endif
+      return;
     }
     std::string chunk; chunk.swap(gw.s);                 // 누적분 인출 + gw.s 비움(힙 해제)
     if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(chunk);   // 줄 단위 무상태 필터(청크=배치 동일)
+#ifdef __EMSCRIPTEN_PTHREADS__
+    if (streamTime) feeder.feed(chunk);                  // 복사 피드 — chunk 는 이후 sink 로도 전달
+#else
     if (streamTime) gcodeproc_bridge::estimate_feed(chunk);
+#endif
     em::val paths = economy ? em::val::array() : to_f32(tp);
     em::val wid   = economy ? em::val::array() : to_f32(widths);
     sink(z, idx, chunk, paths, wid);
@@ -1720,69 +1965,26 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   tw_sup = emscripten_get_now();
+  report(N+2, total);                            // 서포트 생성 완료 틱
 
-  // ---- PASS 2: 솔리드/스파스 인필 분리 + 서포트 + 방출 ----
-  for (int i=0;i<N;++i) {
-    // 조기 해제: 방출이 지난 레이어 중 이후 역참조 범위(botSurf ≤ bottom_shell_layers−1,
-    //  supIface ≤ 1) 밖은 즉시 비움 → 방출 단계 힙 상주(전 레이어 L[]) 평탄화, 대형 모델 OOM 완화.
-    //  참조 범위 밖만 비우므로 G-code 불변(golden byte-identical 로 검증).
-    { int old = i - std::max(p.bottom_shell_layers, 1) - 1;
-      if (old >= 0) L[old] = LayerData{}; }
+  // ---- PASS 2 사전계산: 레이어별 기하 분리·인필 라인 생성 (아래 방출 루프에서 분리) ----
+  //  기존 방출 루프 내 계산 블록의 verbatim 이동 — 수식·호출 순서 불변(golden byte-identical 로 검증).
+  auto compute_pre = [&](int i) -> EmitPre {
+    EmitPre ep;
     LayerData& ld = L[i];
-    double zE = ld.z + zShift;                                        // 실제 방출 Z (래프트 시프트)
-    gw.set_e_per_mm(ld.h, p);
-    gw.z = zE;
-    gw.pe_reset();                                                    // PE-lite: 레이어 시작 유량 컨텍스트 리셋
-    gw.island = ld.contour.empty() ? Paths{} : offset_paths(ld.contour, -w*0.5);  // 벽 회피: 트래블 유지 구역(항상 검출, avoid 시만 우회)
-    seamCtx.rng = 2654435761u * (uint32_t)(i+1);                      // 레이어별 결정적 난수 시드(random 심)
-    std::vector<float> tp;
-    std::vector<float> widths; g_seg_w = &widths; g_seg_w_cur = (float)w;  // 7단계: 세그먼트별 폭 병렬 기록
+    const double zE = ld.z + zShift;
+    ep.fSup = (int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
+    // 서포트 라인 — 모델 유무 공통(빈 레이어 분기와 동일 수식: angB==supBaseAng, ifSp==ifaceSp)
+    const double supBaseAng  = p.support_angle + (i % 2 ? -45.0 : 45.0);
+    const double supIfaceAng = supBaseAng + 90.0;
+    auto resolvePat = [](const std::string& s) { return (s=="default"||s=="auto"||s=="rectilinear-grid") ? std::string("rectilinear") : s; };
+    const double ifaceSp = (p.support_interface_spacing > 1e-6) ? (w + p.support_interface_spacing) : solid_spacing;
+    ep.supI = (p.enable_support && !ld.supIface.empty())
+      ? build_sparse(ld.supIface, resolvePat(p.support_interface_pattern), supIfaceAng, ifaceSp, i, zE, w, 1.0) : Paths{};
+    ep.supB = (p.enable_support && !ld.supBase.empty())
+      ? build_sparse(ld.supBase, resolvePat(p.support_base_pattern), supBaseAng, support_spacing, i, zE, w, p.support_density) : Paths{};
+    if (ld.contour.empty() || p.spiral_mode) return ep;   // 빈 레이어=서포트만, 스파이럴=ep 미사용
 
-    char cm[72];
-    if (ld.contour.empty()) {
-      // 33단계 [부유 모델 수정] 모델이 없는 레이어라도 **서포트는 방출해야 한다**.
-      //  기존에는 여기서 곧장 continue 해 서포트를 통째로 버렸다. 그 결과 부유 아일랜드
-      //  (예: 실물 Benchy 의 지붕 z32.2 / 굴뚝 z39.8) 아래를 받칠 기둥이 빈 구간에서 끊겨,
-      //  모델이 공중에서 시작했다(실측: z27.8 다음이 z32.2 — 4.4mm 구간 레이어 자체가 누락).
-      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (no model)",i,zE); gw.raw(cm);
-      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
-      gw.z = zE; gw.set_e_per_mm(ld.h, p); gw.pe_reset();
-      gw.set_fan(fan_S(i, p));                                        // 압출이 있는 레이어이므로 팬 램프도 동일 적용
-      const int fSup = (int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
-      // 지지 기둥만 있는 레이어 — 패턴/각도는 모델 있는 레이어와 동일 규칙(레이어 ±45° 교차).
-      const double angB = p.support_angle + (i % 2 ? -45.0 : 45.0);
-      auto rp = [](const std::string& s){ return (s=="default"||s=="auto"||s=="rectilinear-grid") ? std::string("rectilinear") : s; };
-      const double ifSp = (p.support_interface_spacing > 1e-6) ? (w + p.support_interface_spacing) : solid_spacing;
-      Paths eI = (p.enable_support && !ld.supIface.empty())
-        ? build_sparse(ld.supIface, rp(p.support_interface_pattern), angB+90.0, ifSp, i, zE, w, 1.0) : Paths{};
-      Paths eB = (p.enable_support && !ld.supBase.empty())
-        ? build_sparse(ld.supBase, rp(p.support_base_pattern), angB, support_spacing, i, zE, w, p.support_density) : Paths{};
-      if (!eI.empty() || !eB.empty()) {
-        gw.raw("; support");
-        if (!eI.empty()) emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel);
-        if (!eB.empty()) emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel);
-      }
-      if (p.enable_support && !ld.supTree.empty()) {
-        gw.raw("; support (organic tree — real ported TreeSupport)");
-        emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
-      }
-      flush_layer(zE, i, tp, widths);
-      report(N+i+1, total); continue;
-    }
-    std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.raw(cm);
-    gw.set_fan(fan_S(i, p));                                          // 냉각 팬 램프
-
-    // ===== 스파이럴(vase): 단일 외벽 z-램프 (인필/솔리드/서포트 없음) =====
-    if (p.spiral_mode) {
-      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
-      int fSp = (int)std::llround(((i==0&&nraft==0)?p.first_layer_speed:p.print_speed)*60);
-      emit_spiral(gw, tp, ld.walls.empty()?Paths{}:ld.walls[0], zE, ld.h, fSp, fTravel);
-      flush_layer(zE, i, tp, widths);
-      report(N+i+1, total); continue;
-    }
-    std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
-
-    // --- 방출 경로 미리 계산 (레이어 시간 추정 → 슬로다운 속도) ---
     // 갭필: 최내벽 안쪽 fill 의 morphological-open 잔여(폭<w 얇은 틈) → 중심선 근사(단일폭 라인).
     //  ⚠ 근사 — 메디얼축/가변폭 아님. open(X)=dilate(erode(X)), 잔여=X−open. fillCore 에서 제외해 이중압출 방지.
     Paths gap, fillCore = ld.fill;
@@ -1792,18 +1994,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       gap = offset_paths(offset_paths(gap, -w*0.1), w*0.1);            // <0.2w 노이즈 제거
       if (!gap.empty()) fillCore = clip_paths(ld.fill, gap, ctDifference);
     }
-    Paths gapLines = gap.empty() ? Paths{} : infill_clipped(gap, p.infill_angle, w);
+    ep.gapLines = gap.empty() ? Paths{} : infill_clipped(gap, p.infill_angle, w);
 
     // 씬월 중심선(폭<2w 영역) — 성분별 장축 중심선 1줄 + 국소폭 flow 보정
-    struct ThinRun { Paths line; double flow; };
-    std::vector<ThinRun> thinRuns;
     if (!ld.thin.empty()) {
       for (const Paths& comp : split_components(ld.thin)) {
         Paths line = centerline_of(comp, w);
         if (line.empty()) continue;
         double A = paths_area(comp), Ln = paths_len(line,false);
         double width = (Ln>1e-3) ? A/Ln : w;
-        thinRuns.push_back({std::move(line), std::min(2.0, std::max(0.4, width/w))});
+        ep.thinRuns.push_back({std::move(line), std::min(2.0, std::max(0.4, width/w))});
       }
     }
 
@@ -1823,56 +2023,155 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     double sa = (i%2==0) ? 45.0 : 135.0;
     // 21단계: 피처별 폭(첫 레이어는 initial_layer 로 일괄). 기본(모든 피처 0→line_width) 시 값 동일 → 무회귀.
     bool firstL = (i==0 && nraft==0);
-    double wOuter  = firstL ? p.initial_layer_line_width : p.outer_wall_line_width;
-    double wInner  = firstL ? p.initial_layer_line_width : p.inner_wall_line_width;
     double wSolid  = firstL ? p.initial_layer_line_width : p.internal_solid_infill_line_width;
     double wTop    = firstL ? p.initial_layer_line_width : p.top_surface_line_width;
-    double wSparse = firstL ? p.initial_layer_line_width : p.sparse_infill_line_width;
     // top-surface 를 solid 에서 분리(top_surface_line_width 적용)는 폭이 다를 때만 — 같으면 단일 solid(무회귀).
     Paths topPart, restSolid = solid;
     if (!topSolid.empty() && std::abs(wTop - wSolid) > 1e-6) {
       topPart   = clip_paths(solid, topSolid, ctIntersection);
       restSolid = clip_paths(solid, topPart, ctDifference);
     }
-    Paths solidLines = restSolid.empty() ? Paths{} : infill_clipped(restSolid, sa, solid_spacing);
-    if (!solidLines.empty()) sort_monotonic(solidLines, sa);
-    Paths topLines  = topPart.empty() ? Paths{} : infill_clipped(topPart, sa, solid_spacing);
-    if (!topLines.empty()) sort_monotonic(topLines, sa);
-    Paths bridgeLines = bridge.empty() ? Paths{} : infill_clipped(bridge, sa, solid_spacing);
-    Paths sparseLines = (sparse_spacing>0 && !sparse.empty())
+    ep.solidLines = restSolid.empty() ? Paths{} : infill_clipped(restSolid, sa, solid_spacing);
+    if (!ep.solidLines.empty()) sort_monotonic(ep.solidLines, sa);
+    ep.topLines  = topPart.empty() ? Paths{} : infill_clipped(topPart, sa, solid_spacing);
+    if (!ep.topLines.empty()) sort_monotonic(ep.topLines, sa);
+    ep.bridgeLines = bridge.empty() ? Paths{} : infill_clipped(bridge, sa, solid_spacing);
+    ep.sparseLines = (sparse_spacing>0 && !sparse.empty())
         ? build_sparse(sparse, p.sparse_infill_pattern, p.infill_angle, sparse_spacing, i, zE, w, p.infill_density) : Paths{};
-    // 33단계: 서포트 각도/패턴/간격 배선 (기존 각도 0.0 고정 → 원본 SupportParameters 규칙).
-    //  base_angle = support_angle, interface_angle = support_angle + 90° (SupportParameters.hpp:110-111),
-    //  레이어마다 ±45° 반전(raft_interface_angle 규칙) → 평행벽이 아니라 격자로 맞물린다.
-    //  build_sparse 가 rectilinear 일 때 layerIdx%2 로 한 번 더 90° 교차시키므로 base 만 넘긴다.
-    const double supBaseAng  = p.support_angle + (i % 2 ? -45.0 : 45.0);
-    const double supIfaceAng = supBaseAng + 90.0;
-    // 패턴: "default"/"auto" 는 rectilinear 로 해석(원본도 default→rectilinear 계열). 미지원 패턴은 build_sparse 가 폴백.
-    auto resolvePat = [](const std::string& s) { return (s=="default"||s=="auto"||s=="rectilinear-grid") ? std::string("rectilinear") : s; };
-    // 인터페이스 간격: 0 이면 솔리드(=line_width), 아니면 line_width + spacing
-    const double ifaceSp = (p.support_interface_spacing > 1e-6) ? (w + p.support_interface_spacing) : solid_spacing;
-    Paths supI = (p.enable_support && !ld.supIface.empty())
-      ? build_sparse(ld.supIface, resolvePat(p.support_interface_pattern), supIfaceAng, ifaceSp, i, zE, w, 1.0) : Paths{};
-    Paths supB = (p.enable_support && !ld.supBase.empty())
-      ? build_sparse(ld.supBase, resolvePat(p.support_base_pattern), supBaseAng, support_spacing, i, zE, w, p.support_density) : Paths{};
-    Paths flExtra; bool brim=false;                                    // 스커트/브림
-    // 33단계: skirt_height 배선(기존 첫 레이어 고정) + brim_object_gap 배선(기존 w*0.5 고정)
+    // 스커트/브림 — 33단계: skirt_height 배선 + brim_object_gap 배선
     if (i < std::max(1, p.skirt_height) && nraft==0) {
-      int brimRings = (int)std::llround(p.brim_width / w); brim = brimRings>0 && i==0;   // 브림은 첫 레이어만
-      for (int k=0; k<p.skirt_loops; ++k) { Paths r=offset_paths(ld.contour,(p.skirt_distance+w*0.5+k*w)); for (auto& q:r) flExtra.push_back(q); }
-      if (i==0) for (int k=1; k<=brimRings; ++k) { Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w)); for (auto& q:r) flExtra.push_back(q); }
+      int brimRings = (int)std::llround(p.brim_width / w); ep.brim = brimRings>0 && i==0;   // 브림은 첫 레이어만
+      for (int k=0; k<p.skirt_loops; ++k) { Paths r=offset_paths(ld.contour,(p.skirt_distance+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
+      if (i==0) for (int k=1; k<=brimRings; ++k) { Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
     }
 
-    double thinLen=0; for (auto& tr:thinRuns) thinLen += paths_len(tr.line,false);
-    double layerLen = vwalls_len(ld.walls) + paths_len(solidLines,false) + paths_len(sparseLines,false)
-                    + paths_len(supI,false) + paths_len(supB,false) + paths_len(flExtra,true)
-                    + paths_len(gapLines,false) + paths_len(bridgeLines,false) + thinLen;
+    double thinLen=0; for (auto& tr:ep.thinRuns) thinLen += paths_len(tr.line,false);
+    double layerLen = vwalls_len(ld.walls) + paths_len(ep.solidLines,false) + paths_len(ep.sparseLines,false)
+                    + paths_len(ep.supI,false) + paths_len(ep.supB,false) + paths_len(ep.flExtra,true)
+                    + paths_len(ep.gapLines,false) + paths_len(ep.bridgeLines,false) + thinLen;
     double baseSpeed = (i==0 && nraft==0) ? p.first_layer_speed : p.print_speed;
     double useSpeed = baseSpeed;
     if (p.slow_down_layer_time > 0 && layerLen > 1e-6 && layerLen/baseSpeed < p.slow_down_layer_time)
       useSpeed = std::min(baseSpeed, std::max(20.0, layerLen / p.slow_down_layer_time));   // 소형 레이어 감속(최저 20mm/s)
-    int fPrint = (int)std::llround(useSpeed*60);
-    int fBridge = (int)std::llround(std::max(5.0, p.bridge_speed)*60);
+    ep.fPrint = (int)std::llround(useSpeed*60);
+    ep.fBridge = (int)std::llround(std::max(5.0, p.bridge_speed)*60);
+
+    // 아이어닝(type10) 라인 사전계산 — 방출 시 pre.ironLines 사용
+    if (ironOn && !ld.topSurf.empty()) {
+      Paths ironArea = clip_paths(ld.topSurf, fillCore, ctIntersection);
+      ep.ironLines = ironArea.empty() ? Paths{} : infill_clipped(ironArea, sa+45.0, std::max(0.05, p.ironing_spacing));
+    }
+    return ep;
+  };
+
+#ifdef __EMSCRIPTEN_PTHREADS__
+  // (mt) PASS2 계산부 병렬 — 워커들이 소비자(방출)보다 최대 PRE_WINDOW 레이어 앞서 선계산.
+  //  안전성: 소비자가 i 를 처리 중이면 in-flight 워커는 항상 k>i(잡은 순서대로 완료 대기하므로),
+  //  워커가 읽는 L[j] 는 j ≥ k−bottom_shell+1 > 조기해제 지점 old=i−max(bsl,1)−1 → 해제와 무충돌.
+  //  윈도우로 상주 메모리 유계(레이어 라인 W개분) — 조기 해제 OOM 완화 유지.
+  std::vector<EmitPre> preBuf(N);
+  std::vector<uint8_t> preDone(N, 0);
+  std::mutex pmu; std::condition_variable cv_done, cv_room;
+  int preNext = 0, preConsumed = -1;
+  unsigned preHW = std::thread::hardware_concurrency(); if (!preHW) preHW = 4;
+  unsigned preNT = std::min<unsigned>(std::max(1u, preHW - 1), (unsigned)std::max(1, N));
+  const int PRE_WINDOW = (int)preNT * 2 + 4;
+  auto preWork = [&]{
+    for (;;) {
+      int k = -1;
+      { std::unique_lock<std::mutex> lk(pmu);
+        cv_room.wait(lk, [&]{ return preNext >= N || preNext <= preConsumed + PRE_WINDOW; });
+        if (preNext >= N) break;
+        k = preNext++;
+      }
+      EmitPre ep = compute_pre(k);
+      { std::lock_guard<std::mutex> lk(pmu); preBuf[k] = std::move(ep); preDone[k] = 1; }
+      cv_done.notify_all();
+    }
+  };
+  std::vector<std::thread> preThs; preThs.reserve(preNT);
+  for (unsigned t=0; t<preNT; ++t) preThs.emplace_back(preWork);
+#endif
+
+  // ---- PASS 2: 솔리드/스파스 인필 분리 + 서포트 + 방출 ----
+  for (int i=0;i<N;++i) {
+    // 조기 해제: 방출이 지난 레이어 중 이후 역참조 범위(botSurf ≤ bottom_shell_layers−1,
+    //  supIface ≤ 1) 밖은 즉시 비움 → 방출 단계 힙 상주(전 레이어 L[]) 평탄화, 대형 모델 OOM 완화.
+    //  참조 범위 밖만 비우므로 G-code 불변(golden byte-identical 로 검증).
+    { int old = i - std::max(p.bottom_shell_layers, 1) - 1;
+      if (old >= 0) L[old] = LayerData{}; }
+    EmitPre pre;
+#ifdef __EMSCRIPTEN_PTHREADS__
+    { std::unique_lock<std::mutex> lk(pmu);                 // 워커 선계산 결과 수령(순서 보장) + 윈도우 전진
+      cv_done.wait(lk, [&]{ return preDone[i] != 0; });
+      pre = std::move(preBuf[i]);
+      preConsumed = i; }
+    cv_room.notify_all();
+#else
+    pre = compute_pre(i);                                    // st: 기존과 동일 시점·순서로 인라인 계산
+#endif
+    LayerData& ld = L[i];
+    double zE = ld.z + zShift;                                        // 실제 방출 Z (래프트 시프트)
+    gw.set_e_per_mm(ld.h, p);
+    gw.z = zE;
+    gw.pe_reset();                                                    // PE-lite: 레이어 시작 유량 컨텍스트 리셋
+    gw.island = std::move(ld.island);   // 벽 회피: 트래블 유지 구역(PASS1 병렬 선계산분, 항상 검출·avoid 시만 우회)
+    seamCtx.rng = 2654435761u * (uint32_t)(i+1);                      // 레이어별 결정적 난수 시드(random 심)
+    std::vector<float> tp;
+    std::vector<float> widths; g_seg_w = &widths; g_seg_w_cur = (float)w;  // 7단계: 세그먼트별 폭 병렬 기록
+
+    char cm[72];
+    if (ld.contour.empty()) {
+      // 33단계 [부유 모델 수정] 모델이 없는 레이어라도 **서포트는 방출해야 한다**.
+      //  기존에는 여기서 곧장 continue 해 서포트를 통째로 버렸다. 그 결과 부유 아일랜드
+      //  (예: 실물 Benchy 의 지붕 z32.2 / 굴뚝 z39.8) 아래를 받칠 기둥이 빈 구간에서 끊겨,
+      //  모델이 공중에서 시작했다(실측: z27.8 다음이 z32.2 — 4.4mm 구간 레이어 자체가 누락).
+      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (no model)",i,zE); gw.raw(cm);
+      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+      gw.z = zE; gw.set_e_per_mm(ld.h, p); gw.pe_reset();
+      gw.set_fan(fan_S(i, p));                                        // 압출이 있는 레이어이므로 팬 램프도 동일 적용
+      const int fSup = pre.fSup;
+      // 지지 기둥만 있는 레이어 — 서포트 라인은 compute_pre 선계산분(동일 수식) 사용.
+      Paths& eI = pre.supI;
+      Paths& eB = pre.supB;
+      if (!eI.empty() || !eB.empty()) {
+        gw.raw("; support");
+        if (!eI.empty()) emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel);
+        if (!eB.empty()) emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel);
+      }
+      if (p.enable_support && !ld.supTree.empty()) {
+        gw.raw("; support (organic tree — real ported TreeSupport)");
+        emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
+      }
+      flush_layer(zE, i, tp, widths);
+      report(N+2+i+1, total); continue;
+    }
+    std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.raw(cm);
+    gw.set_fan(fan_S(i, p));                                          // 냉각 팬 램프
+
+    // ===== 스파이럴(vase): 단일 외벽 z-램프 (인필/솔리드/서포트 없음) =====
+    if (p.spiral_mode) {
+      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+      int fSp = (int)std::llround(((i==0&&nraft==0)?p.first_layer_speed:p.print_speed)*60);
+      emit_spiral(gw, tp, ld.walls.empty()?Paths{}:ld.walls[0], zE, ld.h, fSp, fTravel);
+      flush_layer(zE, i, tp, widths);
+      report(N+2+i+1, total); continue;
+    }
+    std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+
+    // --- 방출 경로: compute_pre 선계산 결과 언패킹(방출 코드 무변경 유지용 별칭) ---
+    Paths& gapLines = pre.gapLines;       std::vector<ThinRun>& thinRuns = pre.thinRuns;
+    Paths& solidLines = pre.solidLines;   Paths& topLines = pre.topLines;
+    Paths& bridgeLines = pre.bridgeLines; Paths& sparseLines = pre.sparseLines;
+    Paths& supI = pre.supI; Paths& supB = pre.supB; Paths& flExtra = pre.flExtra;
+    const bool brim = pre.brim; const int fPrint = pre.fPrint, fBridge = pre.fBridge;
+    // 21단계: 피처별 폭(첫 레이어는 initial_layer 로 일괄) — 스칼라라 방출 시 재계산(수식 동일).
+    bool firstL = (i==0 && nraft==0);
+    double wOuter  = firstL ? p.initial_layer_line_width : p.outer_wall_line_width;
+    double wInner  = firstL ? p.initial_layer_line_width : p.inner_wall_line_width;
+    double wSolid  = firstL ? p.initial_layer_line_width : p.internal_solid_infill_line_width;
+    double wTop    = firstL ? p.initial_layer_line_width : p.top_surface_line_width;
+    double wSparse = firstL ? p.initial_layer_line_width : p.sparse_infill_line_width;
 
     // 21단계: 피처 폭 적용 헬퍼 — set_e_per_mm_width(E)+g_seg_w_cur(리본) 동시. 기본(0.42) 시 기존과 동일값.
     auto setW = [&](double ww){ gw.set_e_per_mm_width(ww, ld.h, p); g_seg_w_cur = (float)ww; };
@@ -1918,10 +2217,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     if (!topLines.empty())   { setW(wTop);   emit_lines(gw, tp, topLines,   zE, 3.0f, fPrint, fTravel); }   // 21단계: top-surface 폭
     if (!sparseLines.empty()){ setW(wSparse);emit_lines(gw, tp, sparseLines,zE, 2.0f, fPrint, fTravel); }   // 21단계: sparse infill 폭
 
-    // 아이어닝(type10): 노출 top 솔리드 위에 같은 z 로 저유량 재패스(간격 ironing_spacing, flow%, ironing_speed).
-    if (ironOn && !ld.topSurf.empty()) {
-      Paths ironArea = clip_paths(ld.topSurf, fillCore, ctIntersection);
-      Paths ironLines = ironArea.empty() ? Paths{} : infill_clipped(ironArea, sa+45.0, std::max(0.05, p.ironing_spacing));
+    // 아이어닝(type10): 노출 top 솔리드 위에 같은 z 로 저유량 재패스(라인은 compute_pre 선계산분).
+    {
+      Paths& ironLines = pre.ironLines;
       if (!ironLines.empty()) {
         gw.raw("; ironing");
         gw.pe_reset();                               // 저유량 아이어닝은 PE 유량매칭 대상서 제외
@@ -1933,8 +2231,13 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     }
 
     flush_layer(zE, i, tp, widths);
-    report(N+i+1, total);
+    report(N+2+i+1, total);
   }
+#ifdef __EMSCRIPTEN_PTHREADS__
+  { std::lock_guard<std::mutex> lk(pmu); preNext = std::max(preNext, N); }   // 남은 워커 기상 → 종료
+  cv_room.notify_all();
+  for (auto& th : preThs) th.join();
+#endif
   g_seg_w = nullptr;   // 7단계: 폭 추적 종료(로컬 widths 수명 종료)
 
   // ---- 종료 ----
@@ -1951,11 +2254,18 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     //  이미 방출됐고 gw.s 는 비어 있음(레이어별 해제). 절약 모드는 시간추정 자체를 건너뛴다.
     { std::vector<float> empty; flush_layer(gw.z, N + nraft, empty, empty); }
     if (streamTime) {
+#ifdef __EMSCRIPTEN_PTHREADS__
+      gcodeproc_bridge::Result fr = feeder.finish();   // (mt) 큐 소진 대기(join) 후 종료 — 결과는 동기 피드와 동일
+#else
       gcodeproc_bridge::Result fr = gcodeproc_bridge::estimate_end();
+#endif
       if (fr.ok) { absorb(fr); engine_used = "full-stream"; } else engine_used = "stream-notime";
     } else engine_used = "economy";
   } else {
     // 배치: 실제 PressureEqualizer(옵트인) → 태그 제거 → 전체 g-code 시간추정(byte-identical 경로 불변).
+#ifdef __EMSCRIPTEN_PTHREADS__
+    if (overlapBatch) feed_batch_tail();   // 푸터 피드 — fedOff 는 무변형 gw.s 오프셋이라 아래 strip 전에 완료해야 함
+#endif
     if (realPE)
       gw.s = pe_bridge::equalize(gw.s, p.filament_diameter, p.max_volumetric_extrusion_rate_slope,
                                  p.extrusion_rate_slope_segment_length, /*relative_e*/true, p.pe_external_perimeter_only);
@@ -1963,7 +2273,12 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     if (p.time_engine == "transcribed") {
       te = gcode_time::estimate(gw.s, glim); engine_used = "transcribed";
     } else {
+#ifdef __EMSCRIPTEN_PTHREADS__
+      // (mt) overlapBatch 면 피드 완료분으로 종료(방출과 겹쳐 파싱 끝). realPE 등 비대상은 기존 일괄 추정.
+      gcodeproc_bridge::Result fr = overlapBatch ? feeder.finish() : gcodeproc_bridge::estimate(gw.s, gl);
+#else
       gcodeproc_bridge::Result fr = gcodeproc_bridge::estimate(gw.s, gl);
+#endif
       if (fr.ok) { absorb(fr); engine_used = "full"; }
       else { te = gcode_time::estimate(gw.s, glim); engine_used = "full-fallback-transcribed"; }
     }
@@ -1980,7 +2295,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     stats.set("t_pass1_ms",   tw_p1  - tw0);
     stats.set("t_surface_ms", tw_p15 - tw_p1);
     stats.set("t_support_ms", tw_sup - tw_p15);
-    stats.set("t_emit_ms",    tw_end - tw_sup); }
+    stats.set("t_emit_ms",    tw_end - tw_sup);
+    stats.set("t_flush_ms", t_flush);                    // emit 중 JS 경계(to_f32/sink/피드) 몫
+    }
   stats.set("over_bed", over_bed);
   // 원본 시간추정 결과
   stats.set("time_estimate", te.total_s);                   // 총 예상 출력 시간(초)
@@ -2050,6 +2367,10 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("set_layer_sink", &set_layer_sink);           // 30단계: cb(z,idx,gcodeChunk,pathsF32,widthsF32) 등록 → 스트리밍
   em::function("clear_layer_sink", &clear_layer_sink);       //  등록 해제(다음 slice 는 배치)
   em::function("heap_size", &heap_size);                     // 30단계: WASM 힙 피크 측정용(바이트)
+  em::function("sup_progress_ptr", +[]() -> double {         // 서포트 실진행 카운터(u32)의 힙 주소 — mt SAB 폴링용
+    return (double)treesupport_bridge::progress_addr(); });
+  em::function("sup_progress_view", +[]() -> em::val {       // 같은 카운터의 Uint32Array 뷰 — .buffer 로 SAB 획득
+    return em::val(em::typed_memory_view((size_t)1, (const unsigned int*)(uintptr_t)treesupport_bridge::progress_addr())); });
   em::function("config_option_count", &config_option_count);
   em::function("config_option_default", &config_option_default);
   em::function("cgal_planar_check_count", &arachne_bridge::cgal_planar_check_count); // 14단계: 실 CGAL 평면성 검사 호출 수

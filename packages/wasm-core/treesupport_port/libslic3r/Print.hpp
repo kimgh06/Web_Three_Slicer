@@ -109,6 +109,8 @@ public:
     // ---- layers ----
     size_t         layer_count() const { return m_layers.size(); }
     size_t         support_layer_count() const { return m_support_layers.size(); }
+    // WP2: 원본 Print.hpp:387 verbatim — SupportMaterial.cpp 가 배열 크기 산정에 사용
+    size_t         total_layer_count() const { return this->layer_count() + this->support_layer_count(); }
     const Layer*   get_layer(int idx) const { return m_layers[idx]; }
     Layer*         get_layer(int idx)       { return m_layers[idx]; }
     SupportLayer*  get_support_layer(int idx) { return idx < (int)m_support_layers.size() ? m_support_layers[idx] : nullptr; }

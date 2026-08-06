@@ -98,9 +98,16 @@ void estimate_begin(const Limits& lim) {
     g_gp->apply_config(cfg);
     g_fil_total = 0.0; g_fil_e_abs = 0.0; g_fil_relative = false;
 }
+// ponytail: 무브 상주 캡 — GCodeProcessor 는 무브당 ~100B 를 result.moves 에 상주시키고(4.45M 무브
+//  실측 시 추정 단독 +1.04GB), 블록이 절대 인덱스로 시간을 역기입해 중간 드레인이 불가하다.
+//  캡 초과 시 추정기를 통째로 해제 → 스트리밍은 "stream-notime", 배치(mt 오버랩)는 기존
+//  transcribed 폴백으로 자연 강등. 대형 모델 시간추정을 살리려면 무브 증분 집계 포트 수술이 필요.
+static const size_t MOVES_CAP = 2000000;
+
 void estimate_feed(const std::string& chunk) {
     if (!g_gp || chunk.empty()) return;
     try { g_gp->process_buffer(chunk); } catch (...) {}
+    if (g_gp->get_result().moves.size() > MOVES_CAP) { delete g_gp; g_gp = nullptr; return; }
     parse_filament_chunk(chunk, g_fil_total, g_fil_e_abs, g_fil_relative);
 }
 Result estimate_end() {

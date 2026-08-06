@@ -40,6 +40,17 @@ self.onmessage = async (e) => {
     if (d.cmd === 'overlay')  { self.postMessage({ type: 'overlay', enf: Array.from(Module.selector_overlay(true)), blk: Array.from(Module.selector_overlay(false)) }); return }
 
     if (d.stall) return   // 30단계 테스트 훅: 무응답(행) 시뮬 → 메인 워치독 발동 검증(프로덕션 미설정)
+    // mt(SAB): 서포트 실진행 카운터(u32) 주소를 메인에 1회 공유 — 커널이 C++ 안에 블록된 동안에도
+    //  UI 스레드가 SAB 를 직접 폴링해 서포트 진행률을 표시한다. st(비공유 버퍼)는 미지원 → 미전송.
+    if (!self.__supSabSent) {
+      self.__supSabSent = true
+      try {
+        // Module.HEAPU8 은 emscripten 6.x 글루가 노출하지 않음 — embind typed_memory_view 로 버퍼 획득
+        const v = Module.sup_progress_view && Module.sup_progress_view()
+        if (v && v.buffer instanceof SharedArrayBuffer)
+          self.postMessage({ type: 'supsab', buf: v.buffer, ptr: v.byteOffset })
+      } catch {}
+    }
     // 기본: 슬라이스. 레이어 싱크 등록 → 커널이 레이어마다 콜백(z, idx, gcodeChunk, pathsF32, widthsF32).
     //  각 레이어를 즉시 메인으로 transfer(툴패스 버퍼 이전) → worker 사본 해제 → 다음 레이어 전 힙 여유.
     const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })

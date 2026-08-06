@@ -163,7 +163,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     const toolpathGroup = new THREE.Group(); scene.add(toolpathGroup)
 
     const orbit = new OrbitControls(camera, renderer.domElement)
-    orbit.target.set(0, 22, 0); orbit.enableDamping = true; orbit.update()
+    orbit.target.set(0, 22, 0); orbit.enableDamping = false; orbit.update()   // 관성 없음 — 데스크톱 슬라이서 관례(릴리즈 즉시 정지, 글라이드 꼬리 버벅임 원천 제거)
     const transform = new TransformControls(camera, renderer.domElement)
     transform.setMode('translate'); transform.setSize(0.8)
     // 29단계-1: 변환 커밋(드래그 종료)마다 바닥 재안착 — 데스크톱 GLCanvas3D::do_move/rotate/scale 의
@@ -552,26 +552,53 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   }
   function applyLayerRange() { toolpathRef.current?.setLayerRange(layerLoRef.current, layerHiRef.current) }
 
+  // ---- 진행률: 시간 가중 매핑 + 서포트 실진행(SAB 폴링) ----
+  //  구간별 실측 시간 비중(774k tri): PASS1 7% · 표면 6% · 서포트 48% · 방출 38% → 예산 15/5/40/40.
+  const supSabRef = useRef(null)     // { arr: Uint32Array(SAB, ptr, 1) } — mt 워커가 1회 공유
+  const supPollRef = useRef(0)
+  const stopSupPoll = () => { if (supPollRef.current) { clearInterval(supPollRef.current); supPollRef.current = 0 } }
+  const mapProgress = (done, total) => {
+    const N = total > 2 ? (total - 2) / 2 : 0
+    if (!N) return total ? done / total : 0
+    if (done <= N) return 0.15 * (done / N)          // PASS1: 0→15%
+    if (done === N + 1) return 0.20                  // 표면 완료 → 서포트 진입
+    if (done === N + 2) return 0.60                  // 서포트 완료
+    return 0.60 + 0.40 * ((done - N - 2) / N)        // 방출: 60→100%
+  }
+  const startSupPoll = (N) => {
+    const sab = supSabRef.current; if (!sab || supPollRef.current) return
+    // 총 작업량 ≈ 3.5×N (top_contacts N + bottom ~N + trim N + base N 근사, 실측 보정 상수) — 95% 캡 후 완료 틱에서 스냅
+    supPollRef.current = setInterval(() => {
+      const ticks = sab.arr[0]
+      setProgress(0.20 + 0.40 * Math.min(0.95, ticks / (3.5 * N)))
+    }, 150)
+  }
   function getWorker() {
     if (!workerRef.current) {
       const wk = makeSlicerWorker()   // 정적 워커 패턴은 make_worker.js(비번들 원형 배포)에 격리
       wk.onmessage = (e) => {
         const d = e.data
         const pnd = pendingSliceRef.current
-        if (d.type === 'progress') { setProgress(d.total ? d.done / d.total : 0); pnd?.kick?.() }   // 30단계: 워치독 리셋
+        if (d.type === 'progress') {   // 30단계: 워치독 리셋(+단계 기록) + 가중 매핑 + 서포트 폴링 제어
+          const N = d.total > 2 ? (d.total - 2) / 2 : 0
+          if (N && d.done === N + 1) startSupPoll(N)
+          if (N && d.done >= N + 2) stopSupPoll()
+          setProgress(mapProgress(d.done, d.total)); pnd?.note?.(d.done, d.total); pnd?.kick?.()
+        }
+        else if (d.type === 'supsab') { try { supSabRef.current = { arr: new Uint32Array(d.buf, d.ptr, 1) } } catch {} }
         else if (d.type === 'layer') {   // 30단계 스트리밍: 레이어 즉시 수신(transfer) → 누적, 워치독 리셋
           pnd?.kick?.()
           const a = streamAccumRef.current
           if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode) }
         }
-        else if (d.type === 'done') { if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
-        else if (d.type === 'error') { if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('슬라이스 실패: ' + d.error); setSlicing(false) } }
+        else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
+        else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('슬라이스 실패: ' + d.error); setSlicing(false) } }
         else if (d.type === 'prepared') { /* selector mesh registered */ }
         else if (d.type === 'painted') { setPaintCounts({ enf: d.enf, blk: d.blk }); wk.postMessage({ cmd: 'overlay' }) }
         else if (d.type === 'overlay') { rebuildPaintOverlay(d.enf, d.blk) }
       }
       // 30단계 OOM 감지: worker error/messageerror → 진행 중 슬라이스를 거부(사다리가 절약 재시도 판정).
-      const killPending = (msg) => { const pnd = pendingSliceRef.current; if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); try { wk.terminate() } catch {} workerRef.current = null; pnd.reject(new Error(msg)) } else { setError(msg); setSlicing(false) } }
+      const killPending = (msg) => { stopSupPoll(); supSabRef.current = null; const pnd = pendingSliceRef.current; if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); try { wk.terminate() } catch {} workerRef.current = null; pnd.reject(new Error(msg)) } else { setError(msg); setSlicing(false) } }
       wk.onerror = (ev) => killPending('Worker 종료(메모리 초과 추정): ' + (ev.message || 'worker error'))
       wk.onmessageerror = () => killPending('Worker 메시지 오류(구조화 복제 실패)')
       workerRef.current = wk
@@ -617,9 +644,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     let totalTri = 0
     for (const f of files) {
       try {
+        const __tl0 = performance.now()   // [vp-prof] 로드 계측(임시)
         const buf = await f.arrayBuffer()
+        const __tl1 = performance.now()
         const objs = await loadModel(f.name, buf)          // [{name, modelPos}] (3MF/AMF 는 복수 가능)
+        const __tl2 = performance.now()
         for (const ob of objs) { apiRef.current?.addObject(ob.name, ob.modelPos); totalTri += ob.modelPos.length / 9 }
+        console.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
       } catch (err) { setError(`로드 실패 ${f.name}: ${(err && err.message) || err}`) }
     }
     setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false })))
@@ -670,6 +701,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
 
   // ---- 슬라이스 (우측 패널 설정값 유도) — 29단계-2 플레이트별 + 30단계 스트리밍/워치독/OOM 사다리 ----
   const WATCHDOG_MS = 60000   // 30단계 행 워치독: 진행(progress/layer) 무소식 60초 → 죽음 판정
+  const SILENT_STAGE_MS = 300000   // 표면·서포트 창(진행률 50% 부근): 커널이 구조적으로 무보고 — 대형 모델은 수 분 정상. 오탐 방지용 완화 한도.
   function sliceOne(buf, paramsStr) {
     return new Promise((resolve, reject) => {
       // dev/test 훅(프로덕션 미설정): __vpFail(n)=강제 실패(사다리 검증) · __vpStallNext=워커 무응답(워치독) · __vpWatchdogOnce=짧은 워치독(ms).
@@ -678,13 +710,28 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       const wdMs = (typeof window !== 'undefined' && window.__vpWatchdogOnce) ? ((v) => (window.__vpWatchdogOnce = 0, v))(window.__vpWatchdogOnce) : WATCHDOG_MS
       streamAccumRef.current = { layers: [], gcode: [] }   // 스트리밍 누적 초기화(레이어별 수신)
       let t = 0
+      let lastD = 0, lastT = 0
+      const __ts = performance.now(); let __stage = ''   // [vp-prof] 스테이지 도달 시각(임시)
+      const note = (done, total) => {
+        lastD = done; lastT = total
+        const N = total > 2 ? (total - 2) / 2 : 0
+        const st = !N ? '' : done < N ? 'PASS1…' : done === N ? 'PASS1-done' : done === N + 1 ? 'surf-done' : done === N + 2 ? 'support-done' : done === total ? 'emit-done' : 'emit…'
+        if (st && st !== __stage) { console.info(`[vp-prof] ${st} +${((performance.now() - __ts) / 1000).toFixed(1)}s`); __stage = st }
+      }
+      // 마지막 진행이 표면·서포트 창(d ∈ [N, N+2), N=(t−2)/2)이면 완화 한도 — 이 구간은 무보고가 정상이라
+      //  60초 워치독이 건강한 슬라이스를 죽였다(실측: 774k tri 서포트 19s+, 저사양·부하 시 60s 초과).
+      const curWd = () => {
+        const N = lastT > 2 ? (lastT - 2) / 2 : 0
+        return (N && lastD >= N && lastD < N + 2) ? SILENT_STAGE_MS : wdMs
+      }
       const stop = () => { if (t) { clearTimeout(t); t = 0 } }
-      const kick = () => { stop(); t = setTimeout(() => {
+      const kick = () => { stop(); const ms = curWd(); t = setTimeout(() => {
         pendingSliceRef.current = null
+        stopSupPoll(); supSabRef.current = null   // 워커 종료 → SAB 폴링/참조 해제
         try { workerRef.current?.terminate() } catch {} ; workerRef.current = null   // 멎은 워커 강제 종료
-        reject(new Error(`watchdog: ${wdMs}ms 무진행 — 메모리 압박으로 판단`))
-      }, wdMs) }
-      pendingSliceRef.current = { resolve, reject, kick, stop }
+        reject(new Error(`watchdog: ${ms}ms 무진행 — 메모리 압박으로 판단`))
+      }, ms) }
+      pendingSliceRef.current = { resolve, reject, kick, stop, note }
       kick()
       getWorker().postMessage({ stl: buf, params: paramsStr, stall })
     })
@@ -776,8 +823,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       if (anyEconomy) setSliceNotice('메모리 압박 — 일부 플레이트를 절약 모드로 완주(프리뷰 없음, G-code 정상)')
       showPlateResult(plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0])
     } else {
+      const __tm0 = performance.now()   // [vp-prof] 전처리 계측(임시)
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`플레이트 ${idx0 + 1} 에 오브젝트가 없습니다`); return }
+      console.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
