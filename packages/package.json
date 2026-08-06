@@ -1,0 +1,74 @@
+{
+  "name": "three-slicer",
+  "version": "0.1.0",
+  "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), React viewer with GPU toolpath preview, and schema-driven settings UI.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./engine/index.d.ts",
+      "import": "./engine/index.js"
+    },
+    "./settings": "./engine/src/settings.js",
+    "./toggle": "./engine/src/toggle_eval.js",
+    "./worker": "./engine/src/slicer.worker.js",
+    "./wasm": "./engine/src/slicer_core.js",
+    "./wasm-mt": "./engine/src/slicer_core.mt.js",
+    "./viewer": "./viewer/dist/Viewport.js",
+    "./viewer/toolpath": "./viewer/dist/toolpath_gpu.js",
+    "./viewer/loaders": "./viewer/dist/model_loaders.js",
+    "./components": "./components/dist/SettingsPanel.js",
+    "./data/*": "./data/*"
+  },
+  "scripts": {
+    "build": "vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "three": "^0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  },
+  "files": [
+    "engine",
+    "components/dist",
+    "viewer/dist",
+    "viewer/src",
+    "viewer/styles.css",
+    "components/styles.css",
+    "data/*.json",
+    "README.md",
+    "LICENSE.txt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "directory": "packages"
+  },
+  "homepage": "https://github.com/kimgh06/Web_Three_Slicer#readme",
+  "keywords": [
+    "3d-printing",
+    "slicer",
+    "gcode",
+    "stl",
+    "wasm",
+    "orcaslicer",
+    "three",
+    "react",
+    "arachne",
+    "tree-support"
+  ]
+}

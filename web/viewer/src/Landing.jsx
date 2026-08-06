@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link } from 'react-router'
-import schema from '@three-slicer/data/config-schema.json'
+import schema from 'three-slicer/data/config-schema.json'
 
 // 데모 앱 랜딩. 기능만 단어로 나열한다 — 설명문·카드 없이 무엇이 되는지만 보여준다.
 //  미구현 기능(자동 배치·방향, 컷, 불리언, 텍스트, 측정, undo/redo)은 여기 쓰지 않는다.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tarball 독립 검증 (S4): 4개 패키지를 npm pack → 저장소 밖 임시 디렉토리에서
+# tarball 독립 검증: three-slicer 단일 패키지를 npm pack → 저장소 밖 임시 디렉토리에서
 # Vite/Next 소비자 앱을 스캐폴드해 tarball 만으로 빌드가 성공하는지 확인.
 # (런타임 E2E 슬라이스는 별도 — 이 스크립트는 빌드 게이트만. 브라우저 불필요)
 set -euo pipefail
@@ -8,9 +8,7 @@ TMP="$(mktemp -d /tmp/three-slicer-packcheck.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 echo "== pack -> $TMP"
 mkdir -p "$TMP/tarballs"
-for p in data engine components viewer; do
-  npm pack "$WEB/packages/$p" --pack-destination "$TMP/tarballs" >/dev/null
-done
+npm pack "$WEB/packages" --pack-destination "$TMP/tarballs" >/dev/null
 T=("$TMP"/tarballs/*.tgz)
 
 echo "== vite consumer"
@@ -34,8 +32,8 @@ EOF
 cat > src/main.jsx <<'EOF'
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import Viewport from '@three-slicer/viewer'
-import SettingsPanel from '@three-slicer/components/SettingsPanel'
+import Viewport from 'three-slicer/viewer'
+import SettingsPanel from 'three-slicer/components'
 function App() {
   const [settings, setSettings] = useState({})
   return (<><Viewport settings={settings} setSettings={setSettings} />
@@ -67,8 +65,8 @@ EOF
 cat > pages/index.jsx <<'EOF'
 import dynamic from 'next/dynamic'
 import React, { useState } from 'react'
-const Viewport = dynamic(() => import('@three-slicer/viewer'), { ssr: false })
-const SettingsPanel = dynamic(() => import('@three-slicer/components/SettingsPanel'), { ssr: false })
+const Viewport = dynamic(() => import('three-slicer/viewer'), { ssr: false })
+const SettingsPanel = dynamic(() => import('three-slicer/components'), { ssr: false })
 export default function Home() {
   const [settings, setSettings] = useState({})
   return (<><Viewport settings={settings} setSettings={setSettings} />

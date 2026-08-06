@@ -3,7 +3,7 @@
 Web_Three_Slicer — OrcaSlicer를 리버스 엔지니어링한 브라우저/WASM 슬라이서. 루트는 세 폴더:
 
 - **`slicer/`** — 업스트림 OrcaSlicer 원본 (무수정, 참조·추출 소스 전용). 자체 가이드는 `slicer/AGENTS.md`.
-- **`packages/`** — 배포 npm 패키지 4종 + 커널 소스. `slicer/`에 빌드·런타임 의존 0.
+- **`packages/`** — 배포 npm 패키지 `three-slicer` (단일) + 커널 소스. `slicer/`에 빌드·런타임 의존 0.
 - **`web/`** — 데모 앱 껍데기. 패키지를 워크스페이스로 소비 (상대경로 import 없음). 상세: `web/README.md`, `web/GUIDE.md`, `web/SPECS.md`.
 
 루트 `package.json` 이 npm workspaces 루트 (`packages/*` + `web/viewer`) — 설치는 루트 `npm i` 1회.
@@ -40,9 +40,10 @@ bash web/pack_check.sh
 
 ## 구조
 
-- `packages/engine/` — `@three-slicer/engine`: WASM 커널 SDK (배치/스트리밍 슬라이스, 워커, 설정 매핑)
-- `packages/data/` — `@three-slicer/data`: 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map)
-- `packages/components/` — `@three-slicer/components`: React `<SettingsPanel/>` (전역 결합 0, Shadow DOM)
-- `packages/viewer/` — `@three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트 (three.js, Shadow DOM)
+`packages/` 전체가 **단일 npm 패키지 `three-slicer`** (subpath exports로 분리 소비):
+- `packages/engine/` — 진입점 `three-slicer` (+`/settings` `/toggle` `/worker` `/wasm`): WASM 커널 SDK
+- `packages/data/` — `three-slicer/data/*.json`: 추출 JSON 4종 (config-schema, ui-tree, toggle-rules, invalidation-map)
+- `packages/components/` — `three-slicer/components`: React `<SettingsPanel/>` (전역 결합 0, Shadow DOM)
+- `packages/viewer/` — `three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트 (three.js, Shadow DOM)
 - `packages/wasm-core/` — 커널 C++ 소스 + `third_party/` (deps 사본, 독립 빌드용) — npm 미배포, 산출물은 `packages/engine/src/`
 - `web/viewer/` — 데모 앱 (Vite + React) — 워크스페이스 멤버, 패키지를 이름으로 참조

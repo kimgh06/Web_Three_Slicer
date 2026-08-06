@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { deriveKernelParams, settingRaw } from '@three-slicer/engine/settings'
+import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from './make_worker.js'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM 격리 — 빌드 시 문자열로 내장
@@ -846,6 +846,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       setSlicing(true); setProgress(0)
       try {
         const { r, economy } = await sliceLadder(merged.buf, buildParams(merged))
+        if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); setSlicing(false); showPlateResult(idx0)
         if (economy) setSliceNotice('메모리 압박 — 절약 모드로 완주(프리뷰 없음, G-code 는 다운로드 가능)')
       } catch (e) { setSlicing(false); setDowngradeOffer({ scope: 'current' }); setError('슬라이스 실패(절약 모드도 실패): ' + e.message) }

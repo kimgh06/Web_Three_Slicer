@@ -6,18 +6,18 @@ A 3D-printing slicer that runs entirely in the browser — reverse-engineered fr
 
 | Package | What it is |
 |---|---|
-| `@three-slicer/engine` | WASM slicing kernel SDK — batch/streaming slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
+| `three-slicer` | WASM slicing kernel SDK — batch/streaming slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
 | `@three-slicer/data` | Extracted OrcaSlicer metadata: config schema (907 options), UI tree, toggle rules, invalidation map |
-| `@three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only |
-| `@three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview (libvgcode port) |
+| `three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only |
+| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview (libvgcode port) |
 
 Quick taste:
 
 ```jsx
 import { useState } from 'react'
-import Viewport from '@three-slicer/viewer'
-import SettingsPanel from '@three-slicer/components/SettingsPanel'
-import '@three-slicer/viewer/styles.css'
+import Viewport from 'three-slicer/viewer'
+import SettingsPanel from 'three-slicer/components'
+import 'three-slicer/viewer/styles.css'
 
 function App() {
   const [settings, setSettings] = useState({})       // OrcaSlicer schema keys, sparse

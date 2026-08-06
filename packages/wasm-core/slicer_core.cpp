@@ -1541,12 +1541,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   auto report = [&](int done, int total){ if (!onProgress.isUndefined() && !onProgress.isNull()) onProgress(done, total); };
   Params p = parse_params(params_json);
   if (p.spiral_mode) p.wall_loops = 1;                 // vase: 단일 외벽
-  double t_in0 = emscripten_get_now();                 // [입력 계측] JS→wasm 복사
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
-  double t_in1 = emscripten_get_now();                 // [입력 계측] STL 파싱
   std::vector<Tri> tris = parse_stl(bytes);
-  double t_in2 = emscripten_get_now();
-  fprintf(stderr, "[in-prof] convert=%.0fms parse=%.0fms (%zu bytes)\n", t_in1-t_in0, t_in2-t_in1, bytes.size());
 
   em::val result = em::val::object();
   if (tris.empty()) { result.set("error", std::string("STL 파싱 실패 또는 삼각형 0개")); return result; }
@@ -1591,12 +1587,48 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   std::vector<LayerData> L(N);
   { std::vector<double> zsv; zsv.reserve(N);
     for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) zsv.push_back(z);
+    // [facet-major 세그 수집 — 원본 정합] 원본 slice_facet_at_zs(TriangleMeshSlicer.cpp:476)처럼
+    //  삼각형→이진탐색으로 "걸치는 레이어만" 방문(작업량=실교차수). 기존 레이어×전수스캔은 657×775k
+    //  ≈ 5억 방문이었다. 포함 조건은 기존과 동일(zmin<=z<zmax → lower_bound + *it<zmax), tri_plane
+    //  입력도 동일 → 세그 값 불변. 스레드별 '연속 삼각형 레인지' + 레인지 순 병합으로 레이어 내 세그
+    //  순서 = 삼각형 인덱스 오름차순(기존 전수스캔과 동일) → chain_polys 입력 불변 = byte-identical.
+    std::vector<std::vector<Seg>> layerSegs(N);
+    if (N > 0) {
+      auto collect = [&](size_t a, size_t b, std::vector<std::vector<Seg>>& out){
+        Seg sg;
+        for (size_t ti = a; ti < b; ++ti) {
+          const Tri& t = tris[ti];
+          double zmin=std::min({t.v[0].z,t.v[1].z,t.v[2].z}), zmax=std::max({t.v[0].z,t.v[1].z,t.v[2].z});
+          for (auto it = std::lower_bound(zsv.begin(), zsv.end(), zmin); it != zsv.end() && *it < zmax; ++it)
+            if (tri_plane(t, *it, sg)) out[(size_t)(it - zsv.begin())].push_back(sg);
+        }
+      };
+#ifdef __EMSCRIPTEN_PTHREADS__
+      unsigned shw = std::thread::hardware_concurrency(); if (!shw) shw = 4;
+      unsigned snt = (unsigned)std::min<size_t>(shw, std::max<size_t>(1, tris.size() / 4096));
+      if (snt > 1) {
+        std::vector<std::vector<std::vector<Seg>>> tb(snt, std::vector<std::vector<Seg>>(N));
+        size_t schunk = (tris.size() + snt - 1) / snt;
+        std::vector<std::thread> sths; sths.reserve(snt);
+        for (unsigned t2 = 0; t2 < snt; ++t2) {
+          size_t a = t2*schunk, b = std::min(tris.size(), a+schunk);
+          if (a >= b) break;
+          sths.emplace_back([&, a, b, t2]{ collect(a, b, tb[t2]); });
+        }
+        for (auto& th : sths) th.join();
+        for (int li = 0; li < N; ++li) {
+          size_t tot = 0; for (auto& tbt : tb) tot += tbt[li].size();
+          layerSegs[li].reserve(tot);
+          for (auto& tbt : tb) { layerSegs[li].insert(layerSegs[li].end(), tbt[li].begin(), tbt[li].end()); std::vector<Seg>().swap(tbt[li]); }
+        }
+      } else
+#endif
+      collect(0, tris.size(), layerSegs);
+    }
     auto computeLayer = [&](int i) {
       const double z = zsv[i];
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
-      std::vector<Seg> segs; Seg sg;
-      for (const Tri& t:tris){ double zmin=std::min({t.v[0].z,t.v[1].z,t.v[2].z}),zmax=std::max({t.v[0].z,t.v[1].z,t.v[2].z});
-        if (z<zmin||z>=zmax) continue; if (tri_plane(t,z,sg)) segs.push_back(sg); }
+      std::vector<Seg> segs; segs.swap(layerSegs[i]);
       Paths loops = chain_polys(segs);
       ld.contour = SimplifyPolygons(loops, pftEvenOdd);
       // [조기 단순화 — 원본 정합] 원본은 메시 슬라이스 직후 모든 윤곽을 resolution 으로 단순화한다

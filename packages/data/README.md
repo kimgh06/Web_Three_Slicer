@@ -1,6 +1,6 @@
 # @three-slicer/data
 
-OrcaSlicer configuration metadata extracted from the original C++ sources, as plain JSON. Used by `@three-slicer/engine` (defaults, settings mapping) and `@three-slicer/components` (settings UI), and usable standalone for building slicer UIs.
+OrcaSlicer configuration metadata extracted from the original C++ sources, as plain JSON. Used by `three-slicer` (defaults, settings mapping) and `three-slicer/components` (settings UI), and usable standalone for building slicer UIs.
 
 | File | Contents |
 |---|---|
@@ -11,7 +11,7 @@ OrcaSlicer configuration metadata extracted from the original C++ sources, as pl
 | `invalidation-map.json` | Option-change → re-slice step mapping (Print/PrintObject invalidation branches) |
 
 ```js
-import schema from '@three-slicer/data/config-schema.json'
+import schema from 'three-slicer/data/config-schema.json'
 schema.layer_height.default   // 0.2
 ```
 

@@ -1,6 +1,6 @@
-// @three-slicer/components — <SettingsPanel/> : config-schema-driven slicer settings form.
+// three-slicer/components — <SettingsPanel/> : config-schema-driven slicer settings form.
 // Independent & props-driven: NO global state, NO React context, NO router. Depends only on React,
-// @three-slicer/data (schema/ui-tree/toggle-rules), and @three-slicer/engine (settingRaw/disabledKeys/makeCfg).
+// @three-slicer/data (schema/ui-tree/toggle-rules), and three-slicer (settingRaw/disabledKeys/makeCfg).
 // Props:
 //   settings     : sparse map {optKey: value} (edited keys only; missing = schema default)
 //   setSettings  : (updater) => void   (React setState-style; the ONLY way state leaves the component)
@@ -10,7 +10,7 @@ import React, { useMemo, useState } from 'react'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from './styles.css?inline'   // Shadow DOM 격리 — 빌드 시 문자열로 내장
 import BedShapeEditor from './BedShapeEditor.jsx'
-import schema from '@three-slicer/data/config-schema.json'
+import schema from 'three-slicer/data/config-schema.json'
 
 // 커스텀 위젯 레지스트리 — 원본 Tab.cpp 의 라인 위젯 치환(create_bed_shape_widget) 상당.
 //  스키마 구동 위젯으로 부족한 복합 타입은 여기 등록한 에디터가 오버라이드한다.
@@ -18,9 +18,9 @@ import schema from '@three-slicer/data/config-schema.json'
 const CUSTOM_WIDGETS = {
   printable_area: BedShapeEditor,
 }
-import uiTree from '@three-slicer/data/ui-tree.json'
-import { settingRaw } from '@three-slicer/engine/settings'
-import { disabledKeys, makeCfg } from '@three-slicer/engine/toggle'
+import uiTree from 'three-slicer/data/ui-tree.json'
+import { settingRaw } from 'three-slicer/settings'
+import { disabledKeys, makeCfg } from 'three-slicer/toggle'
 
 const MAIN_BUILDERS = Object.keys(uiTree).filter(b => uiTree[b].length > 0)
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']

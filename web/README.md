@@ -6,19 +6,19 @@
 ## 구조
 
 npm workspaces 루트는 **저장소 루트** `package.json` (`packages/*` + `web/viewer`) — 설치는 루트 `npm i` 1회.
-- **`../packages/engine/`** — `@three-slicer/engine`: WASM 슬라이싱 커널 SDK. 공개 API + 워커 + 설정 매핑.
+- **`../packages/engine/`** — `three-slicer`: WASM 슬라이싱 커널 SDK. 공개 API + 워커 + 설정 매핑.
   - 커널 재빌드(`../packages/wasm-core/build.sh`)는 34단계에서 **완전 독립화**: 원본 deps(clipper·clipper2·libnest2d·libigl·
     admesh 등 deps_src 전량 23M)를 `wasm-core/third_party/` 로 사본화 → `slicer/` 없이도 빌드 성공(실증: slicer 임시
     이름변경 상태에서 build.sh+12스위트 그린). golden byte-identical 유지.
 - **`../packages/data/`** — `@three-slicer/data`: 추출 JSON(config-schema/ui-tree/toggle-rules/invalidation-map). `extract_all.py` 가 재생성.
-- **`../packages/components/`** — `@three-slicer/components`: 재사용 React 컴포넌트(props 구동, 전역/컨텍스트 결합 0, Shadow DOM). `<SettingsPanel/>` 제공(사용법: `packages/components/README.md`).
-- **`../packages/viewer/`** — `@three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트(three.js, Shadow DOM).
+- **`../packages/components/`** — `three-slicer/components`: 재사용 React 컴포넌트(props 구동, 전역/컨텍스트 결합 0, Shadow DOM). `<SettingsPanel/>` 제공(사용법: `packages/components/README.md`).
+- **`../packages/viewer/`** — `three-slicer/viewer`: `<Viewport/>` 뷰어 컴포넌트(three.js, Shadow DOM).
 - **`viewer/`** — 데모 앱. engine(워커·설정) + data + components + viewer 를 워크스페이스로 소비.
 
-### `@three-slicer/engine` 사용 (헤드리스/Node)
+### `three-slicer` 사용 (헤드리스/Node)
 
 ```js
-import { createSlicer } from '@three-slicer/engine'        // 예제: packages/engine/examples/headless.mjs
+import { createSlicer } from 'three-slicer'        // 예제: packages/engine/examples/headless.mjs
 
 const slicer = await createSlicer()                    // WASM 커널 로드
 // 배치: 전체 결과(gcode + stats + layers)
@@ -34,7 +34,7 @@ slicer.dispose()
 
 브라우저(오프-메인스레드)는 워커로: `new Worker(engineWorkerURL(), { type: 'module' })` — 워커가
 30단계 스트리밍 프로토콜(`{type:'layer'|'done'|'error'|'progress'}`)을 말한다. UI 설정→커널 파라미터
-변환은 `@three-slicer/engine/settings` 의 `deriveKernelParams(settings)` (config-schema 기반, 번들러/브라우저용).
+변환은 `three-slicer/settings` 의 `deriveKernelParams(settings)` (config-schema 기반, 번들러/브라우저용).
 
 ## 추출 산출물
 

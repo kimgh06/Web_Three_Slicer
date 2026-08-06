@@ -1,7 +1,7 @@
 // 우측 설정 패널(편집 가능)의 실제 값 → 커널 슬라이스 파라미터 매핑.
 //  - 설정 상태는 sparse 맵(key→value): 편집한 키만 저장, 없으면 config-schema default.
 //  - 벡터형(coFloats/coInts 등)은 첫 원소만 사용/편집(단순화).
-import schema from '@three-slicer/data/config-schema.json'
+import schema from 'three-slicer/data/config-schema.json'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }

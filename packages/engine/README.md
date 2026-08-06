@@ -1,21 +1,21 @@
-# @three-slicer/engine
+# three-slicer
 
 Browser/WASM 3D-slicing kernel reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). Slices binary STL to G-code entirely client-side (or in Node) — no server, no native binaries.
 
-**No three.js dependency.** This is a headless SDK; the only dependency is `@three-slicer/data` (config metadata JSON). For a ready-made React viewer see `@three-slicer/viewer`.
+**No three.js dependency.** This is a headless SDK; the only dependency is `@three-slicer/data` (config metadata JSON). For a ready-made React viewer see `three-slicer/viewer`.
 
 Ported from the original C++ sources: Clipper polygon ops, Arachne variable-width walls, real fill patterns (gyroid TPMS / honeycomb / 3D-honeycomb / crosshatch / concentric), tree supports, pressure equalizer, arc fitting (G2/G3), scarf seams, ironing, multi-material with prime tower. Kernel changes are gated by a 120+ invariant test suite and golden byte-identical G-code checks.
 
 ## Install
 
 ```bash
-npm i @three-slicer/engine
+npm i three-slicer
 ```
 
 ## Usage
 
 ```js
-import { createSlicer } from '@three-slicer/engine'
+import { createSlicer } from 'three-slicer'
 
 const slicer = await createSlicer()               // loads the WASM kernel (~3.4 MB, base64-inlined)
 
@@ -31,7 +31,7 @@ slicer.slice(stlArrayBuffer, params, {
 slicer.dispose()
 ```
 
-Off-main-thread (browser): `new Worker(engineWorkerURL(), { type: 'module' })` — the worker speaks a streaming protocol (`{type: 'layer' | 'done' | 'error' | 'progress'}`). Subpath `@three-slicer/engine/worker` exposes the worker entry for bundler-specific setups.
+Off-main-thread (browser): `new Worker(engineWorkerURL(), { type: 'module' })` — the worker speaks a streaming protocol (`{type: 'layer' | 'done' | 'error' | 'progress'}`). Subpath `three-slicer/worker` exposes the worker entry for bundler-specific setups.
 
 ## Parameters
 
@@ -41,7 +41,7 @@ Two levels — use whichever fits:
 2. **OrcaSlicer settings map** — a sparse `{schemaKey: value}` map using original OrcaSlicer option keys (907 defined in `@three-slicer/data`); unset keys fall back to schema defaults:
 
 ```js
-import { deriveKernelParams } from '@three-slicer/engine/settings'
+import { deriveKernelParams } from 'three-slicer/settings'
 slicer.slice(stl, deriveKernelParams({ layer_height: 0.25, sparse_infill_density: 15 }))
 ```
 
