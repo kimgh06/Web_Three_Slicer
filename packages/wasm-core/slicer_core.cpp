@@ -118,8 +118,12 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   const double solid_spacing   = w;   // solid = 100% fill
   const double support_spacing = (p.support_density > 1e-4) ? (w / p.support_density) : (w*3.0);
 
-  // Multi-material (stretch goal): with two groups, branch to the separate-slice + T0/T1 + prime tower path
-  if (p.extruder_count >= 2 && p.mm_group_split > 0 && p.mm_group_split < (int)tris.size())
+  // Multi-material (stretch goal): with two or more groups, branch to the separate-slice + tool change + prime
+  //  tower path. Either boundary form gets there — mm_group_splits carries N groups, mm_group_split just one.
+  auto usable = [&](int b){ return b > 0 && b < (int)tris.size(); };
+  bool hasGroups = usable(p.mm_group_split);
+  for (double b : p.mm_group_splits) if (usable((int)b)) hasGroups = true;
+  if (p.extruder_count >= 2 && hasGroups)
     return slice_multimaterial(tris, p, onProgress, height, over_bed);
 
   // Count the z levels (the progress total)

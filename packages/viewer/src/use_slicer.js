@@ -202,7 +202,12 @@ export function useSlicer(deps) {
   }
   function buildParams(merged) {
     const params = deriveKernelParams(settings)
-    if (merged.extruders >= 2 && merged.split > 0) { params.extruder_count = merged.extruders; params.mm_group_split = merged.split; params.wipe_tower_real = wipeTowerReal }
+    if (merged.extruders >= 2 && merged.split > 0) {
+      params.extruder_count = merged.extruders; params.mm_group_split = merged.split
+      // One group per extruder run — mm_group_split alone can only express two.
+      if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
+      params.wipe_tower_real = wipeTowerReal
+    }
     if (downgradeRef.current) { params.sparse_infill_pattern = 'rectilinear'; params.infill_density = Math.min(params.infill_density ?? 0.15, 0.08); params.economy = true }  // downgrade retry
     if (typeof window !== 'undefined' && window.__vpForceTree) { params.enable_support = true; params.support_style = 'tree'; params.support_threshold_angle = 40 }  // stage-31 test hook: force tree support (not set in production)
     if (typeof window !== 'undefined') window.__vpParams = params   // dev/test aid: the parameters actually handed to the kernel

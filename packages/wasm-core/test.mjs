@@ -94,6 +94,12 @@ export function makeTwoBoxSTL() {
   return { stl: trisToSTL([...A, ...B]), split: A.length }
 }
 
+// Three boxes in triangle order, one per extruder — the N-way grouping fixture.
+export function makeThreeBoxSTL() {
+  const A = boxTris(0, 0, 0, 10, 10, 6), B = boxTris(16, 0, 0, 10, 10, 6), C = boxTris(32, 0, 0, 10, 10, 6)
+  return { stl: trisToSTL([...A, ...B, ...C]), splits: [A.length, A.length + B.length] }
+}
+
 const params = {
   layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2,
   infill_density: 0.15, nozzle_diameter: 0.4, filament_diameter: 1.75, flow_ratio: 1.0,
@@ -407,6 +413,23 @@ ok(Math.abs(rMMmat.stats.filament_mm - rMM.stats.filament_mm) > 1e-6,
    `per-extruder flow ratio changes the extruded amount (${rMMmat.stats.filament_mm.toFixed(2)} vs ${rMM.stats.filament_mm.toFixed(2)} mm)`)
 const rMMnoArrays = Module.slice(new Uint8Array(mmStl), JSON.stringify(mmBase), () => {})
 ok(rMMnoArrays.gcode === rMM.gcode, `MM without per-extruder arrays is byte-identical to before`)
+
+// N-way grouping: three boxes, one per extruder. A single mm_group_split can only express two groups, so the
+//  third box used to be folded into the second and printed with its material.
+const { stl: mm3Stl, splits: mm3Splits } = makeThreeBoxSTL()
+const r3 = Module.slice(new Uint8Array(mm3Stl), JSON.stringify({ ...params,
+  extruder_count: 3, mm_group_splits: mm3Splits, mm_group_tools: [0, 1, 2],
+  extruder_nozzle_temp: [270, 220, 240], extruder_flow_ratio: [0.95, 0.98, 1.0] }), () => {})
+ok(!r3.error, `three-material slice ok (layers=${r3.error ? 'ERR' : r3.stats.layers})`)
+ok(/^T2$/m.test(r3.gcode), `third extruder gets its own tool (T2)`)
+ok(/^M109 S240$/m.test(r3.gcode), `third extruder heats to its own material (M109 S240)`)
+const temps3 = [...r3.gcode.matchAll(/^M109 S(\d+)$/gm)].map(m => m[1])
+ok(new Set(temps3).size === 3, `all three materials reach the G-code (temps: ${[...new Set(temps3)].join(', ')})`)
+// The old single-boundary form on the same geometry proves what was broken: T2 never appears.
+const r3old = Module.slice(new Uint8Array(mm3Stl), JSON.stringify({ ...params,
+  extruder_count: 3, mm_group_split: mm3Splits[0],
+  extruder_nozzle_temp: [270, 220, 240] }), () => {})
+ok(!/^T2$/m.test(r3old.gcode), `a single boundary still yields two groups only (regression guard)`)
 
 // Backwards compatible: with every stage-6 parameter at its default, the cube result is unchanged
 const rCompat6 = Module.slice(new Uint8Array(stlBin), JSON.stringify({

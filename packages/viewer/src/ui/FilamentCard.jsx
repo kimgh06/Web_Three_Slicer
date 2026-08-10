@@ -228,9 +228,6 @@ export default function FilamentCard({ colors, onColor, onAdd, onRemove, setting
           <span className="fil-mat" data-testid={`filament-material-${i}`}>{label(materials[i])}</span>
         </div>
       ))}
-      {count > 2 && (
-        <div className="sc-info sc-note">Slicing uses two materials (T1/T2); further extruders are colors only.</div>
-      )}
       {catalog.types.length > 0 && (<>
         <div className="sc-info"><span>{count > 1 ? `T${active + 1} material` : 'Material'}</span>
           <select className="sc-model" value={activeType} onChange={e => pickType(e.target.value)}

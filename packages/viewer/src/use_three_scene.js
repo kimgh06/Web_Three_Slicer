@@ -294,9 +294,16 @@ export function useThreeScene(deps) {
         const sorted = [...arr].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
         const usedExtruders = new Set(sorted.map(o => o.extruder || 1))
         const tmp = new THREE.Vector3(); const out = []
+        // One boundary per extruder change, not just the first: with objects on T1/T2/T3 a single boundary would
+        //  fold T3's triangles into T2's group and print them with T2's material. `tools` carries the real
+        //  extruder number of each group, because assignments can skip one (T1 and T3 with nothing on T2).
         let triCount = 0, split = 0
+        const splits = [], tools = []
         for (const o of sorted) {
-          if ((o.extruder || 1) >= 2 && split === 0) split = triCount   // start boundary of ext2
+          const ext = o.extruder || 1
+          if (tools.length === 0) tools.push(ext - 1)
+          else if (ext - 1 !== tools[tools.length - 1]) { splits.push(triCount); tools.push(ext - 1) }
+          if (ext >= 2 && split === 0) split = triCount   // start boundary of ext2 (the pre-N-way scalar form)
           o.mesh.updateMatrixWorld(true)
           const M = o.mesh.matrixWorld, lp = o.localPos
           for (let i = 0; i < lp.length; i += 3) { tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M); out.push(tmp.x, -tmp.z, tmp.y) }  // Rinv -> model (world)
@@ -319,7 +326,7 @@ export function useThreeScene(deps) {
           for (let k = 0; k < 3; k++) { dvw.setFloat32(off, out[vi++], true); dvw.setFloat32(off + 4, out[vi++], true); dvw.setFloat32(off + 8, out[vi++], true); off += 12 }
           dvw.setUint16(off, 0, true); off += 2
         }
-        return { buf, split, extruders: usedExtruders.size, offX: offX3, offZ: offZ3 }
+        return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3 }
       },
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)

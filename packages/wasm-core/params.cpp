@@ -188,6 +188,8 @@ Params parse_params(const std::string& j) {
   p.extruder_retract_speed        = jarr(j,"extruder_retract_speed");
   p.extruder_z_hop                = jarr(j,"extruder_z_hop");
   p.mm_group_split                = (int)jget(j,"mm_group_split",p.mm_group_split);
+  p.mm_group_splits               = jarr(j,"mm_group_splits");
+  p.mm_group_tools                = jarr(j,"mm_group_tools");
   p.auto_center                   = jbool(j,"auto_center",p.auto_center);   // stage 28
   p.wipe_tower_real               = jbool(j,"wipe_tower_real",p.wipe_tower_real);
   p.prime_tower_width             = jget(j,"prime_tower_width",p.prime_tower_width);

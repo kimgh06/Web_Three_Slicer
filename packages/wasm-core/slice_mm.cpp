@@ -29,6 +29,14 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   auto report=[&](int d,int t){ if(!onProgress.isUndefined()&&!onProgress.isNull()) onProgress(d,t); };
   const double w=p.line_width;
   int split=p.mm_group_split, NT=(int)tris.size();
+  // Group boundaries in triangle order: [bounds[g], bounds[g+1]) is group g. A host that only sends the scalar
+  //  mm_group_split still gets the two-group split it always did.
+  std::vector<int> bounds{0};
+  for (double b : p.mm_group_splits) { int v=(int)b; if (v>bounds.back() && v<NT) bounds.push_back(v); }
+  if (bounds.size()==1 && split>0 && split<NT) bounds.push_back(split);
+  bounds.push_back(NT);
+  const int nGroups=(int)bounds.size()-1;
+  auto toolOf=[&](int g){ return g<(int)p.mm_group_tools.size() ? (int)p.mm_group_tools[g] : g; };
   int N=0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
 
   GW gw; gw.s.reserve(1<<16);
@@ -52,6 +60,11 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   { char h[200];
     std::snprintf(h,sizeof h,"; MM extruders=%d group_split=%d/%d  lh=%.3f lw=%.3f walls=%d infill=%.2f",
       p.extruder_count,split,NT,p.layer_height,w,p.wall_loops,p.infill_density); gw.raw(h);
+    if (nGroups>2) {                                  // only the N-way case adds a line, so ≤2 groups stay identical
+      std::string gl="; MM groups:"; for (int g=0;g<nGroups;++g){
+        char b[48]; std::snprintf(b,sizeof b," T%d[%d,%d)",toolOf(g),bounds[g],bounds[g+1]); gl+=b; }
+      gw.raw(gl.c_str());
+    }
     std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
     std::snprintf(h,sizeof h,"M104 S%.0f",toolTemp(0)); gw.raw(h);
     std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
@@ -84,7 +97,8 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
     int fPr=(int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
 
-    Paths c0=slice_group(tris,0,split,z), c1=slice_group(tris,split,NT,z);
+    std::vector<Paths> groups(nGroups);
+    for (int g=0; g<nGroups; ++g) groups[g]=slice_group(tris,bounds[g],bounds[g+1],z);
     gw.island = Paths{};
     auto emitGroup=[&](const Paths& contour){
       if (contour.empty()) return;
@@ -98,19 +112,23 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     //  the stall; do that when the wipe tower knows the upcoming tool per layer.
     auto toolTo=[&](int t){
       if (curTool==t) return;
-      gw.raw(t==0?"T0":"T1"); curTool=t; loadTool(t);
+      char tc[16]; std::snprintf(tc,sizeof tc,"T%d",t); gw.raw(tc); curTool=t; loadTool(t);
       if (toolTemp(t) != lastTemp) {                 // only when the materials actually disagree
         char h[48]; std::snprintf(h,sizeof h,"M109 S%.0f",toolTemp(t)); gw.raw(h); lastTemp=toolTemp(t);
       }
     };
 
-    if (!c0.empty()){ toolTo(0); emitGroup(c0); }
-    if (!c1.empty()){
-      if (!c0.empty()){                                   // a switch within the layer -> prime tower
-        toolTo(1);
+    // Every group in turn; each change of tool *within* a layer purges through the prime tower first.
+    bool printedThisLayer=false;
+    for (int g=0; g<nGroups; ++g){
+      if (groups[g].empty()) continue;
+      const int from=curTool, to=toolOf(g);
+      const bool purge = printedThisLayer && from!=to;
+      toolTo(to);
+      if (purge) {
         if (p.wipe_tower_real) {                          // stage 12: the real WipeTower.generate()
           auto wt = config_bridge::wipe_tower_block(p.bed_width,p.bed_depth,p.first_layer_height,
-                        p.layer_height, zE, i==0, 0, 1, p.prime_tower_x, p.prime_tower_y,   // stage 33: the 10,10 constants -> wipe_tower_x/y
+                        p.layer_height, zE, i==0, from, to, p.prime_tower_x, p.prime_tower_y,   // stage 33: the 10,10 constants -> wipe_tower_x/y
                         p.prime_tower_width, gw.tool_filament_diameter);   // the tool just switched to is the one purging
           if (wt.ok) {
             gw.raw("; wipe_tower_real: real ported WipeTower.generate()");
@@ -125,8 +143,9 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
           gw.raw("; prime tower (basic — NOT a real wipe tower)");
           emit_loops(gw,tp,primeRings(),zE,11.0f,fPr,fTravel,-1,seamCtx);
         }
-      } else toolTo(1);
-      emitGroup(c1);
+      }
+      emitGroup(groups[g]);
+      printedThisLayer=true;
     }
     em::val Lo=em::val::object(); Lo.set("z",zE); Lo.set("paths",to_f32(tp)); Lo.set("widths",to_f32(widths)); layersArr.call<void>("push",Lo);
     report(i+1,N);

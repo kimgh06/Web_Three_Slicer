@@ -106,6 +106,11 @@ struct Params {
     return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
   }
   int    mm_group_split=0;                              // triangle group boundary index ([0,split)=T0, [split,N)=T1)
+  // N-way grouping: every boundary in triangle order, so three materials are three groups rather than the second
+  //  one silently swallowing the third. Empty falls back to the single mm_group_split above.
+  //  mm_group_tools names the tool each group prints with — extruder numbers can be sparse (objects on T1 and T3
+  //  only), and the per-extruder filament arrays are indexed by the real tool, not by group position.
+  std::vector<double> mm_group_splits, mm_group_tools;
   bool   auto_center=false;                             // stage 28: true = realign the combined bbox to the origin (stage-3 legacy). false (default) = trust the viewer coordinates (no realignment, only Z seating) -> the toolpath overlaps the on-screen model exactly. Upstream = only the plate origin offset (GCode.cpp:932).
   // Stage 33: the default switched to true. Evidence (compare_wipetower.mjs measurements, 2-box MM):
   //  the real path succeeded on 49/49 layers without a fallback, purge volumes are actually computed (filament 1098 -> 4902mm),
