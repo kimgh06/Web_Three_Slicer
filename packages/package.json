@@ -80,6 +80,7 @@
     "data/invalidation-map.json",
     "data/printers.json",
     "data/processes.js",
+    "data/filaments.js",
     "README.md",
     "LICENSE.txt"
   ],

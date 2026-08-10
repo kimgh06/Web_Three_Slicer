@@ -18,6 +18,23 @@ static double jget(const std::string& s, const char* key, double d) {
   size_t p = jfind_val(s, key);
   return (p == std::string::npos) ? d : std::strtod(s.c_str() + p, nullptr);
 }
+// `"key": [270, 220]` -> {270, 220}. Absent or non-array yields an empty vector, which every reader treats as
+//  "no per-extruder values, use the scalar" — so an older host that sends nothing keeps the previous behaviour.
+static std::vector<double> jarr(const std::string& s, const char* key) {
+  std::vector<double> out;
+  size_t p = jfind_val(s, key);
+  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
+  for (++p; p < s.size() && s[p] != ']'; ) {
+    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
+    if (p >= s.size() || s[p] == ']') break;
+    char* end = nullptr;
+    double v = std::strtod(s.c_str() + p, &end);
+    if (end == s.c_str() + p) break;            // not a number — stop instead of spinning on the same character
+    out.push_back(v);
+    p = (size_t)(end - s.c_str());
+  }
+  return out;
+}
 static bool jbool(const std::string& s, const char* key, bool d) {
   size_t p = jfind_val(s, key);
   if (p == std::string::npos) return d;
@@ -164,6 +181,12 @@ Params parse_params(const std::string& j) {
   p.reduce_crossing_wall          = jbool(j,"reduce_crossing_wall",p.reduce_crossing_wall);
   p.max_volumetric_extrusion_rate_slope = jget(j,"max_volumetric_extrusion_rate_slope",p.max_volumetric_extrusion_rate_slope);
   p.extruder_count                = (int)jget(j,"extruder_count",p.extruder_count);
+  p.extruder_nozzle_temp          = jarr(j,"extruder_nozzle_temp");
+  p.extruder_filament_diameter    = jarr(j,"extruder_filament_diameter");
+  p.extruder_flow_ratio           = jarr(j,"extruder_flow_ratio");
+  p.extruder_retract_length       = jarr(j,"extruder_retract_length");
+  p.extruder_retract_speed        = jarr(j,"extruder_retract_speed");
+  p.extruder_z_hop                = jarr(j,"extruder_z_hop");
   p.mm_group_split                = (int)jget(j,"mm_group_split",p.mm_group_split);
   p.auto_center                   = jbool(j,"auto_center",p.auto_center);   // stage 28
   p.wipe_tower_real               = jbool(j,"wipe_tower_real",p.wipe_tower_real);

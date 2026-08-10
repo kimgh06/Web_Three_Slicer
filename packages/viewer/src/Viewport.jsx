@@ -35,7 +35,7 @@ import SliceBar from './ui/SliceBar.jsx'
 //  - Toolpaths: stage 24 — the upstream libvgcode approach (GPU instancing, toolpath_gpu.js). The CPU geometry builder is gone.
 //    Coordinates: kernel z-up -> toolpathGroup rotation.x=-90° (the shader computes in local z-up, view_matrix compensates).
 
-export default function Viewport({ settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null }) {
+export default function Viewport({ settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null }) {
   const apiRef = useRef(null)
   const workerRef = useRef(null)
   const objectsRef = useRef([])        // [{id,name,mesh,localPos}]
@@ -232,11 +232,17 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
   function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); return n }) }
   function addFilament() { setExtruderColors(cs => { if (cs.length >= 4) return cs; const pal = ['#e0473b', '#3bb0e0', '#7ad14a']; const n = [...cs, pal[cs.length - 1] || '#888888']; extruderColorsRef.current = n; return n }) }
-  function removeFilament() {
+  function removeFilament(index) {
     setExtruderColors(cs => {
       if (cs.length <= 1) return cs
-      const n = cs.slice(0, -1); extruderColorsRef.current = n
-      objectsRef.current.forEach(o => { if ((o.extruder || 1) > n.length) apiRef.current?.setObjectExtruder(o.id, n.length) })
+      // The card passes the SELECTED extruder's index; a bare call (older hosts) still removes the last one.
+      const idx = Number.isInteger(index) ? Math.min(Math.max(index, 0), cs.length - 1) : cs.length - 1
+      const n = cs.filter((_, k) => k !== idx); extruderColorsRef.current = n
+      objectsRef.current.forEach(o => {
+        const e = o.extruder || 1
+        if (e === idx + 1) apiRef.current?.setObjectExtruder(o.id, 1)           // its filament is gone -> back to T1
+        else if (e > idx + 1) apiRef.current?.setObjectExtruder(o.id, e - 1)   // later tools shift down one slot
+      })
       apiRef.current?.recolorObjects(); refreshObjects(); return n
     })
   }
@@ -367,7 +373,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
                 settings={settings} setSettings={setSettings} motionPanel={motionPanel} />
 
-              <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament} />
+              <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
+                settings={settings} setSettings={setSettings} filamentPanel={filamentPanel} />
 
               {objects.length > 0 && (
                 <ObjectList objects={objects} extruderColors={extruderColors}

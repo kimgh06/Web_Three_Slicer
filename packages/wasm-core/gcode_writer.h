@@ -57,6 +57,10 @@ struct GW {
   // Stage 6: PE-lite (limit on the volumetric flow change rate between adjacent extrusions)
   double pe_slope=0.0;             // mm³/s² (0=off)
   double filament_area=2.405;      // π·d²/4 (set in the preamble)
+  // Multi-material: the flow math has to follow the tool currently loaded, not the single material Params names.
+  //  Set next to filament_area at preamble time and re-set on every tool change; the defaults match the Params
+  //  defaults so a caller that never touches them is unchanged.
+  double tool_filament_diameter=1.75, tool_flow_ratio=1.0;
   double last_vol_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
   // Stage 6: wall-avoiding travel
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.
@@ -95,21 +99,21 @@ struct GW {
   }
   void set_e_per_mm(double h, const Params& p) {
     double A = h * (p.line_width - h * (1.0 - PI/4.0));
-    double fa = PI * p.filament_diameter * p.filament_diameter / 4.0;
-    e_per_mm = A / fa * p.flow_ratio;
+    double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
+    e_per_mm = A / fa * tool_flow_ratio;
   }
   // Stage 7: sets the flow for an arbitrary width (variable-width Arachne walls). Cross-section A = h·(w − h·(1−π/4)).
   void set_e_per_mm_width(double wseg, double h, const Params& p) {
     double A = h * (wseg - h * (1.0 - PI/4.0)); if (A < 0) A = 0;
-    double fa = PI * p.filament_diameter * p.filament_diameter / 4.0;
-    e_per_mm = A / fa * p.flow_ratio;
+    double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
+    e_per_mm = A / fa * tool_flow_ratio;
   }
   // WP3: sets the upstream volumetric flow (mm³/mm, ExtrusionPath::mm3_per_mm) directly — lets tree support reproduce the flow
   //  computed by the upstream Flow verbatim (including cases where it differs from the rectangular width x height approximation, such as bridging contact layers).
   void set_e_per_mm_vol(double mm3, const Params& p) {
     if (mm3 < 0) mm3 = 0;
-    double fa = PI * p.filament_diameter * p.filament_diameter / 4.0;
-    e_per_mm = mm3 / fa * p.flow_ratio;
+    double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
+    e_per_mm = mm3 / fa * tool_flow_ratio;
   }
   void raw(const char* c){ if (dry) return; s += c; s += '\n'; }
   // Hot-path line emission — when the fast path (fixed point) fails, fall back to the original snprintf format (byte-identical).

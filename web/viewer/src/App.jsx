@@ -13,7 +13,16 @@ function Prepare() {
       <Viewport settings={settings} setSettings={setSettings}
         processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings} />}
         motionPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings}
-          only={{ builder: 'TabPrinter::build_kinematics_page' }} />} />
+          only={{ builder: 'TabPrinter::build_kinematics_page' }} />}
+        filamentPanel={(filamentSettings, setFilamentSettings) => <>
+          {/* A function, not a node: with several extruders loaded the card hands down that extruder's slice of
+              the per-extruder columns and writes edits back at its index. Two builders — the material's own
+              settings and the page that overrides the printer's retraction. */}
+          <SettingsPanel embedded settings={filamentSettings} setSettings={setFilamentSettings}
+            only={{ builder: 'TabFilament::build' }} />
+          <SettingsPanel embedded settings={filamentSettings} setSettings={setFilamentSettings}
+            only={{ builder: 'TabFilament::add_filament_overrides_page' }} />
+        </>} />
     </div>
   )
 }

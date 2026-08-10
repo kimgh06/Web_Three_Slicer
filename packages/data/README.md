@@ -4,11 +4,17 @@ OrcaSlicer configuration metadata extracted from the original C++ sources, as pl
 
 | File | Contents |
 |---|---|
-| `config-schema.json` | 907 print options: type, label, category, tooltip, min/max, mode, enum values/labels, defaults, source line numbers |
+| `config-schema.json` | 923 print options: type, label, category, tooltip, min/max, mode, enum values/labels, defaults, source line numbers |
 | `config-schema-builddump.json` | Build-verified cross-check: the real `print_config_def` (817 options) dumped from a WASM compile of the original `PrintConfig.cpp` |
-| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (34 pages, 587 option references) |
+| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (20 pages, 542 option references) |
 | `toggle-rules.json` | 231 enable/disable rules with original C++ `enable_if` condition source |
 | `invalidation-map.json` | Option-change → re-slice step mapping (Print/PrintObject invalidation branches) |
+| `printers.json` | 1,035 vendor machine profiles across 64 vendors: motion limits, bed and nozzle |
+| `processes.js` | 2,243 print presets (speeds, accelerations), joined to printers by `compatible_printers` |
+| `filaments.js` | 5,999 material presets over 82 filament types, plus each printer model's recommended list |
+
+The last two are column-oriented and deduplicated, and load on demand. Read them through `processPresets()` /
+`filamentPresets()` in `three-slicer/settings` rather than decoding the layout by hand.
 
 ```js
 import schema from 'three-slicer/data/config-schema.json'

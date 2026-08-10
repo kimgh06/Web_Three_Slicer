@@ -188,7 +188,7 @@ Available subpaths:
 
 ## TypeScript
 
-Type declarations ship with the package — no `@types/*` needed. All 907 setting keys are typed from the config schema, enum values included:
+Type declarations ship with the package — no `@types/*` needed. All 923 setting keys are typed from the config schema, enum values included:
 
 ```ts
 import { createSlicer, type SlicerSettings } from 'three-slicer'

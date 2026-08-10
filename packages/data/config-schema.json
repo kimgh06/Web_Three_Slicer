@@ -12780,5 +12780,169 @@
    2.5,
    2.5
   ]
+ },
+ "filament_retraction_length": {
+  "type": "coFloats",
+  "label": "Length",
+  "full_label": "Retraction Length",
+  "tooltip": "Some amount of material in extruder is pulled back to avoid ooze during long travel. Set zero to disable retraction.",
+  "sidetext": "mm",
+  "mode": "simple",
+  "nullable": true
+ },
+ "filament_z_hop": {
+  "type": "coFloats",
+  "label": "Z-hop height",
+  "tooltip": "Whenever there is a retraction, the nozzle is lifted a little to create clearance between the nozzle and the print. This prevents the nozzle from hitting the print when traveling more. Using spiral lines to lift z can prevent stringing.",
+  "sidetext": "mm",
+  "min": 0,
+  "max": 5,
+  "mode": "simple",
+  "nullable": true
+ },
+ "filament_z_hop_types": {
+  "type": "coEnums",
+  "label": "Z-hop type",
+  "tooltip": "Type of Z-hop.",
+  "enum_type": "ZHopType",
+  "enum_values": [
+   "Auto Lift",
+   "Normal Lift",
+   "Slope Lift",
+   "Spiral Lift"
+  ],
+  "enum_labels": [
+   "Auto",
+   "Normal",
+   "Slope",
+   "Spiral"
+  ],
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_lift_above": {
+  "type": "coFloats",
+  "label": "Only lift Z above",
+  "tooltip": "If you set this to a positive value, Z lift will only take place above the specified absolute Z.",
+  "sidetext": "mm",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_lift_below": {
+  "type": "coFloats",
+  "label": "Only lift Z below",
+  "tooltip": "If you set this to a positive value, Z lift will only take place below the specified absolute Z.",
+  "sidetext": "mm",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_lift_enforce": {
+  "type": "coEnums",
+  "label": "On surfaces",
+  "tooltip": "Enforce Z-Hop behavior. This setting is impacted by the above settings (Only lift Z above/below).",
+  "enum_type": "RetractLiftEnforceType",
+  "enum_values": [
+   "All Surfaces",
+   "Top Only",
+   "Bottom Only",
+   "Top and Bottom"
+  ],
+  "enum_labels": [
+   "All Surfaces",
+   "Top Only",
+   "Bottom Only",
+   "Top and Bottom"
+  ],
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retraction_speed": {
+  "type": "coFloats",
+  "label": "Retraction speed",
+  "full_label": "Retraction speed",
+  "tooltip": "Speed for retracting filament from the nozzle.",
+  "sidetext": "mm/s",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_deretraction_speed": {
+  "type": "coFloats",
+  "label": "Deretraction speed",
+  "full_label": "Deretraction speed",
+  "tooltip": "Speed for reloading filament into the nozzle. Zero means same speed of retraction.",
+  "sidetext": "mm/s",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_restart_extra": {
+  "type": "coFloats",
+  "label": "Extra length on restart",
+  "tooltip": "When the retraction is compensated after the travel move, the extruder will push this additional amount of filament. This setting is rarely needed.",
+  "sidetext": "mm",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retraction_minimum_travel": {
+  "type": "coFloats",
+  "label": "Travel distance threshold",
+  "tooltip": "Only trigger retraction when the travel distance is longer than this threshold.",
+  "sidetext": "mm",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_wipe_distance": {
+  "type": "coFloats",
+  "label": "Wipe distance",
+  "tooltip": "Describe how long the nozzle will move along the last path when retracting.\n\nDepending on how long the wipe operation lasts, how fast and long the extruder/filament retraction settings are, a retraction move may be needed to retract the remaining filament.\n\nSetting a value in the retract amount before wipe setting below will perform any excess retraction before the wipe, else it will be performed after.",
+  "sidetext": "mm",
+  "min": 0,
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_when_changing_layer": {
+  "type": "coBools",
+  "label": "Retract on layer change",
+  "tooltip": "This forces a retraction on layer changes.",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_wipe": {
+  "type": "coBools",
+  "label": "Wipe while retracting",
+  "tooltip": "This moves the nozzle along the last extrusion path when retracting to clean any leaked material on the nozzle. This can minimize blobs when printing a new part after traveling.",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_before_wipe": {
+  "type": "coPercents",
+  "label": "Retract amount before wipe",
+  "tooltip": "This is the length of fast retraction before a wipe, relative to retraction length.",
+  "sidetext": "%",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_retract_after_wipe": {
+  "type": "coPercents",
+  "label": "Retract amount after wipe",
+  "tooltip": "The length of fast retraction after wipe, relative to retraction length.\nThe value will be clamped by 100% minus the retract amount before the wipe value.",
+  "sidetext": "%",
+  "mode": "advanced",
+  "nullable": true
+ },
+ "filament_long_retractions_when_cut": {
+  "type": "coBools",
+  "label": "Long retraction when cut (beta)",
+  "tooltip": "Experimental feature: Retracting and cutting off the filament at a longer distance during changes to minimize purge. While this reduces flush significantly, it may also raise the risk of nozzle clogs or other printing problems.",
+  "mode": "simple",
+  "nullable": true
+ },
+ "filament_retraction_distances_when_cut": {
+  "type": "coFloats",
+  "label": "Retraction distance when cut",
+  "tooltip": "Experimental feature: Retraction length before cutting off during filament change.",
+  "min": 10,
+  "max": 18,
+  "mode": "simple",
+  "nullable": true
  }
 }

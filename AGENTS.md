@@ -34,7 +34,7 @@ bash packages/wasm-core/build.sh
 # Regenerate the extracted JSON (slicer/ sources -> packages/data/)
 python3 web/extract_all.py
 
-# Regenerate the settings key types (config-schema.json -> types/settings-keys.d.ts, 907 keys). build runs this automatically
+# Regenerate the settings key types (config-schema.json -> types/settings-keys.d.ts, 923 keys). build runs this automatically
 node packages/types/gen_settings_types.mjs
 
 # Standalone tarball verification (4 consumers: Node/types/Vite/Next) — must live inside packages/
@@ -46,17 +46,21 @@ bash packages/pack_check.sh
 All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise via subpath exports):
 - `packages/engine/` — the entry point `three-slicer` (+`/settings` `/toggle` `/worker` `/wasm`): the WASM kernel SDK
 - `packages/data/` — the extracted artifacts: config-schema, ui-tree, toggle-rules, invalidation-map, printers
-  (vendor machine profiles: motion limits + bed/nozzle) and processes (print presets — speeds/accelerations).
-  `processes` is emitted as a **`.js` module, not JSON**, because it is loaded dynamically: a dynamic JSON import
+  (vendor machine profiles: motion limits + bed/nozzle), processes (print presets — speeds/accelerations) and
+  filaments (material presets — temperatures, flow, cooling, retraction overrides; joined to printers by
+  `compatible_printers`, with each machine model's `default_materials` as the recommended list).
+  `processes`/`filaments` are emitted as **`.js` modules, not JSON**, because they are loaded dynamically: a dynamic JSON import
   needs `with { type: 'json' }` in Node, and that same attribute makes browsers reject a dev server's
-  `text/javascript` response. Both large artifacts are column-oriented and deduplicated — read them through
-  `printerSettings()` / `processPresets()` in `three-slicer/settings`, not by hand.
+  `text/javascript` response. The large artifacts are column-oriented and deduplicated — read them through
+  `printerSettings()` / `processPresets()` / `filamentPresets()` in `three-slicer/settings`, not by hand.
+  Both preset artifacts carry only the keys some preset actually sets, so their key sets stay disjoint and
+  applying one never clears another's values.
   New artifacts must also be added to `packages/package.json` `files`, or they are missing from the tarball.
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
 - `packages/components/` — `three-slicer/components`: the React `<SettingsPanel/>` (zero global coupling, Shadow DOM)
 - `packages/viewer/` — `three-slicer/viewer`: the `<Viewport/>` viewer component (three.js, Shadow DOM)
-- `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (907 keys) which `gen_settings_types.mjs` generates
+- `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (923 keys) which `gen_settings_types.mjs` generates
 - `packages/wasm-core/` — the kernel C++ sources + `third_party/` (a copy of the deps, for standalone builds) — not published to npm; its output lands in `packages/engine/src/`
 - `web/viewer/` — the demo app (Vite + React) — a workspace member that references the package by name

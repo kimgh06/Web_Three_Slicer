@@ -19,7 +19,9 @@ function App() {
 
 Slice parameters are derived from `settings` via `three-slicer`'s schema mapping — pair it with `three-slicer/components`' `<SettingsPanel/>` sharing the same state for a full slicer UI.
 
-Props: `settings`, `setSettings`, `processPanel` (optional React node rendered in the right sidebar).
+Props: `settings`, `setSettings`, and three optional React-node slots rendered in the right sidebar —
+`processPanel` (the process card), `motionPanel` (folded into the printer card) and `filamentPanel`
+(folded into the filament card, next to the material picker).
 
 Subpath exports for custom UIs (framework-free, no React):
 - `three-slicer/viewer/toolpath` — GPU toolpath renderer (`buildSegmentData`, `makeToolpath`, view-type colorers)

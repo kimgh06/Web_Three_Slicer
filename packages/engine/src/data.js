@@ -16,3 +16,5 @@ export { default as printers } from 'three-slicer/data/printers.json' with { typ
 // other direction: a dynamic JSON import needs the attribute in Node, and that same attribute makes browsers
 // reject the text/javascript response a dev server gives for .json.
 export const loadProcesses = () => import('three-slicer/data/processes.js').then(m => m.default)
+// Same story for the filament presets (~540 KB, only needed once a material picker opens).
+export const loadFilaments = () => import('three-slicer/data/filaments.js').then(m => m.default)

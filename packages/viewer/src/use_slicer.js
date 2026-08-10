@@ -205,6 +205,7 @@ export function useSlicer(deps) {
     if (merged.extruders >= 2 && merged.split > 0) { params.extruder_count = merged.extruders; params.mm_group_split = merged.split; params.wipe_tower_real = wipeTowerReal }
     if (downgradeRef.current) { params.sparse_infill_pattern = 'rectilinear'; params.infill_density = Math.min(params.infill_density ?? 0.15, 0.08); params.economy = true }  // downgrade retry
     if (typeof window !== 'undefined' && window.__vpForceTree) { params.enable_support = true; params.support_style = 'tree'; params.support_threshold_angle = 40 }  // stage-31 test hook: force tree support (not set in production)
+    if (typeof window !== 'undefined') window.__vpParams = params   // dev/test aid: the parameters actually handed to the kernel
     return params
   }
   // One merged STL through the whole ladder: parameters + incremental digest + the last-successful-geometry bookkeeping.

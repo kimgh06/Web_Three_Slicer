@@ -391,6 +391,23 @@ ok(/; prime tower \(basic/.test(rMMring.gcode) && typeTotal(rMMring, 11) > 0, `w
 const rSingle = Module.slice(new Uint8Array(mmStl), JSON.stringify(params), () => {})
 ok(!/^T[01]$/m.test(rSingle.gcode) && typeTotal(rSingle, 11) === 0, `single-material path unchanged (no T0/T1, no prime tower)`)
 
+// Per-extruder filament: two materials mean two temperatures and two flow ratios. Without the arrays the MM
+//  output must stay exactly what it was, so the same slice is compared both ways.
+const mmBase = { ...params, extruder_count: 2, mm_group_split: mmSplit }
+const rMMmat = Module.slice(new Uint8Array(mmStl), JSON.stringify({ ...mmBase,
+  extruder_nozzle_temp: [270, 220], extruder_flow_ratio: [0.95, 0.98],
+  extruder_retract_length: [0.8, 0.4], extruder_z_hop: [0.4, 0.2] }), () => {})
+ok(!rMMmat.error, `per-extruder filament slices ok`)
+const startTemp = rMMmat.gcode.match(/^M109 S(\d+)/m)?.[1]
+const afterT1 = rMMmat.gcode.split(/^T1$/m)[1] ?? ''
+ok(startTemp === '270', `preamble heats to T0's material (M109 S${startTemp}, expected 270)`)
+ok(/^M109 S220$/m.test(afterT1), `switching to T1 heats to its own material (M109 S220)`)
+ok(/^M109 S270$/m.test(afterT1.split(/^T0$/m)[1] ?? ''), `switching back to T0 restores its temperature`)
+ok(Math.abs(rMMmat.stats.filament_mm - rMM.stats.filament_mm) > 1e-6,
+   `per-extruder flow ratio changes the extruded amount (${rMMmat.stats.filament_mm.toFixed(2)} vs ${rMM.stats.filament_mm.toFixed(2)} mm)`)
+const rMMnoArrays = Module.slice(new Uint8Array(mmStl), JSON.stringify(mmBase), () => {})
+ok(rMMnoArrays.gcode === rMM.gcode, `MM without per-extruder arrays is byte-identical to before`)
+
 // Backwards compatible: with every stage-6 parameter at its default, the cube result is unchanged
 const rCompat6 = Module.slice(new Uint8Array(stlBin), JSON.stringify({
   ...params, ironing_type: 'no ironing', reduce_crossing_wall: false, max_volumetric_extrusion_rate_slope: 0, extruder_count: 1,

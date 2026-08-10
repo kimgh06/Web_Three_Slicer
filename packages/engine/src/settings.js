@@ -1,7 +1,7 @@
 // Maps the actual values of the (editable) right-hand settings panel -> kernel slice parameters.
 //  - Settings state is a sparse map (key->value): only edited keys are stored, otherwise the config-schema default.
 //  - For vector types (coFloats/coInts, …) only the first element is used/edited (simplification).
-import { schema, printers, loadProcesses } from './data.js'
+import { schema, printers, loadProcesses, loadFilaments } from './data.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
@@ -67,6 +67,45 @@ export function processPresets() {
   return processesPromise
 }
 
+// Filament (material) presets — same lazy facade as the process presets above, over the ~540 KB filaments.js.
+//  Entries come out as objects rather than bare names because a material picker groups by type, and the type
+//  label only exists in this file. Both lists are in upstream order: byPrinter is the compatible set,
+//  defaultsByModel the vendor's recommendation (a subset, so the two overlap by design).
+let filamentsPromise = null
+export function filamentPresets() {
+  filamentsPromise ??= loadFilaments().then(data => {
+    // type/vendor are empty strings when the profile chain declares neither — the picker buckets those itself
+    const view = i => { const [name, , type, vendor] = data.presets[i]; return { name, type, vendor } }
+    return {
+      /** Every key a filament preset can set — clear these before applying a different material */
+      keys: data.keys,
+      /** Every material in the catalog — for a picker shown before any printer is chosen */
+      all: () => data.presets.map((_, i) => view(i)),
+      /** Materials compatible with a printer profile, as `{name, type, vendor}` */
+      listFor: (printerProfileName) => (data.byPrinter[printerProfileName] ?? []).map(view),
+      /** The vendor's recommended materials for that printer's model, same shape as listFor.
+       *  Filtered to the compatible set, which is not redundant: the recommendation is declared on the machine
+       *  *model* and so is nozzle-agnostic, while its entries name nozzle-specific presets ("… @Kobra 3 0.4 nozzle").
+       *  On a 0.2 nozzle profile 41% of the raw entries (1749 of 4259 across all printers) name a material whose
+       *  own compatible list excludes it — offering those would apply a preset upstream considers incompatible. */
+      recommendedFor: (printerProfileName) => {
+        const compatible = new Set(data.byPrinter[printerProfileName] ?? [])
+        return (data.defaultsByModel[printerEntry(printerProfileName)?.[2] ?? ''] ?? [])
+          .filter(i => compatible.has(i)).map(view)
+      },
+      /** The settings a material applies, ready to merge. `null` when unknown. */
+      settingsFor: (presetName) => {
+        const preset = data.presets.find(([name]) => name === presetName)
+        if (!preset) return null
+        const row = data.sets[preset[1]], out = {}
+        data.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
+        return out
+      },
+    }
+  })
+  return filamentsPromise
+}
+
 function printerEntry(profileName) {
   for (const models of Object.values(printers.byVendor)) {
     const entry = models[profileName]
@@ -94,6 +133,15 @@ export function deriveKernelParams(settings) {
   const S = k => settingScalar(settings, k)
   const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
   const bool = (k, d) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
+  // Filament retraction overrides: upstream lets a material override the machine's retraction (TPU wants a
+  //  different pull-back than PLA on the same printer). These schema keys are nullable and carry no default of
+  //  their own — "unset" means keep the machine value — so this reads the settings map directly rather than
+  //  through settingScalar, whose schema fallback would not distinguish the two.
+  const override = (filamentKey, machineKey, fallback) => {
+    const raw = settings?.[filamentKey]
+    const value = Number(Array.isArray(raw) ? raw[0] : raw)
+    return Number.isFinite(value) ? value : num(machineKey, fallback)
+  }
 
   let line_width = num('line_width', 0); if (!line_width) line_width = 0.42   // 0=auto -> default 0.42
 
@@ -128,6 +176,29 @@ export function deriveKernelParams(settings) {
   const machine = {}
   for (const [param, [key, fallback]] of Object.entries(MACHINE_LIMITS)) machine[param] = num(key, fallback)
 
+  // Multi-material: upstream stores every filament option as one entry per extruder (coFloats), and the material
+  //  picker writes each extruder's material at its own index. Only a second entry makes these arrays appear, so a
+  //  single-material slice sends exactly the keys it always did — the kernel then reads its scalars as before.
+  //  A hole (a material that overrides nothing) is filled with the value tool 0 resolved to, because the kernel
+  //  reads the array positionally and cannot tell "absent" from "0".
+  const perExtruder = {}
+  for (const [param, key, scalar] of [
+    ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature', 200)],
+    ['extruder_filament_diameter', 'filament_diameter', num('filament_diameter', 1.75)],
+    ['extruder_flow_ratio', 'filament_flow_ratio', num('filament_flow_ratio', 1.0)],
+    ['extruder_retract_length', 'filament_retraction_length', override('filament_retraction_length', 'retraction_length', 0.8)],
+    ['extruder_retract_speed', 'filament_retraction_speed', override('filament_retraction_speed', 'retraction_speed', 30)],
+    ['extruder_z_hop', 'filament_z_hop', override('filament_z_hop', 'z_hop', 0.4)],
+  ]) {
+    const raw = settings?.[key]
+    if (!Array.isArray(raw) || raw.length < 2) continue
+    perExtruder[param] = raw.map(v => {
+      if (v == null || v === '') return scalar        // null survives a JSON round-trip; Number(null) would be 0
+      const n = Number(Array.isArray(v) ? v[0] : v)
+      return Number.isFinite(n) ? n : scalar
+    })
+  }
+
   return {
     ...widths,
     ...machine,
@@ -146,11 +217,12 @@ export function deriveKernelParams(settings) {
     skirt_height: num('skirt_height', 1),                       // stage 33: the kernel used to hardcode the first layer
     brim_width: num('brim_width', 0),
     brim_object_gap: num('brim_object_gap', 0),                 // stage 33: the kernel used to hardcode w*0.5
-    retract_length: num('retraction_length', 0.8),              // vector[0]
-    retraction_minimum_travel: num('retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
+    ...perExtruder,
+    retract_length: override('filament_retraction_length', 'retraction_length', 0.8),   // vector[0]
+    retraction_minimum_travel: override('filament_retraction_minimum_travel', 'retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
     gcode_resolution: num('resolution', 0.01),                  // stage 33: tree-support path simplification tolerance
-    retract_speed: num('retraction_speed', 30),
-    z_hop: num('z_hop', 0.4),
+    retract_speed: override('filament_retraction_speed', 'retraction_speed', 30),
+    z_hop: override('filament_z_hop', 'z_hop', 0.4),
     travel_speed: num('travel_speed', 120),
     first_layer_speed: num('initial_layer_speed', 30),
     print_speed: num('outer_wall_speed', 60),

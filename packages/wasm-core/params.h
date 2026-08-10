@@ -1,6 +1,7 @@
 // params.h — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 #pragma once
 #include <string>
+#include <vector>
 
 // ---- Parameters (stage-1 names unchanged + stage-2 additions) ------------------
 struct Params {
@@ -96,6 +97,14 @@ struct Params {
   bool   reduce_crossing_wall=false;                    // wall-avoiding travel
   double max_volumetric_extrusion_rate_slope=0.0;       // PE-lite flow change rate limit (mm³/s², 0=off)
   int    extruder_count=1;                              // multi-material: how many extruders are used (1|2)
+  // Per-extruder filament values, indexed by tool: a two-material print wants ABS at 270 on T0 and PLA at 220 on
+  //  T1, which the scalars above cannot express. Empty (the default) means every tool uses the scalar, so a
+  //  single-material slice — and any host that never sends these — behaves exactly as before.
+  std::vector<double> extruder_nozzle_temp, extruder_filament_diameter, extruder_flow_ratio,
+                      extruder_retract_length, extruder_retract_speed, extruder_z_hop;
+  static double forTool(const std::vector<double>& per, int tool, double fallback) {
+    return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
+  }
   int    mm_group_split=0;                              // triangle group boundary index ([0,split)=T0, [split,N)=T1)
   bool   auto_center=false;                             // stage 28: true = realign the combined bbox to the origin (stage-3 legacy). false (default) = trust the viewer coordinates (no realignment, only Z seating) -> the toolpath overlaps the on-screen model exactly. Upstream = only the plate origin offset (GCode.cpp:932).
   // Stage 33: the default switched to true. Evidence (compare_wipetower.mjs measurements, 2-box MM):

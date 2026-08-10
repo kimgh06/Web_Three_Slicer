@@ -38,7 +38,7 @@ Off-main-thread (browser): `new Worker(engineWorkerURL(), { type: 'module' })` �
 Two levels — use whichever fits:
 
 1. **Kernel params (this package's native contract)** — a flat JSON object of ~50 keys (`layer_height`, `wall_loops`, `infill_density` 0–1, `sparse_infill_pattern`, `enable_support`, `wall_generator: 'classic' | 'arachne'`, …). See `src/settings.js` for the full shape.
-2. **OrcaSlicer settings map** — a sparse `{schemaKey: value}` map using original OrcaSlicer option keys (907 defined in `@three-slicer/data`); unset keys fall back to schema defaults:
+2. **OrcaSlicer settings map** — a sparse `{schemaKey: value}` map using original OrcaSlicer option keys (923 defined in `@three-slicer/data`); unset keys fall back to schema defaults:
 
 ```js
 import { deriveKernelParams } from 'three-slicer/settings'
