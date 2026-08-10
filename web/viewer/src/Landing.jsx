@@ -42,7 +42,10 @@ export default function Landing() {
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
           <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
-          <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">GitHub</a>
+          <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">
+            GitHub
+            <img className="lp-badge" src="https://img.shields.io/github/stars/kimgh06/Web_Three_Slicer?style=social" alt="GitHub stars" width="80" height="20" />
+          </a>
         </div>
         <nav className="lp-links" aria-label="Project links">
           {LINKS.map(([label, href, meta]) => (
