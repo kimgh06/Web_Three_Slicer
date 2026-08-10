@@ -3,12 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Browser/WASM 3D printing slicer demo for the three-slicer npm package." />
+    <meta name="description" content="Free online 3D printing slicer that runs entirely in your browser. Slice STL, STEP and 3MF models to G-code with WebAssembly — no install, no upload, powered by the three-slicer npm package." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Three Slicer</title>
+    <title>Three Slicer — Online STL to G-code Slicer in the Browser (WASM)</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/" />
+    <meta property="og:title" content="Three Slicer — Online STL to G-code Slicer in the Browser" />
+    <meta property="og:description" content="Slice STL, STEP and 3MF models to G-code entirely in your browser with WebAssembly. No install, no upload." />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <h1>Three Slicer — online 3D printing slicer</h1>
+      <p>
+        Three Slicer slices STL, STEP and 3MF models into G-code directly in the browser using a
+        WebAssembly build of the OrcaSlicer kernel. Nothing is uploaded to a server. JavaScript is
+        required to run the slicer.
+      </p>
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
