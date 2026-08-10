@@ -54,6 +54,7 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
   transition: background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out;
 }
 .lp-btn:hover { background: var(--lp-panel-hover); transform: translateY(-1px); }
+.lp-badge { margin-left: 8px; }
 .lp-btn.primary { background: var(--lp-accent); border-color: var(--lp-accent); color: var(--lp-on-accent); }
 .lp-btn.primary:hover { background: var(--lp-accent-hover); }
 
