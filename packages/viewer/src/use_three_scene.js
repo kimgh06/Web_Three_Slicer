@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { plateStep, plateCols } from './plate_layout.js'
+import { buildOverhangGeometry } from './overhang_view.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
 // model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
@@ -214,12 +215,38 @@ export function useThreeScene(deps) {
       const id = ++objIdCounter
       objectsRef.current.push({ id, name, mesh, localPos, extruder: 1, visible: true })   // MM: extruder 1 by default
       objectsGroup.visible = true
+      if (overhangDeg != null) rebuildOverhang()      // a newly added object gets shaded too
       setStatus(statusText()); frameObjects()
       return { id, name }
     }
 
+    // Overhang shading: an overlay child per object holding just the facets that will need support. Being a child
+    //  means it inherits the object's transform for free; only the facet test itself has to be redone after a
+    //  rotation, which is what the dragging-changed hook below covers.
+    let overhangDeg = null
+    function rebuildOverhang() {
+      for (const o of objectsRef.current) {
+        const prev = o.mesh.children.find(c => c.userData?.overhang)
+        if (prev) { o.mesh.remove(prev); prev.geometry.dispose(); prev.material.dispose() }
+        if (overhangDeg == null) continue
+        o.mesh.updateWorldMatrix(true, false)
+        const geo = buildOverhangGeometry(o.mesh, overhangDeg)
+        if (!geo) continue
+        const overlay = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0xff4433, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false,
+          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        }))
+        overlay.userData.overhang = true
+        o.mesh.add(overlay)
+      }
+      invalidate()
+    }
+    transform.addEventListener('dragging-changed', e => { if (!e.value && overhangDeg != null) rebuildOverhang() })
+
     apiRef.current = {
       setMode,
+      /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
+      setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
       refreshCursor: () => applyCursor(),                                        // keeps the cursor hint in sync when the paint mode changes
       detachTransform: () => { selected = null; transform.detach(); paint() },   // stage 20: release the gizmo when entering painting
       addObject: (name, modelPos) => spawnMesh(name, bakeLocal(modelPos).localPos),
@@ -244,6 +271,9 @@ export function useThreeScene(deps) {
         const o = arr[k]
         if (selected === o.mesh) { selected = null; transform.detach() }
         if (hovered === o.mesh) hovered = null
+        for (const child of [...o.mesh.children]) {      // the overhang overlay rides along as a child
+          o.mesh.remove(child); child.geometry?.dispose(); child.material?.dispose()
+        }
         objectsGroup.remove(o.mesh); o.mesh.geometry.dispose(); o.mesh.material.dispose()
         arr.splice(k, 1)
         if (arr.length === 0) placeXRef.current = 0

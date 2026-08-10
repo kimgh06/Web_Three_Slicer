@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
+import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import { SUPPORTED_EXT } from './model_loaders.js'
@@ -216,6 +217,17 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   function onToggleTravel(e) { const v = e.target.checked; setShowTravel(v); showTravelRef.current = v; for (const p of Object.values(plateTpRef.current)) p.ctl.setTravelVisible(v) }
   function onToggleSupport(e) { const v = e.target.checked; setSettings(s => ({ ...s, enable_support: v })) }
   const supportOn = !!settingRaw(settings, 'enable_support')
+  // Overhang shading — driven by the same threshold the kernel slices with, so the shading and the generated
+  //  support agree. Re-applied whenever the angle changes so the slider gives immediate feedback.
+  // Support style options come from the schema enum, so the list stays whatever upstream defines
+  const supportStyles = (schema.support_style?.enum_values ?? [])
+    .map((value, i) => ({ value, label: schema.support_style?.enum_labels?.[i] ?? value }))
+  const supportStyle = String(settingRaw(settings, 'support_style') ?? 'default')
+  const [overhangOn, setOverhangOn] = useState(false)
+  const overhangAngle = Number(settingRaw(settings, 'support_threshold_angle')) || 30
+  useEffect(() => {
+    apiRef.current?.setOverhang(overhangOn && canvasMode === 'prepare' ? overhangAngle : null)
+  }, [overhangOn, overhangAngle, canvasMode, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
   // Stage 27 S4: filament colors/count + per-object print toggle + painting gizmo mode
   function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
   function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); return n }) }
@@ -362,6 +374,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }} onRemove={removeObject}
                   supportOn={supportOn} onToggleSupport={onToggleSupport}
+                  overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}
+                  overhangAngle={overhangAngle} paintMode={paintMode} onTogglePaint={togglePaintGizmo}
+                  supportStyle={supportStyle} supportStyles={supportStyles}
+                  onSupportStyle={v => setSettings(s => ({ ...s, support_style: v }))}
                   wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)} />
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
