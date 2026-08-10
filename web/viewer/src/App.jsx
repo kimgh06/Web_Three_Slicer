@@ -11,7 +11,9 @@ function Prepare() {
   return (
     <div className="prepare">
       <Viewport settings={settings} setSettings={setSettings}
-        processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings} />} />
+        processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings} />}
+        motionPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings}
+          only={{ builder: 'TabPrinter::build_kinematics_page' }} />} />
     </div>
   )
 }

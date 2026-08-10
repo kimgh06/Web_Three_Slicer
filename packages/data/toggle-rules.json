@@ -1841,7 +1841,7 @@
     ],
     "enable_if": "!is_BBL_printer",
     "kind": "option",
-    "line": 4786
+    "line": 4787
    },
    {
     "fields": [
@@ -1849,7 +1849,7 @@
     ],
     "enable_if": "has_slow_down_for_layer_cooling",
     "kind": "option",
-    "line": 4691
+    "line": 4692
    },
    {
     "fields": [
@@ -1857,7 +1857,7 @@
     ],
     "enable_if": "activate_air_filtration",
     "kind": "option",
-    "line": 4724
+    "line": 4725
    },
    {
     "fields": [
@@ -1865,7 +1865,7 @@
     ],
     "enable_if": "activate_air_filtration && m_config->opt_bool(\"activate_air_filtration_during_print\", 0)",
     "kind": "option",
-    "line": 4725
+    "line": 4726
    },
    {
     "fields": [
@@ -1873,7 +1873,7 @@
     ],
     "enable_if": "activate_air_filtration",
     "kind": "option",
-    "line": 4726
+    "line": 4727
    },
    {
     "fields": [
@@ -1881,7 +1881,7 @@
     ],
     "enable_if": "activate_air_filtration && m_config->opt_bool(\"activate_air_filtration_on_completion\", 0)",
     "kind": "option",
-    "line": 4727
+    "line": 4728
    },
    {
     "fields": [
@@ -1889,7 +1889,7 @@
     ],
     "enable_if": "pa",
     "kind": "option",
-    "line": 4733
+    "line": 4734
    },
    {
     "fields": [
@@ -1897,7 +1897,7 @@
     ],
     "enable_if": "pa",
     "kind": "option",
-    "line": 4761
+    "line": 4762
    },
    {
     "fields": [
@@ -1905,7 +1905,7 @@
     ],
     "enable_if": "pa",
     "kind": "option",
-    "line": 4762
+    "line": 4763
    },
    {
     "fields": [
@@ -1913,7 +1913,7 @@
     ],
     "enable_if": "enable_fit, 256 + variant_idx",
     "kind": "option",
-    "line": 4778
+    "line": 4779
    },
    {
     "fields": [
@@ -1921,7 +1921,7 @@
     ],
     "enable_if": "multitool_ramming",
     "kind": "option",
-    "line": 4792
+    "line": 4793
    },
    {
     "fields": [
@@ -1929,7 +1929,7 @@
     ],
     "enable_if": "multitool_ramming",
     "kind": "option",
-    "line": 4793
+    "line": 4794
    }
   ],
   "stats": {
@@ -1995,7 +1995,7 @@
     ],
     "enable_if": "supports_wipe_tower_2",
     "kind": "option",
-    "line": 6063
+    "line": 6064
    },
    {
     "fields": [
@@ -2003,7 +2003,7 @@
     ],
     "enable_if": "have_multiple_extruders",
     "kind": "option",
-    "line": 6026
+    "line": 6027
    },
    {
     "fields": [
@@ -2011,7 +2011,7 @@
     ],
     "enable_if": "!bSEMM",
     "kind": "option",
-    "line": 6079
+    "line": 6080
    },
    {
     "fields": [
@@ -2019,7 +2019,7 @@
     ],
     "enable_if": "bSEMM",
     "kind": "option",
-    "line": 6080
+    "line": 6081
    },
    {
     "fields": [
@@ -2027,7 +2027,7 @@
     ],
     "enable_if": "bSEMM && supports_wipe_tower_2",
     "kind": "option",
-    "line": 6081
+    "line": 6082
    },
    {
     "fields": [
@@ -2035,7 +2035,7 @@
     ],
     "enable_if": "!bSEMM && supports_wipe_tower_2 && extruders_count > 1",
     "kind": "option",
-    "line": 6087
+    "line": 6088
    },
    {
     "fields": [
@@ -2043,7 +2043,7 @@
     ],
     "enable_if": "false, i",
     "kind": "option",
-    "line": 6099
+    "line": 6100
    },
    {
     "fields": [
@@ -2051,7 +2051,7 @@
     ],
     "enable_if": "false, i",
     "kind": "option",
-    "line": 6101
+    "line": 6102
    },
    {
     "fields": [
@@ -2059,7 +2059,7 @@
     ],
     "enable_if": "!use_firmware_retraction, i",
     "kind": "option",
-    "line": 6106
+    "line": 6107
    },
    {
     "fields": [
@@ -2067,7 +2067,7 @@
     ],
     "enable_if": "have_retract_length || use_firmware_retraction, i",
     "kind": "option",
-    "line": 6110
+    "line": 6111
    },
    {
     "fields": [
@@ -2075,7 +2075,7 @@
     ],
     "enable_if": "wipe && !is_approx(retract_after_wipe, 100.), i",
     "kind": "option",
-    "line": 6139
+    "line": 6140
    },
    {
     "fields": [
@@ -2083,7 +2083,7 @@
     ],
     "enable_if": "wipe && !is_approx(retract_before_wipe, 100.), i",
     "kind": "option",
-    "line": 6140
+    "line": 6141
    },
    {
     "fields": [
@@ -2091,7 +2091,7 @@
     ],
     "enable_if": "wipe, i",
     "kind": "option",
-    "line": 6166
+    "line": 6167
    },
    {
     "fields": [
@@ -2099,7 +2099,7 @@
     ],
     "enable_if": "have_multiple_extruders, i",
     "kind": "option",
-    "line": 6168
+    "line": 6169
    },
    {
     "fields": [
@@ -2107,7 +2107,7 @@
     ],
     "enable_if": "have_multiple_extruders && toolchange_retraction, i",
     "kind": "option",
-    "line": 6171
+    "line": 6172
    },
    {
     "fields": [
@@ -2115,7 +2115,7 @@
     ],
     "enable_if": "!use_firmware_retraction && m_config->opt_int(\"enable_long_retraction_when_cut\"), i",
     "kind": "option",
-    "line": 6173
+    "line": 6174
    },
    {
     "fields": [
@@ -2123,7 +2123,7 @@
     ],
     "enable_if": "m_config->opt_enum(\"z_hop_types\", i) != ZHopType::zhtNormal, i",
     "kind": "option",
-    "line": 6176
+    "line": 6177
    },
    {
     "fields": [
@@ -2131,7 +2131,7 @@
     ],
     "enable_if": "!gcf_is_marlin_legacy && !gcf_is_klipper, i",
     "kind": "option",
-    "line": 6192
+    "line": 6193
    },
    {
     "fields": [
@@ -2139,7 +2139,7 @@
     ],
     "enable_if": "gcf_is_marlin_firmware, i",
     "kind": "option",
-    "line": 6195
+    "line": 6196
    },
    {
     "fields": [
@@ -2147,7 +2147,7 @@
     ],
     "enable_if": "enable_jerk, i",
     "kind": "option",
-    "line": 6210
+    "line": 6211
    },
    {
     "fields": [
@@ -2155,7 +2155,7 @@
     ],
     "enable_if": "enable_jerk, i",
     "kind": "option",
-    "line": 6211
+    "line": 6212
    },
    {
     "fields": [
@@ -2163,7 +2163,7 @@
     ],
     "enable_if": "enable_jerk, i",
     "kind": "option",
-    "line": 6212
+    "line": 6213
    },
    {
     "fields": [
@@ -2171,7 +2171,7 @@
     ],
     "enable_if": "enable_jerk, i",
     "kind": "option",
-    "line": 6213
+    "line": 6214
    },
    {
     "fields": [
@@ -2179,7 +2179,7 @@
     ],
     "enable_if": "emittable_limits",
     "kind": "option",
-    "line": 6217
+    "line": 6218
    },
    {
     "fields": [
@@ -2187,7 +2187,7 @@
     ],
     "enable_if": "resonance_avoidance",
     "kind": "option",
-    "line": 6220
+    "line": 6221
    },
    {
     "fields": [
@@ -2195,7 +2195,7 @@
     ],
     "enable_if": "resonance_avoidance",
     "kind": "option",
-    "line": 6221
+    "line": 6222
    },
    {
     "fields": [
@@ -2203,7 +2203,7 @@
     ],
     "enable_if": "emit_machine_limits_to_gcode",
     "kind": "option",
-    "line": 6231
+    "line": 6232
    },
    {
     "fields": [
@@ -2211,7 +2211,7 @@
     ],
     "enable_if": "input_shaping_emit",
     "kind": "option",
-    "line": 6233
+    "line": 6234
    },
    {
     "fields": [
@@ -2219,7 +2219,7 @@
     ],
     "enable_if": "input_shaping_emit",
     "kind": "option",
-    "line": 6234
+    "line": 6235
    },
    {
     "fields": [
@@ -2227,7 +2227,7 @@
     ],
     "enable_if": "input_shaping_emit && !gcf_is_reprap_firmware",
     "kind": "option",
-    "line": 6235
+    "line": 6236
    },
    {
     "fields": [
@@ -2235,7 +2235,7 @@
     ],
     "enable_if": "input_shaping_emit",
     "kind": "option",
-    "line": 6236
+    "line": 6237
    },
    {
     "fields": [
@@ -2243,7 +2243,7 @@
     ],
     "enable_if": "input_shaping_emit && !gcf_is_reprap_firmware",
     "kind": "option",
-    "line": 6237
+    "line": 6238
    }
   ],
   "stats": {

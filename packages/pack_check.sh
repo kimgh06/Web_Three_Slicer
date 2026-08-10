@@ -23,7 +23,7 @@ EOF
 npm i --no-audit --no-fund "${T[@]}" >/dev/null
 cat > run.mjs <<'EOF'
 import { createSlicer, engineWorkerURL } from 'three-slicer'
-import { deriveKernelParams, schemaDefault } from 'three-slicer/settings'
+import { deriveKernelParams, schemaDefault, printerSettings, printersByVendor, processPresets } from 'three-slicer/settings'
 import { makeCfg, disabledKeys } from 'three-slicer/toggle'
 import { schema, uiTree, toggleRules, invalidationMap } from 'three-slicer/data'
 import rawSchema from 'three-slicer/data/config-schema.json' with { type: 'json' }
@@ -37,7 +37,15 @@ if (!Object.keys(schema).length) throw new Error('schema is empty')
 const p = deriveKernelParams({ layer_height: 0.15 })
 if (p.layer_height !== 0.15) throw new Error('deriveKernelParams failed: ' + p.layer_height)
 if (typeof disabledKeys(makeCfg({})) !== 'object') throw new Error('disabledKeys failed')
-console.log('  node OK —', Object.keys(schema).length, 'keys loaded')
+// Printer profiles ship as data/printers.json, print presets as the lazily imported data/processes.js —
+//  both are easy to leave out of package.json "files", which only shows up at install time.
+const anyPrinter = Object.values(printersByVendor).flatMap(m => Object.keys(m))[0]
+if (!anyPrinter) throw new Error('printersByVendor is empty')
+if (!printerSettings(anyPrinter)) throw new Error('printerSettings failed for ' + anyPrinter)
+const proc = await processPresets()
+if (!proc.keys.length) throw new Error('processPresets carries no keys')
+console.log('  node OK —', Object.keys(schema).length, 'keys,',
+  Object.values(printersByVendor).reduce((n, m) => n + Object.keys(m).length, 0), 'printers loaded')
 EOF
 node run.mjs
 # Optional peers drop out silently -> check they were installed automatically.

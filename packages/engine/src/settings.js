@@ -1,7 +1,7 @@
 // Maps the actual values of the (editable) right-hand settings panel -> kernel slice parameters.
 //  - Settings state is a sparse map (key->value): only edited keys are stored, otherwise the config-schema default.
 //  - For vector types (coFloats/coInts, …) only the first element is used/edited (simplification).
-import { schema } from './data.js'
+import { schema, printers, loadProcesses } from './data.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
@@ -12,6 +12,82 @@ export function settingScalar(settings, key) { const v = settingRaw(settings, ke
 const KERNEL_PATTERNS = ['rectilinear', 'grid', 'triangles', 'zigzag', 'gyroid', 'gyroid_approx',
   'honeycomb', '3dhoneycomb', 'crosshatch', 'concentric']
 const KERNEL_SEAMS = ['nearest', 'aligned', 'back', 'random']
+
+// Machine limits (the "Motion ability" printer page) -> kernel time-estimate parameters.
+//  Declarative on purpose: the kernel collapses X/Y into one axis, so the mapping cannot be a plain pass-through,
+//  but adding a limit stays a data row instead of code. The fallback is the kernel's own default, so an unedited
+//  profile produces exactly the previous estimate. Upstream leaves machine_max_*_x/y/z/e without a schema default
+//  (they only ever come from a printer preset), hence the explicit fallbacks here.
+const MACHINE_LIMITS = {
+  machine_max_speed_xy: ['machine_max_speed_x', 500],
+  machine_max_speed_z:  ['machine_max_speed_z', 12],
+  machine_max_speed_e:  ['machine_max_speed_e', 30],
+  machine_max_accel_xy: ['machine_max_acceleration_x', 5000],
+  machine_max_accel_z:  ['machine_max_acceleration_z', 500],
+  machine_max_accel_e:  ['machine_max_acceleration_e', 5000],
+  machine_jerk_xy:      ['machine_max_jerk_x', 9],
+  machine_jerk_z:       ['machine_max_jerk_z', 0.4],
+  machine_jerk_e:       ['machine_max_jerk_e', 2.5],
+  machine_accel_print:  ['default_acceleration', 5000],
+  machine_accel_travel: ['travel_acceleration', 5000],
+  machine_accel_retract: ['machine_max_acceleration_retracting', 5000],
+}
+// The schema keys the machine limits are read from — for UI that has to show "which printer characteristics are in play"
+// without hardcoding key strings of its own.
+export const machineLimitKeys = Object.values(MACHINE_LIMITS).map(([key]) => key)
+
+// ---- Printer profiles -------------------------------------------------------
+// printers.json is stored column-oriented (see its .d.ts). These two hide that layout so no consumer decodes it.
+
+/** Every option key a printer profile can set — what to clear before applying a different printer. */
+export const printerKeys = printers.keys
+
+/** Vendor -> profile name -> `[nozzle, setIndex, model]`, straight from the data (for building a picker). */
+export const printersByVendor = printers.byVendor
+
+// Process (print) presets live in the ~800 KB processes.json, so they load on demand — the first call fetches,
+//  later ones reuse the same promise. Returns a small facade so no caller has to know the column layout.
+let processesPromise = null
+export function processPresets() {
+  processesPromise ??= loadProcesses().then(data => ({
+    /** Every key a process preset can set — clear these before applying a different one */
+    keys: data.keys,
+    /** Preset names compatible with a printer profile, in upstream order */
+    listFor: (printerProfileName) =>
+      (data.byPrinter[printerProfileName] ?? []).map(i => data.presets[i][0]),
+    /** The settings a preset applies, ready to merge. `null` when unknown. */
+    settingsFor: (presetName) => {
+      const preset = data.presets.find(([name]) => name === presetName)
+      if (!preset) return null
+      const row = data.sets[preset[1]], out = {}
+      data.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
+      return out
+    },
+  }))
+  return processesPromise
+}
+
+function printerEntry(profileName) {
+  for (const models of Object.values(printers.byVendor)) {
+    const entry = models[profileName]
+    if (entry) return entry
+  }
+  return null
+}
+
+/** The settings a printer profile applies, ready to merge into the settings map. `null` when unknown. */
+export function printerSettings(profileName) {
+  const entry = printerEntry(profileName)
+  if (!entry) return null
+  const row = printers.sets[entry[1]]
+  const out = {}
+  printers.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
+  return out
+}
+
+/** The vendor's recommended process preset for a printer, or '' when the profile names none. */
+export function printerDefaultPreset(profileName) { return printerEntry(profileName)?.[3] ?? '' }
+
 
 // Right-panel settings values -> kernel parameters (derived from schema keys)
 export function deriveKernelParams(settings) {
@@ -49,8 +125,12 @@ export function deriveKernelParams(settings) {
                    'sparse_infill_line_width','internal_solid_infill_line_width','initial_layer_line_width']) {
     const v = S(k); if (v != null && v !== '') widths[k] = v
   }
+  const machine = {}
+  for (const [param, [key, fallback]] of Object.entries(MACHINE_LIMITS)) machine[param] = num(key, fallback)
+
   return {
     ...widths,
+    ...machine,
     layer_height: num('layer_height', 0.2),
     first_layer_height: num('initial_layer_print_height', 0.2),
     line_width,
@@ -80,6 +160,11 @@ export function deriveKernelParams(settings) {
     nozzle_temp: num('nozzle_temperature', 200),
     bed_temp: num('hot_plate_temp', 45),                        // no bed_temperature key -> hot_plate_temp
     bed_width, bed_depth,
+    bed_height: num('printable_height', 0),                    // 0 = profile states no ceiling -> kernel skips the check
+    // Explicitly-set only: the schema default here is upstream's generic "G28 / G1 Z5" preamble, and falling back
+    //  to it would rewrite the emitted G-code for every caller. The kernel keeps its own preamble when these are empty.
+    machine_start_gcode: String(settings?.machine_start_gcode ?? ''),
+    machine_end_gcode: String(settings?.machine_end_gcode ?? ''),
     enable_support: bool('enable_support', false),
     support_threshold_angle: num('support_threshold_angle', 30),
     support_top_z_distance: num('support_top_z_distance', 0.2),

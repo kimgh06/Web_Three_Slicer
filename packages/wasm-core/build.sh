@@ -130,7 +130,15 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 # Speed flags, measured (2026-07-29, big_cyl arachne+support): -O3 -msimd128 gives 5183ms vs -O2 5149ms —
 #  a 0.7% (noise-level) gain for +9% size (3.43 -> 3.74MB), so -O2 stays. -flto hits a wasm-ld SIGSEGV (conflict with -r partial linking).
 #  -ffast-math is forbidden (breaks golden byte-identity). The bottleneck is scalar integer polygon math — the real lever is threading.
-MAIN_SRC="slicer_core.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+# params/stl_parse/geom_helpers/emit/slice_mm/stream_sink/emit_layer/bindings were split out of slicer_core.cpp (pure code
+#  move). The link takes the .o files in source-list order (determinism -> golden), so they are listed immediately after
+#  slicer_core.cpp, in the same order their sections had inside it: Parameters -> STL parser -> Stage 5 helpers ->
+#  toolpath emit helpers -> multi-material slice -> layer sink/PE strip -> PASS2 emission body -> embind block.
+#  Wave 2 did the same to slice() itself: stage cache -> model prep/PASS1 -> PASS1.5 surfaces -> PASS1.6 support ->
+#  preamble -> raft -> PASS2 precompute -> finish stats, leaving slice() as the orchestrator. Same rule — listed in
+#  the order their code had inside slicer_core.cpp.
+#  (clip_util.h / slice_planes.h / gcode_writer.h / layer_data.h / slice_api.h / slice_ctx.h are header-only.)
+MAIN_SRC="slicer_core.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
 # -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
 #  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),

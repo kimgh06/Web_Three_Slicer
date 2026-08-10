@@ -106,12 +106,15 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOp
   )
 }
 
-export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false, customWidgets }) {
-  const [builder, setBuilder] = useState(MAIN_BUILDERS[0] ?? '')
+// `only` pins the panel to one builder (optionally one page) and drops the search/group/page/mode chrome,
+//  so a host can embed a single page — e.g. the printer's Motion ability — inside another card.
+export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false, customWidgets, only }) {
+  const [builder, setBuilder] = useState(only?.builder ?? MAIN_BUILDERS[0] ?? '')
   const [pageIdx, setPageIdx] = useState(0)
   const [mode, setMode] = useState('all')
   const [query, setQuery] = useState('')
-  const pages = uiTree[builder] ?? []
+  const allPages = uiTree[only?.builder ?? builder] ?? []
+  const pages = only?.page ? allPages.filter(p => p.page === only.page) : allPages
   const page = pages[Math.min(pageIdx, pages.length - 1)]
   const disabled = useMemo(() => disabledKeys(makeCfg(settings)), [settings])
   const q = query.trim().toLowerCase()
@@ -125,7 +128,7 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
   return (
     <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
-      <div className="sp-top">
+      {!only && <div className="sp-top">
         <input className="sp-search" placeholder="Search options (907)…" value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
         {!q && (<>
           <label className="sp-builder"><span>Settings group</span>
@@ -140,7 +143,7 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
             {MODES.map(m => <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>{m}</button>)}
           </div>
         </>)}
-      </div>
+      </div>}
       <div className="sp-body">
         {q ? (
           <section data-testid="search-results">
@@ -149,9 +152,10 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
             {!hits.length && <p className="muted">No matches</p>}
           </section>
         ) : page ? (<>
-          <h2>{page.page} <span className="muted">Tab.cpp:{page.line}</span></h2>
+          {!only && <h2>{page.page} <span className="muted">Tab.cpp:{page.line}</span></h2>}
           {page.groups.map(g => {
-            const opts = g.options.filter(k => passesMode(k, mode))
+            // Embedded in a host card there is no room for the unimplemented-widget placeholders — drop them there.
+            const opts = g.options.filter(k => passesMode(k, mode) && !(only && k.startsWith('<')))
             if (!opts.length) return null
             return (<section key={g.group + g.line}>
               <h3>{g.group || '(untitled group)'} <span className="muted">:{g.line}</span></h3>

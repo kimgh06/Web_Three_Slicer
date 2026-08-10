@@ -3,11 +3,11 @@
   {
    "page": "Quality",
    "icon": "custom-gcode_quality",
-   "line": 2653,
+   "line": 2654,
    "groups": [
     {
      "group": "Layer height",
-     "line": 2654,
+     "line": 2655,
      "options": [
       "layer_height",
       "initial_layer_print_height"
@@ -15,7 +15,7 @@
     },
     {
      "group": "Line width",
-     "line": 2658,
+     "line": 2659,
      "options": [
       "line_width",
       "initial_layer_line_width",
@@ -30,7 +30,7 @@
     },
     {
      "group": "Seam",
-     "line": 2669,
+     "line": 2670,
      "options": [
       "seam_position",
       "staggered_inner_seams",
@@ -54,7 +54,7 @@
     },
     {
      "group": "Precision",
-     "line": 2690,
+     "line": 2691,
      "options": [
       "slice_closing_radius",
       "resolution",
@@ -74,7 +74,7 @@
     },
     {
      "group": "Ironing",
-     "line": 2706,
+     "line": 2707,
      "options": [
       "ironing_type",
       "ironing_pattern",
@@ -87,18 +87,17 @@
     },
     {
      "group": "Z contouring",
-     "line": 2715,
+     "line": 2716,
      "options": [
       "zaa_enabled",
       "zaa_minimize_perimeter_height",
       "zaa_min_z",
-      "zaa_dont_alternate_fill_direction",
-      "ironing_expansion"
+      "zaa_dont_alternate_fill_direction"
      ]
     },
     {
      "group": "Wall generator",
-     "line": 2723,
+     "line": 2724,
      "options": [
       "wall_generator",
       "wall_transition_angle",
@@ -115,7 +114,7 @@
     },
     {
      "group": "Walls and surfaces",
-     "line": 2736,
+     "line": 2737,
      "options": [
       "wall_sequence",
       "is_infill_first",
@@ -143,7 +142,7 @@
     },
     {
      "group": "Bridging",
-     "line": 2766,
+     "line": 2767,
      "options": [
       "bridge_flow",
       "internal_bridge_flow",
@@ -158,7 +157,7 @@
     },
     {
      "group": "Overhangs",
-     "line": 2777,
+     "line": 2778,
      "options": [
       "detect_overhang_wall",
       "make_overhang_printable",
@@ -175,11 +174,11 @@
   {
    "page": "Strength",
    "icon": "custom-gcode_strength",
-   "line": 2787,
+   "line": 2788,
    "groups": [
     {
      "group": "Walls",
-     "line": 2788,
+     "line": 2789,
      "options": [
       "wall_loops",
       "alternate_extra_wall",
@@ -188,7 +187,7 @@
     },
     {
      "group": "Top/bottom shells",
-     "line": 2793,
+     "line": 2794,
      "options": [
       "top_shell_layers",
       "top_shell_thickness",
@@ -211,7 +210,7 @@
     },
     {
      "group": "Infill",
-     "line": 2813,
+     "line": 2814,
      "options": [
       "sparse_infill_density",
       "fill_multiline",
@@ -246,7 +245,7 @@
     },
     {
      "group": "Advanced",
-     "line": 2844,
+     "line": 2845,
      "options": [
       "align_infill_direction_to_model",
       "extra_solid_infills",
@@ -265,11 +264,11 @@
   {
    "page": "Speed",
    "icon": "custom-gcode_speed",
-   "line": 2856,
+   "line": 2857,
    "groups": [
     {
      "group": "First layer speed",
-     "line": 2857,
+     "line": 2858,
      "options": [
       "initial_layer_speed",
       "initial_layer_infill_speed",
@@ -279,7 +278,7 @@
     },
     {
      "group": "Other layers speed",
-     "line": 2862,
+     "line": 2863,
      "options": [
       "outer_wall_speed",
       "inner_wall_speed",
@@ -298,24 +297,24 @@
     },
     {
      "group": "Overhang speed",
-     "line": 2876,
+     "line": 2877,
      "options": [
       "enable_overhang_speed",
       "slowdown_for_curled_perimeters",
-      "<custom-widget line:2886>",
-      "<custom-widget line:2891>"
+      "<custom-widget line:2887>",
+      "<custom-widget line:2892>"
      ]
     },
     {
      "group": "Travel speed",
-     "line": 2893,
+     "line": 2894,
      "options": [
       "travel_speed"
      ]
     },
     {
      "group": "Acceleration",
-     "line": 2896,
+     "line": 2897,
      "options": [
       "default_acceleration",
       "outer_wall_acceleration",
@@ -333,14 +332,14 @@
     },
     {
      "group": "Junction Deviation",
-     "line": 2910,
+     "line": 2911,
      "options": [
       "default_junction_deviation"
      ]
     },
     {
      "group": "Jerk(XY)",
-     "line": 2913,
+     "line": 2914,
      "options": [
       "default_jerk",
       "outer_wall_jerk",
@@ -354,7 +353,7 @@
     },
     {
      "group": "Advanced",
-     "line": 2923,
+     "line": 2924,
      "options": [
       "max_volumetric_extrusion_rate_slope",
       "max_volumetric_extrusion_rate_slope_segment_length",
@@ -366,11 +365,11 @@
   {
    "page": "Support",
    "icon": "custom-gcode_support",
-   "line": 2928,
+   "line": 2929,
    "groups": [
     {
      "group": "Support",
-     "line": 2929,
+     "line": 2930,
      "options": [
       "enable_support",
       "support_type",
@@ -381,13 +380,12 @@
       "raft_first_layer_expansion",
       "support_on_build_plate_only",
       "support_critical_regions_only",
-      "support_remove_small_overhang",
-      "enforce_support_layers"
+      "support_remove_small_overhang"
      ]
     },
     {
      "group": "Raft",
-     "line": 2942,
+     "line": 2943,
      "options": [
       "raft_layers",
       "raft_contact_distance"
@@ -395,7 +393,7 @@
     },
     {
      "group": "Filament for Supports",
-     "line": 2946,
+     "line": 2947,
      "options": [
       "support_filament",
       "support_interface_filament",
@@ -404,7 +402,7 @@
     },
     {
      "group": "Support ironing",
-     "line": 2951,
+     "line": 2952,
      "options": [
       "support_ironing",
       "support_ironing_pattern",
@@ -413,13 +411,8 @@
      ]
     },
     {
-     "group": "Options for support material and raft",
-     "line": 2957,
-     "options": []
-    },
-    {
      "group": "Advanced",
-     "line": 2960,
+     "line": 2961,
      "options": [
       "support_top_z_distance",
       "support_bottom_z_distance",
@@ -433,7 +426,6 @@
       "support_interface_spacing",
       "support_bottom_interface_spacing",
       "support_expansion",
-      "support_interface_loop_pattern",
       "support_object_xy_distance",
       "support_object_first_layer_gap",
       "bridge_no_support",
@@ -443,7 +435,7 @@
     },
     {
      "group": "Tree supports",
-     "line": 2981,
+     "line": 2982,
      "options": [
       "tree_support_tip_diameter",
       "tree_support_branch_distance",
@@ -464,11 +456,11 @@
   {
    "page": "Multimaterial",
    "icon": "custom-gcode_multi_material",
-   "line": 2995,
+   "line": 2996,
    "groups": [
     {
      "group": "Prime tower",
-     "line": 2996,
+     "line": 2997,
      "options": [
       "enable_prime_tower",
       "prime_tower_skip_points",
@@ -495,7 +487,7 @@
     },
     {
      "group": "Filament for Features",
-     "line": 3019,
+     "line": 3020,
      "options": [
       "outer_wall_filament_id",
       "inner_wall_filament_id",
@@ -508,7 +500,7 @@
     },
     {
      "group": "Ooze prevention",
-     "line": 3028,
+     "line": 3029,
      "options": [
       "ooze_prevention",
       "standby_temperature_delta",
@@ -518,7 +510,7 @@
     },
     {
      "group": "Flush options",
-     "line": 3034,
+     "line": 3035,
      "options": [
       "flush_into_infill",
       "flush_into_objects",
@@ -527,7 +519,7 @@
     },
     {
      "group": "Advanced",
-     "line": 3038,
+     "line": 3039,
      "options": [
       "interlocking_beam",
       "toolchange_ordering",
@@ -546,11 +538,11 @@
   {
    "page": "Others",
    "icon": "custom-gcode_other",
-   "line": 3050,
+   "line": 3051,
    "groups": [
     {
      "group": "Skirt",
-     "line": 3051,
+     "line": 3052,
      "options": [
       "skirt_loops",
       "skirt_type",
@@ -565,7 +557,7 @@
     },
     {
      "group": "Brim",
-     "line": 3062,
+     "line": 3063,
      "options": [
       "brim_type",
       "brim_width",
@@ -579,7 +571,7 @@
     },
     {
      "group": "Special mode",
-     "line": 3072,
+     "line": 3073,
      "options": [
       "slicing_mode",
       "print_sequence",
@@ -595,7 +587,7 @@
     },
     {
      "group": "Fuzzy skin",
-     "line": 3085,
+     "line": 3086,
      "options": [
       "fuzzy_skin",
       "fuzzy_skin_mode",
@@ -613,7 +605,7 @@
     },
     {
      "group": "G-code output",
-     "line": 3099,
+     "line": 3100,
      "options": [
       "reduce_infill_retraction",
       "gcode_add_line_number",
@@ -624,41 +616,29 @@
     },
     {
      "group": "Change extrusion role G-code",
-     "line": 3112,
+     "line": 3113,
      "options": []
     },
     {
      "group": "Post-processing Scripts",
-     "line": 3123,
+     "line": 3124,
      "options": []
     },
     {
      "group": "Slicing Pipeline Plugin",
-     "line": 3130,
+     "line": 3131,
      "options": []
     },
     {
      "group": "Plugin Configuration",
-     "line": 3138,
+     "line": 3139,
      "options": [
-      "plugin_config_overrides"
+      "print_plugin_config_overrides"
      ]
     },
     {
      "group": "Notes",
-     "line": 3141,
-     "options": []
-    }
-   ]
-  },
-  {
-   "page": "Dependencies",
-   "icon": "param_profile_dependencies",
-   "line": 3148,
-   "groups": [
-    {
-     "group": "Profile dependencies",
-     "line": 3149,
+     "line": 3142,
      "options": []
     }
    ]
@@ -668,7 +648,7 @@
   {
    "page": "Frequent",
    "icon": "empty",
-   "line": 3340,
+   "line": 3341,
    "groups": []
   }
  ],
@@ -676,7 +656,7 @@
   {
    "page": "Plate Settings",
    "icon": "empty",
-   "line": 3672,
+   "line": 3673,
    "groups": []
   }
  ],
@@ -684,20 +664,20 @@
   {
    "page": "Setting Overrides",
    "icon": "custom-gcode_setting_override",
-   "line": 3995,
+   "line": 3996,
    "groups": [
     {
      "group": "Retraction",
-     "line": 3999,
+     "line": 4000,
      "options": [
-      "<custom-widget line:4032>"
+      "<custom-widget line:4033>"
      ]
     },
     {
      "group": "Ironing",
-     "line": 4060,
+     "line": 4061,
      "options": [
-      "<custom-widget line:4137>"
+      "<custom-widget line:4138>"
      ]
     }
    ]
@@ -707,18 +687,17 @@
   {
    "page": "Filament",
    "icon": "custom-gcode_filament",
-   "line": 4275,
+   "line": 4276,
    "groups": [
     {
      "group": "Basic information",
-     "line": 4277,
+     "line": 4278,
      "options": [
       "filament_type",
       "filament_vendor",
       "filament_soluble",
       "filament_is_support",
       "filament_change_length",
-      "filament_colour",
       "required_nozzle_HRC",
       "default_filament_colour",
       "filament_diameter",
@@ -729,12 +708,12 @@
       "filament_cost",
       "temperature_vitrification",
       "idle_temperature",
-      "<custom-widget line:4301>"
+      "<custom-widget line:4302>"
      ]
     },
     {
      "group": "Flow ratio and Pressure Advance",
-     "line": 4314,
+     "line": 4315,
      "options": [
       "pellet_flow_coefficient",
       "filament_flow_ratio",
@@ -747,38 +726,37 @@
     },
     {
      "group": "Print chamber temperature",
-     "line": 4342,
+     "line": 4343,
      "options": [
       "activate_chamber_temp_control",
-      "<custom-widget line:4352>"
+      "<custom-widget line:4353>"
      ]
     },
     {
      "group": "Print temperature",
-     "line": 4368,
+     "line": 4369,
      "options": [
-      "<custom-widget line:4373>"
+      "<custom-widget line:4374>"
      ]
     },
     {
      "group": "Bed temperature",
-     "line": 4375,
+     "line": 4376,
      "options": [
-      "<custom-widget line:4381>",
-      "<custom-widget line:4388>",
-      "<custom-widget line:4395>",
-      "<custom-widget line:4402>",
-      "<custom-widget line:4409>",
-      "<custom-widget line:4416>"
+      "<custom-widget line:4382>",
+      "<custom-widget line:4389>",
+      "<custom-widget line:4396>",
+      "<custom-widget line:4403>",
+      "<custom-widget line:4410>",
+      "<custom-widget line:4417>"
      ]
     },
     {
      "group": "Volumetric speed limitation",
-     "line": 4446,
+     "line": 4447,
      "options": [
       "filament_adaptive_volumetric_speed",
-      "filament_max_volumetric_speed",
-      "<custom-widget line:4455>"
+      "filament_max_volumetric_speed"
      ]
     }
    ]
@@ -786,11 +764,11 @@
   {
    "page": "Cooling",
    "icon": "custom-gcode_cooling_fan",
-   "line": 4457,
+   "line": 4458,
    "groups": [
     {
      "group": "Cooling for specific layer",
-     "line": 4465,
+     "line": 4466,
      "options": [
       "close_fan_the_first_x_layers",
       "initial_layer_fan_speed",
@@ -799,10 +777,10 @@
     },
     {
      "group": "Part cooling fan",
-     "line": 4471,
+     "line": 4472,
      "options": [
-      "<custom-widget line:4476>",
-      "<custom-widget line:4481>",
+      "<custom-widget line:4477>",
+      "<custom-widget line:4482>",
       "reduce_fan_stop_start_freq",
       "slow_down_for_layer_cooling",
       "dont_slow_down_outer_wall",
@@ -817,18 +795,18 @@
     },
     {
      "group": "Auxiliary part cooling fan",
-     "line": 4494,
+     "line": 4495,
      "options": [
       "additional_cooling_fan_speed"
      ]
     },
     {
      "group": "Exhaust fan",
-     "line": 4497,
+     "line": 4498,
      "options": [
       "activate_air_filtration",
-      "<custom-widget line:4505>",
-      "<custom-widget line:4512>"
+      "<custom-widget line:4506>",
+      "<custom-widget line:4513>"
      ]
     }
    ]
@@ -836,28 +814,28 @@
   {
    "page": "Advanced",
    "icon": "custom-gcode_advanced",
-   "line": 4520,
+   "line": 4521,
    "groups": [
     {
      "group": "Filament start G-code",
-     "line": 4521,
+     "line": 4522,
      "options": []
     },
     {
      "group": "Change extrusion role G-code",
-     "line": 4532,
+     "line": 4533,
      "options": []
     },
     {
      "group": "Filament end G-code",
-     "line": 4543,
+     "line": 4544,
      "options": []
     },
     {
      "group": "Plugin Configuration",
-     "line": 4554,
+     "line": 4555,
      "options": [
-      "plugin_config_overrides"
+      "filament_plugin_config_overrides"
      ]
     }
    ]
@@ -865,11 +843,11 @@
   {
    "page": "Multimaterial",
    "icon": "custom-gcode_multi_material",
-   "line": 4557,
+   "line": 4558,
    "groups": [
     {
      "group": "Wipe tower parameters",
-     "line": 4558,
+     "line": 4559,
      "options": [
       "filament_minimal_purge_on_wipe_tower",
       "filament_tower_interface_pre_extrusion_dist",
@@ -881,17 +859,15 @@
     },
     {
      "group": "Multi Filament",
-     "line": 4566,
+     "line": 4567,
      "options": [
-      "filament_flush_temp",
-      "filament_flush_volumetric_speed",
       "long_retractions_when_ec",
       "retraction_distances_when_ec"
      ]
     },
     {
      "group": "Tool change parameters with single extruder MM printers",
-     "line": 4572,
+     "line": 4573,
      "options": [
       "filament_loading_speed_start",
       "filament_loading_speed",
@@ -907,7 +883,7 @@
     },
     {
      "group": "Tool change parameters with multi extruder MM printers",
-     "line": 4602,
+     "line": 4603,
      "options": [
       "filament_multitool_ramming",
       "filament_multitool_ramming_volume",
@@ -919,16 +895,16 @@
   {
    "page": "Dependencies",
    "icon": "advanced",
-   "line": 4607,
+   "line": 4608,
    "groups": [
     {
      "group": "Compatible printers",
-     "line": 4608,
+     "line": 4609,
      "options": []
     },
     {
      "group": "Compatible process profiles",
-     "line": 4617,
+     "line": 4618,
      "options": []
     }
    ]
@@ -936,11 +912,11 @@
   {
    "page": "Notes",
    "icon": "custom-gcode_note",
-   "line": 4626,
+   "line": 4627,
    "groups": [
     {
      "group": "Notes",
-     "line": 4627,
+     "line": 4628,
      "options": []
     }
    ]
@@ -950,14 +926,13 @@
   {
    "page": "Basic information",
    "icon": "custom-gcode_object-info",
-   "line": 4987,
+   "line": 4988,
    "groups": [
     {
      "group": "Printable space",
-     "line": 4988,
+     "line": 4989,
      "options": [
       "parallel_printheads_count",
-      "printable_area",
       "printable_height",
       "support_multi_bed_types",
       "best_object_pos",
@@ -967,7 +942,7 @@
     },
     {
      "group": "Advanced",
-     "line": 5005,
+     "line": 5006,
      "options": [
       "printer_structure",
       "gcode_flavor",
@@ -977,32 +952,30 @@
       "scan_first_layer",
       "enable_power_loss_recovery",
       "disable_m73",
-      "thumbnails_format",
       "use_relative_e_distances",
       "use_firmware_retraction",
-      "spaghetti_detector",
       "time_cost"
      ]
     },
     {
      "group": "Plugin Configuration",
-     "line": 5063,
+     "line": 5064,
      "options": [
-      "plugin_config_overrides"
+      "printer_plugin_config_overrides"
      ]
     },
     {
      "group": "Cooling Fan",
-     "line": 5066,
+     "line": 5067,
      "options": [
-      "<custom-widget line:5071>",
+      "<custom-widget line:5072>",
       "fan_kickstart",
       "part_cooling_fan_min_pwm"
      ]
     },
     {
      "group": "Extruder Clearance",
-     "line": 5076,
+     "line": 5077,
      "options": [
       "extruder_clearance_radius",
       "extruder_clearance_height_to_rod",
@@ -1011,7 +984,7 @@
     },
     {
      "group": "Adaptive bed mesh",
-     "line": 5081,
+     "line": 5082,
      "options": [
       "bed_mesh_min",
       "bed_mesh_max",
@@ -1021,7 +994,7 @@
     },
     {
      "group": "Accessory",
-     "line": 5087,
+     "line": 5088,
      "options": [
       "nozzle_type",
       "nozzle_hrc",
@@ -1037,66 +1010,66 @@
   {
    "page": "Machine G-code",
    "icon": "custom-gcode_gcode",
-   "line": 5100,
+   "line": 5101,
    "groups": [
     {
      "group": "File header G-code",
-     "line": 5101,
+     "line": 5102,
      "options": []
     },
     {
      "group": "Machine start G-code",
-     "line": 5112,
+     "line": 5113,
      "options": []
     },
     {
      "group": "Machine end G-code",
-     "line": 5123,
+     "line": 5124,
      "options": []
     },
     {
      "group": "Printing by object G-code",
-     "line": 5134,
+     "line": 5135,
      "options": []
     },
     {
      "group": "Before layer change G-code",
-     "line": 5146,
+     "line": 5147,
      "options": []
     },
     {
      "group": "Layer change G-code",
-     "line": 5157,
+     "line": 5158,
      "options": []
     },
     {
      "group": "Timelapse G-code",
-     "line": 5168,
+     "line": 5169,
      "options": []
     },
     {
      "group": "Clumping Detection G-code",
-     "line": 5179,
+     "line": 5180,
      "options": []
     },
     {
      "group": "Change filament G-code",
-     "line": 5190,
+     "line": 5191,
      "options": []
     },
     {
      "group": "Change extrusion role G-code",
-     "line": 5201,
+     "line": 5202,
      "options": []
     },
     {
      "group": "Pause G-code",
-     "line": 5212,
+     "line": 5213,
      "options": []
     },
     {
      "group": "Template Custom G-code",
-     "line": 5222,
+     "line": 5223,
      "options": []
     }
    ]
@@ -1104,92 +1077,11 @@
   {
    "page": "Notes",
    "icon": "custom-gcode_note",
-   "line": 5232,
+   "line": 5233,
    "groups": [
     {
      "group": "Notes",
-     "line": 5233,
-     "options": []
-    }
-   ]
-  },
-  {
-   "page": "Dependencies",
-   "icon": "advanced",
-   "line": 5239,
-   "groups": [
-    {
-     "group": "Profile dependencies",
-     "line": 5240,
-     "options": []
-    }
-   ]
-  }
- ],
- "TabPrinter::build_sla": [
-  {
-   "page": "General",
-   "icon": "printer",
-   "line": 5251,
-   "groups": [
-    {
-     "group": "Size and coordinates",
-     "line": 5252,
-     "options": [
-      "printable_height"
-     ]
-    },
-    {
-     "group": "Display",
-     "line": 5259,
-     "options": [
-      "display_width",
-      "display_height",
-      "<custom-widget line:5267>",
-      "display_orientation",
-      "display_mirror_x",
-      "display_mirror_y"
-     ]
-    },
-    {
-     "group": "Tilt",
-     "line": 5274,
-     "options": [
-      "<custom-widget line:5278>",
-      "area_fill"
-     ]
-    },
-    {
-     "group": "Corrections",
-     "line": 5281,
-     "options": [
-      "<custom-widget line:5288>",
-      "absolute_correction",
-      "elefant_foot_compensation",
-      "elefant_foot_min_width",
-      "gamma_correction"
-     ]
-    },
-    {
-     "group": "Exposure",
-     "line": 5294,
-     "options": [
-      "min_exposure_time",
-      "max_exposure_time",
-      "min_initial_exposure_time",
-      "max_initial_exposure_time"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Dependencies",
-   "icon": "wrench.png",
-   "line": 5300,
-   "groups": [
-    {
-     "group": "Profile dependencies",
-     "line": 5301,
+     "line": 5234,
      "options": []
     }
    ]
@@ -1199,46 +1091,60 @@
   {
    "page": "Motion ability",
    "icon": "custom-gcode_motion",
-   "line": 5348,
+   "line": 5349,
    "groups": [
     {
      "group": "Advanced",
-     "line": 5373,
+     "line": 5374,
      "options": [
       "emit_machine_limits_to_gcode"
      ]
     },
     {
      "group": "Resonance Compensation",
-     "line": 5377,
+     "line": 5378,
      "options": [
       "resonance_avoidance",
-      "<custom-widget line:5385>",
+      "<custom-widget line:5386>",
       "input_shaping_emit",
       "input_shaping_type",
-      "<custom-widget line:5394>",
-      "<custom-widget line:5401>"
+      "<custom-widget line:5395>",
+      "<custom-widget line:5402>"
      ]
     },
     {
      "group": "Speed limitation",
-     "line": 5410,
-     "options": []
+     "line": 5411,
+     "options": [
+      "machine_max_speed_x",
+      "machine_max_speed_y",
+      "machine_max_speed_z",
+      "machine_max_speed_e"
+     ]
     },
     {
      "group": "Acceleration limitation",
-     "line": 5416,
-     "options": []
+     "line": 5417,
+     "options": [
+      "machine_max_acceleration_x",
+      "machine_max_acceleration_y",
+      "machine_max_acceleration_z",
+      "machine_max_acceleration_e",
+      "machine_max_acceleration_extruding",
+      "machine_max_acceleration_retracting",
+      "machine_max_acceleration_travel"
+     ]
     },
     {
      "group": "Jerk limitation",
-     "line": 5424,
-     "options": []
-    },
-    {
-     "group": "Minimum feedrates",
-     "line": 5431,
-     "options": []
+     "line": 5425,
+     "options": [
+      "machine_max_junction_deviation",
+      "machine_max_jerk_x",
+      "machine_max_jerk_y",
+      "machine_max_jerk_z",
+      "machine_max_jerk_e"
+     ]
     }
    ]
   }
@@ -1247,11 +1153,11 @@
   {
    "page": "Multimaterial",
    "icon": "custom-gcode_multi_material",
-   "line": 5482,
+   "line": 5483,
    "groups": [
     {
      "group": "Single extruder multi-material setup",
-     "line": 5483,
+     "line": 5484,
      "options": [
       "single_extruder_multi_material",
       "manual_filament_change",
@@ -1260,7 +1166,7 @@
     },
     {
      "group": "Wipe tower",
-     "line": 5570,
+     "line": 5571,
      "options": [
       "wipe_tower_type",
       "purge_in_prime_tower",
@@ -1270,7 +1176,7 @@
     },
     {
      "group": "Single extruder multi-material parameters",
-     "line": 5577,
+     "line": 5578,
      "options": [
       "cooling_tube_retraction",
       "cooling_tube_length",
@@ -1281,7 +1187,7 @@
     },
     {
      "group": "Advanced",
-     "line": 5584,
+     "line": 5585,
      "options": [
       "machine_load_filament_time",
       "machine_unload_filament_time",
@@ -1290,17 +1196,16 @@
     },
     {
      "group": "Basic information",
-     "line": 5600,
+     "line": 5601,
      "options": [
       "nozzle_diameter",
-      "nozzle_volume_type",
       "nozzle_volume",
       "extruder_printable_height"
      ]
     },
     {
      "group": "Layer height limits",
-     "line": 5648,
+     "line": 5649,
      "options": [
       "min_layer_height",
       "max_layer_height"
@@ -1308,14 +1213,14 @@
     },
     {
      "group": "Position",
-     "line": 5652,
+     "line": 5653,
      "options": [
       "extruder_offset"
      ]
     },
     {
      "group": "Retraction",
-     "line": 5656,
+     "line": 5657,
      "options": [
       "retraction_length",
       "retract_restart_extra",
@@ -1331,7 +1236,7 @@
     },
     {
      "group": "Z-Hop",
-     "line": 5669,
+     "line": 5670,
      "options": [
       "retract_lift_enforce",
       "z_hop_types",
@@ -1343,242 +1248,13 @@
     },
     {
      "group": "Retraction when switching material",
-     "line": 5677,
+     "line": 5678,
      "options": [
       "retract_length_toolchange",
       "retract_restart_extra_toolchange",
       "long_retractions_when_cut",
       "retraction_distances_when_cut"
      ]
-    },
-    {
-     "group": "Preview",
-     "line": 5684,
-     "options": [
-      "<custom-widget line:5713>"
-     ]
-    }
-   ]
-  }
- ],
- "TabSLAMaterial::build": [
-  {
-   "page": "Material",
-   "icon": "",
-   "line": 8627,
-   "groups": [
-    {
-     "group": "Material",
-     "line": 8629,
-     "options": [
-      "material_colour",
-      "bottle_cost",
-      "bottle_volume",
-      "bottle_weight",
-      "material_density"
-     ]
-    },
-    {
-     "group": "Layers",
-     "line": 8668,
-     "options": [
-      "initial_layer_height"
-     ]
-    },
-    {
-     "group": "Exposure",
-     "line": 8671,
-     "options": [
-      "exposure_time",
-      "initial_exposure_time"
-     ]
-    },
-    {
-     "group": "Corrections",
-     "line": 8675,
-     "options": [
-      "<custom-widget line:8683>"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Dependencies",
-   "icon": "wrench.png",
-   "line": 8685,
-   "groups": [
-    {
-     "group": "Profile dependencies",
-     "line": 8686,
-     "options": []
-    }
-   ]
-  },
-  {
-   "page": "Material printing profile",
-   "icon": "printer.png",
-   "line": 8706,
-   "groups": [
-    {
-     "group": "Material printing profile",
-     "line": 8707,
-     "options": []
-    }
-   ]
-  }
- ],
- "TabSLAPrint::build": [
-  {
-   "page": "Layers and perimeters",
-   "icon": "layers",
-   "line": 8749,
-   "groups": [
-    {
-     "group": "Layers",
-     "line": 8751,
-     "options": [
-      "layer_height",
-      "faded_layers"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Supports",
-   "icon": "support",
-   "line": 8755,
-   "groups": [
-    {
-     "group": "Supports",
-     "line": 8756,
-     "options": [
-      "supports_enable"
-     ]
-    },
-    {
-     "group": "Support head",
-     "line": 8759,
-     "options": [
-      "support_head_front_diameter",
-      "support_head_penetration",
-      "support_head_width"
-     ]
-    },
-    {
-     "group": "Support pillar",
-     "line": 8764,
-     "options": [
-      "support_pillar_diameter",
-      "support_small_pillar_diameter_percent",
-      "support_max_bridges_on_pillar",
-      "support_pillar_connection_mode",
-      "support_buildplate_only",
-      "support_pillar_widening_factor",
-      "support_base_diameter",
-      "support_base_height",
-      "support_base_safety_distance",
-      "support_object_elevation",
-      "<custom-widget line:8785>"
-     ]
-    },
-    {
-     "group": "Connection of the support sticks and junctions",
-     "line": 8787,
-     "options": [
-      "support_critical_angle",
-      "support_max_bridge_length",
-      "support_max_pillar_link_distance"
-     ]
-    },
-    {
-     "group": "Automatic generation",
-     "line": 8792,
-     "options": [
-      "support_points_density_relative",
-      "support_points_minimal_distance"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Pad",
-   "icon": "",
-   "line": 8796,
-   "groups": [
-    {
-     "group": "Pad",
-     "line": 8797,
-     "options": [
-      "pad_enable",
-      "pad_wall_thickness",
-      "pad_wall_height",
-      "pad_brim_size",
-      "pad_max_merge_distance",
-      "pad_edge_radius",
-      "pad_wall_slope",
-      "pad_around_object",
-      "pad_around_object_everywhere",
-      "pad_object_gap",
-      "pad_object_connector_stride",
-      "pad_object_connector_width",
-      "pad_object_connector_penetration"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Hollowing",
-   "icon": "hollowing",
-   "line": 8814,
-   "groups": [
-    {
-     "group": "Hollowing",
-     "line": 8815,
-     "options": [
-      "hollowing_enable",
-      "hollowing_min_thickness",
-      "hollowing_quality",
-      "hollowing_closing_distance"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Advanced",
-   "icon": "advanced",
-   "line": 8821,
-   "groups": [
-    {
-     "group": "Slicing",
-     "line": 8822,
-     "options": [
-      "slice_closing_radius",
-      "slicing_mode"
-     ]
-    }
-   ]
-  },
-  {
-   "page": "Output options",
-   "icon": "output+page_white",
-   "line": 8826,
-   "groups": [
-    {
-     "group": "Output file",
-     "line": 8827,
-     "options": []
-    }
-   ]
-  },
-  {
-   "page": "Dependencies",
-   "icon": "advanced",
-   "line": 8832,
-   "groups": [
-    {
-     "group": "Profile dependencies",
-     "line": 8833,
-     "options": []
     }
    ]
   }

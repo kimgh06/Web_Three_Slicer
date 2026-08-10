@@ -78,6 +78,8 @@
     "data/ui-tree.json",
     "data/toggle-rules.json",
     "data/invalidation-map.json",
+    "data/printers.json",
+    "data/processes.js",
     "README.md",
     "LICENSE.txt"
   ],

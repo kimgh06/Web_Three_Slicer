@@ -1,4 +1,4 @@
-// The single import site for the 4 extracted JSON files.
+// The single import site for the extracted JSON files.
 //
 // Why funnel them through one module: JSON requires `with { type: 'json' }` in Node 22+ ESM, but
 // Vite/esbuild strip that attribute from bundle output (neither build.target nor importAttributesKey
@@ -10,3 +10,9 @@ export { default as schema } from 'three-slicer/data/config-schema.json' with { 
 export { default as uiTree } from 'three-slicer/data/ui-tree.json' with { type: 'json' }
 export { default as toggleRules } from 'three-slicer/data/toggle-rules.json' with { type: 'json' }
 export { default as invalidationMap } from 'three-slicer/data/invalidation-map.json' with { type: 'json' }
+export { default as printers } from 'three-slicer/data/printers.json' with { type: 'json' }
+// processes is the largest artifact (~800 KB) and is only needed once a printer is picked, so it stays a dynamic
+// import. It is generated as a JS module rather than JSON precisely because of the attribute problem above, in its
+// other direction: a dynamic JSON import needs the attribute in Node, and that same attribute makes browsers
+// reject the text/javascript response a dev server gives for .json.
+export const loadProcesses = () => import('three-slicer/data/processes.js').then(m => m.default)
