@@ -147,6 +147,27 @@
   text-shadow: 0 1px 2px #000; pointer-events: none; }
 /* ---- Slice status display (viewport overlay) ---- */
 .slice-warn { color: #f0c060; margin: 4px 0; }
+/* Basis line under the print-time estimate — the machine limits the kernel reported using */
+.sc-sub { font-size: 10.5px; opacity: .62; margin: 1px 0 3px; }
+/* Collapsible card section holding an injected settings page (printer motion ability) */
+.sc-fold > summary { display: flex; justify-content: space-between; align-items: center; font-size: 12px;
+  color: #5a6069; padding: 2px 0; cursor: pointer; list-style: none; }
+.sc-fold > summary::-webkit-details-marker { display: none; }
+.sc-fold-lbl::before { content: '▸'; display: inline-block; width: 10px; font-size: 9px; opacity: .5; }
+.sc-fold[open] .sc-fold-lbl::before { content: '▾'; }
+.sc-fold > summary b { color: #24282e; }
+.sc-fold[open] > summary { border-bottom: 1px solid #e3e6ea; margin-bottom: 4px; }
+/* The injected page is a full settings form — keep it from stretching the card unboundedly */
+.sc-fold-body { max-height: 320px; overflow-y: auto; }
+.sc-model { max-width: 62%; font-size: 11.5px; padding: 1px 2px; }
+/* Support helpers grouped under the "Generate support" toggle */
+.support-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 2px 0 2px 16px; padding-left: 6px; border-left: 2px solid #e3e6ea; }
+.sup-style { margin-left: 16px; padding-left: 6px; border-left: 2px solid #e3e6ea; }
+.sup-paint { font-size: 11px; padding: 2px 8px; border: 1px solid #c9ced6; border-radius: 5px;
+  background: #fff; color: #24282e; cursor: pointer; white-space: nowrap; }
+.sup-paint.on { background: #2b6cff; border-color: #2b6cff; color: #fff; }
+.sup-paint:disabled { opacity: .45; cursor: not-allowed; }
 .slice-btn { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: 7px;
   background: #00ae42; color: #fff; font-weight: 700; cursor: pointer; }
 .slice-btn:disabled { background: #3a4650; color: #8b98a2; cursor: not-allowed; }

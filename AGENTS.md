@@ -45,7 +45,13 @@ bash packages/pack_check.sh
 
 All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise via subpath exports):
 - `packages/engine/` — the entry point `three-slicer` (+`/settings` `/toggle` `/worker` `/wasm`): the WASM kernel SDK
-- `packages/data/` — the 4 extracted JSON files (config-schema, ui-tree, toggle-rules, invalidation-map).
+- `packages/data/` — the extracted artifacts: config-schema, ui-tree, toggle-rules, invalidation-map, printers
+  (vendor machine profiles: motion limits + bed/nozzle) and processes (print presets — speeds/accelerations).
+  `processes` is emitted as a **`.js` module, not JSON**, because it is loaded dynamically: a dynamic JSON import
+  needs `with { type: 'json' }` in Node, and that same attribute makes browsers reject a dev server's
+  `text/javascript` response. Both large artifacts are column-oriented and deduplicated — read them through
+  `printerSettings()` / `processPresets()` in `three-slicer/settings`, not by hand.
+  New artifacts must also be added to `packages/package.json` `files`, or they are missing from the tarball.
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.

@@ -25,6 +25,7 @@
   {
    "keys": [
     "slicing_pipeline_plugin",
+    "print_plugin_config_overrides",
     "initial_layer_print_height",
     "nozzle_diameter",
     "filament_shrink",
@@ -133,7 +134,7 @@
     "psWipeTower"
    ],
    "special": [],
-   "line": 298
+   "line": 299
   },
   {
    "keys": [
@@ -149,7 +150,7 @@
     "psWipeTower"
    ],
    "special": [],
-   "line": 389
+   "line": 390
   },
   {
    "keys": [
@@ -172,7 +173,7 @@
     "psSkirtBrim"
    ],
    "special": [],
-   "line": 400
+   "line": 401
   },
   {
    "keys": [
@@ -182,7 +183,7 @@
     "posDetectOverhangsForLift"
    ],
    "special": [],
-   "line": 418
+   "line": 419
   }
  ],
  "PrintObject": [
