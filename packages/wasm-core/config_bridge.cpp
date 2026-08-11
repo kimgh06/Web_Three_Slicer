@@ -47,7 +47,7 @@ static std::string shift_axis(std::string line, char axis, double d) {
 WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h, double layer_h,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
-                                double filament_diameter) {
+                                double filament_diameter, double purge_volume_mm3) {
     WipeTowerBlock out;
     try {
         PrintConfig cfg; // real StaticPrintConfig from print_config_def defaults
@@ -73,7 +73,11 @@ WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h
         wt.set_extruder(0, cfg);
         wt.set_extruder(1, cfg);
         wt.set_layer((float)z, (float)layer_h, 1, is_first_layer, false);
-        wt.plan_toolchange((float)z, (float)layer_h, (unsigned)old_tool, (unsigned)new_tool, 100.0f, 0.0f);
+        // 100 was a placeholder standing in for "some purge". Upstream feeds plan_toolchange the volume its
+        //  flush matrix computed for exactly this pair (ToolOrdering.cpp get_flush_volume), which is what makes a
+        //  white->black change cost more than white->white.
+        const float wipe_volume = purge_volume_mm3 >= 0 ? (float)purge_volume_mm3 : 100.0f;
+        wt.plan_toolchange((float)z, (float)layer_h, (unsigned)old_tool, (unsigned)new_tool, wipe_volume, 0.0f);
 
         std::vector<std::vector<WipeTower::ToolChangeResult>> result;
         wt.generate(result);

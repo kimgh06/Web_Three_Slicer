@@ -1,5 +1,6 @@
 // params.h — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 #pragma once
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -129,6 +130,31 @@ struct Params {
   //  It changes two things: the number after T, and whether a change has to purge at all. Two filaments sharing one
   //  nozzle must purge the old colour out; two on different nozzles never mix, so the tower is skipped entirely.
   std::vector<double> filament_map;
+  // Upstream's purging volumes (PrintConfig flush_volumes_matrix): a flat N×N table in mm³ where entry [from*N+to]
+  //  is how much has to be pushed out to go from filament `from` to filament `to`. It is what makes white->black
+  //  cost more than white->white; without it every change purges the same fixed amount, which is either wasteful
+  //  or not enough depending on the pair. Empty = no table, and the tower keeps its previous fixed size.
+  // Whether a prime tower is built at all. Upstream's own default is FALSE, because it can send the purge into the
+  //  model instead (flush_into_infill below); this kernel defaults to TRUE because until that option existed the
+  //  tower was the only place the purge could go, and flipping the default would silently change every existing
+  //  multi-material slice. The UI offers all three destinations.
+  bool   enable_prime_tower=true;
+  // Purge into the model's own sparse infill instead of a tower (upstream flush_into_infill). The material is not
+  //  thrown away — it is printed where nobody sees it — but it only works where the layer HAS sparse infill to
+  //  give, so what a layer cannot absorb still needs a tower.
+  bool   flush_into_infill=false;
+  std::vector<double> flush_volumes_matrix;
+  double flush_multiplier=1.0;                          // upstream scales the whole table by this
+  double prime_volume=0.0;                              // extra volume primed on every change, on top of the pair's
+  // How much filament a change from `from` to `to` has to purge, in mm³. Returns <0 when the host sent no table,
+  //  which the caller reads as "keep the fixed tower you always printed".
+  double flushVolume(int from, int to, int extruderCount) const {
+    const int n = extruderCount > 0 ? extruderCount : 1;
+    const size_t idx = (size_t)from * (size_t)n + (size_t)to;
+    if ((int)flush_volumes_matrix.size() < n * n || idx >= flush_volumes_matrix.size()) return -1.0;
+    const double mult = flush_multiplier > 1e-6 ? flush_multiplier : 1.0;
+    return std::max(0.0, flush_volumes_matrix[idx] * mult + prime_volume);
+  }
   // Per-filament material identity and physical constants. Upstream carries all of these as one entry per filament
   //  and reports them in the G-code footer; the kernel needs density/cost only to turn extruded millimetres into
   //  the grams and currency a user actually reasons about, and the type only to make the two decisions upstream

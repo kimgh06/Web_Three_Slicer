@@ -258,6 +258,11 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     // What this path still does NOT generate, said plainly: everything else about it now matches the
     //  single-material path (walls, shells, sparse infill, support), so the remaining gaps are the ones worth naming.
     gw.raw("; NOTE: multi-material path — bridge detection and ironing are not generated here");
+    if (!p.enable_prime_tower)
+      gw.raw(p.flush_into_infill
+        ? "; prime tower disabled — the purge goes into the model's sparse infill"
+        : "; WARNING: prime tower disabled and no flush destination — a tool change carries the previous colour "
+          "into the model");
     if (selector_bridge::painted_count(selector_bridge::STATE_BLOCKER) > 0 && p.enable_support)
       gw.raw("; WARNING: one selector serves both brushes, so a support BLOCKER paint and an Extruder2 paint are "
              "the same mark — the Extruder2 reading was used");
@@ -285,7 +290,18 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   //  Note: the default path is wipe_tower_real (the real WipeTower) and this ring is the fallback when that fails.
   double ptx=p.prime_tower_x-gw.offX, pty=p.prime_tower_y-gw.offY;
   const double ptSize=p.prime_tower_ring_size;
-  auto primeRings=[&](double side){ Paths ps; for(int k=0;k<3;++k){ double o=k*w; double x0=ptx+o,y0=pty+o,x1=ptx+side-o,y1=pty+side-o;
+  // Three loops was a fixed guess. With a purge table the count comes from the volume the pair actually needs:
+  //  one loop of side S extrudes 4*S*e_per_mm millimetres of filament, i.e. 4*S*w*h mm³ of plastic.
+  auto ringLoopsFor=[&](double volume_mm3, double side, double h){
+    if (volume_mm3 <= 0) return 3;                        // no table -> the tower this path always printed
+    const double perLoop = 4.0 * side * w * h;            // mm³ laid down by one loop
+    if (perLoop <= 1e-9) return 3;
+    // Clamped: one loop is the least that can be a tower, and the ring must not swallow the layer if a table asks
+    //  for a volume this footprint cannot hold — that is a sign the tower is too small, not a reason to spiral.
+    return std::max(1, std::min(60, (int)std::ceil(volume_mm3 / perLoop)));
+  };
+  auto primeRings=[&](double side, int loops){ Paths ps; for(int k=0;k<loops;++k){ double o=k*w; double x0=ptx+o,y0=pty+o,x1=ptx+side-o,y1=pty+side-o;
+    if (x1-x0 <= w || y1-y0 <= w) break;                  // the ring has closed on itself — no room for another loop
     Path r; r.push_back(IntPoint((cInt)std::llround(x0*SCALE),(cInt)std::llround(y0*SCALE)));
     r.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y0*SCALE)));
     r.push_back(IntPoint((cInt)std::llround(x1*SCALE),(cInt)std::llround(y1*SCALE)));
@@ -435,6 +451,37 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     for (const auto& entry : byToolFeature) if (entry.first != curTool) toolOrder.push_back(entry.first);
 
     bool printedThisLayer=false;
+    // Purge into the model (upstream flush_into_infill). Instead of building a tower, the tool that just took over
+    //  prints part of THIS layer's sparse infill — material that had to be laid anyway, inside the part where its
+    //  colour cannot be seen. Harvested before emission because it moves lines out of the units' own fill, and a
+    //  line must not be printed twice.
+    std::map<int, Paths> flushInfill;                 // tool -> the lines it takes over to absorb its purge
+    if (p.flush_into_infill && toolOrder.size() > 1) {
+      for (size_t k=1;k<toolOrder.size();++k) {
+        const int from=toolOrder[k-1], to=toolOrder[k];
+        const bool crossNozzle = !p.filament_map.empty() && p.physicalExtruderOf(from) != p.physicalExtruderOf(to);
+        if (crossNozzle) continue;
+        const double vol = p.flushVolume(from, to, p.extruder_count);
+        // mm³ -> millimetres of extruded line at this layer's cross-section. No table means no number to satisfy,
+        //  so nothing is diverted and the tower (if any) keeps its fixed size.
+        double need = vol > 0 ? vol / (w * h) : 0.0;
+        for (size_t u=0; u<unitGeom.size() && need > 1e-6; ++u) {
+          Paths& lines = unitGeom[u].fillLines;
+          while (!lines.empty() && need > 1e-6) {
+            const Path& line = lines.back();
+            double len = 0;
+            for (size_t q=1;q<line.size();++q) {
+              const double dx=(double)(line[q].x()-line[q-1].x())/SCALE, dy=(double)(line[q].y()-line[q-1].y())/SCALE;
+              len += std::sqrt(dx*dx+dy*dy);
+            }
+            flushInfill[to].push_back(line);
+            lines.pop_back();
+            need -= len;
+          }
+        }
+      }
+    }
+
     // Support first on the layer, the order emit_layer.cpp uses. It prints with support_filament when one is set
     //  (1-based, 0 = "keep the loaded tool"), which is the same contract the single-material path honours.
     if (p.enable_support && i < (int)supportLayers.size()) {
@@ -462,11 +509,11 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     bool willPurge=false;
     for (size_t k=1;k<toolOrder.size();++k)
       if (p.filament_map.empty() || p.physicalExtruderOf(toolOrder[k-1]) == p.physicalExtruderOf(toolOrder[k])) { willPurge=true; break; }
-    if (i<=lastTowerLayer && !willPurge) {
+    if (p.enable_prime_tower && i<=lastTowerLayer && !willPurge) {
       const double sustainStart = gw.filament;
       const double side = p.wipe_tower_real ? p.prime_tower_width : ptSize;   // match the footprint printed above it
       gw.raw("; prime tower (sustain — keeps the tower grounded under the purges above)");
-      emit_loops(gw,tp,primeRings(side),zE,11.0f,fPr,fTravel,-1,seamCtx);
+      emit_loops(gw,tp,primeRings(side,3),zE,11.0f,fPr,fTravel,-1,seamCtx);   // sustain: shape only, no purge to size
       const double spent = gw.filament - sustainStart;
       filamentPurge += spent;
       if ((int)filamentPurgeByTool.size() <= curTool) filamentPurgeByTool.resize(curTool+1, 0.0);
@@ -480,14 +527,22 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       //  has nothing to purge. Only asked when the host actually sent a filament_map — without one the kernel has
       //  no reason to believe there is a second nozzle, and every change purges exactly as it always did.
       const bool crossNozzle = !p.filament_map.empty() && p.physicalExtruderOf(from) != p.physicalExtruderOf(to);
-      const bool purge = printedThisLayer && from!=to && !crossNozzle;
+      const bool purge = printedThisLayer && from!=to && !crossNozzle && p.enable_prime_tower;
       toolTo(to);
+      // Whatever this tool diverted into the model is printed right after the change, which is where a purge
+      //  belongs: the first material out of the nozzle is the mixed one.
+      if (!flushInfill[to].empty()) {
+        emit_lines(gw,tp,flushInfill[to],zE,2.0f,fPr,fTravel);
+        printedThisLayer = true;
+      }
       if (purge) {
         const double purgeStart = gw.filament;            // whatever the tower costs, real or fallback ring
+        const double flushVol = p.flushVolume(from, to, p.extruder_count);   // mm³ this pair needs, <0 = no table
         if (p.wipe_tower_real) {                          // stage 12: the real WipeTower.generate()
           auto wt = config_bridge::wipe_tower_block(p.bed_width,p.bed_depth,p.first_layer_height,
                         p.layer_height, zE, i==0, from, to, p.prime_tower_x, p.prime_tower_y,   // stage 33: the 10,10 constants -> wipe_tower_x/y
-                        p.prime_tower_width, gw.tool_filament_diameter);   // the tool just switched to is the one purging
+                        p.prime_tower_width, gw.tool_filament_diameter,
+                        flushVol);                        // the pair's own purge volume, not a fixed guess
           if (wt.ok) {
             gw.raw("; wipe_tower_real: real ported WipeTower.generate()");
             gw.raw(wt.gcode.c_str());
@@ -499,11 +554,18 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
               tp.push_back((k%8==3) ? wt.toolpath[k] + (float)(curTool*16) : wt.toolpath[k]);
           } else {                                        // square ring fallback on failure
             gw.raw("; prime tower (fallback square ring)");
-            emit_loops(gw,tp,primeRings(ptSize),zE,11.0f,fPr,fTravel,-1,seamCtx);
+            emit_loops(gw,tp,primeRings(ptSize,ringLoopsFor(flushVol,ptSize,h)),zE,11.0f,fPr,fTravel,-1,seamCtx);
           }
         } else {
-          gw.raw("; prime tower (basic — NOT a real wipe tower)");
-          emit_loops(gw,tp,primeRings(ptSize),zE,11.0f,fPr,fTravel,-1,seamCtx);
+          { const int loops = ringLoopsFor(flushVol, ptSize, h);
+            char rc[128]; std::snprintf(rc,sizeof rc,"; prime tower (ring, %d loops%s)", loops,
+              flushVol > 0 ? "" : " — no purge table, fixed size"); gw.raw(rc);
+            const Paths rings = primeRings(ptSize, loops);
+            // A ring closes on itself once its loops meet in the middle, so a footprint this small cannot absorb
+            //  an arbitrarily large purge. Reported rather than quietly under-purging: the answer is a wider tower.
+            if (flushVol > 0 && (int)rings.size() < loops)
+              gw.raw("; WARNING: the tower footprint is too small for the requested purging volume — widen it");
+            emit_loops(gw,tp,rings,zE,11.0f,fPr,fTravel,-1,seamCtx); }
         }
         const double spent = gw.filament - purgeStart;
         filamentPurge += spent;

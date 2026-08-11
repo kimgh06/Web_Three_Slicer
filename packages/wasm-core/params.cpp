@@ -218,6 +218,11 @@ Params parse_params(const std::string& j) {
   p.bottom_surface_filament_id    = (int)jget(j,"bottom_surface_filament_id",p.bottom_surface_filament_id);
   p.internal_solid_filament_id    = (int)jget(j,"internal_solid_filament_id",p.internal_solid_filament_id);
   p.filament_map                  = jarr(j,"filament_map");
+  p.enable_prime_tower            = jbool(j,"enable_prime_tower",p.enable_prime_tower);
+  p.flush_into_infill              = jbool(j,"flush_into_infill",p.flush_into_infill);
+  p.flush_volumes_matrix          = jarr(j,"flush_volumes_matrix");
+  p.flush_multiplier              = jget(j,"flush_multiplier",p.flush_multiplier);
+  p.prime_volume                  = jget(j,"prime_volume",p.prime_volume);
   p.filament_type                 = jstrarr(j,"filament_type");
   p.filament_settings_id          = jstrarr(j,"filament_settings_id");
   p.filament_density              = jarr(j,"filament_density");

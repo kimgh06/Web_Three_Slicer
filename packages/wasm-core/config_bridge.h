@@ -33,6 +33,9 @@ struct WipeTowerBlock {
 WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h, double layer_h,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
-                                double filament_diameter);
+                                double filament_diameter,
+                                // mm³ this filament pair has to purge (Params::flushVolume). <0 = the host sent no
+                                // purge table, and the tower keeps the fixed volume it used before one existed.
+                                double purge_volume_mm3);
 
 } // namespace config_bridge
