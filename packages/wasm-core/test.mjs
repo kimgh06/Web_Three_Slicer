@@ -421,11 +421,11 @@ ok(/^T0$/m.test(rMM.gcode) && /^T1$/m.test(rMM.gcode), `MM has tool changes T0 a
 ok(typeTotal(rMM, 11) > 0, `MM prime tower emitted (type11=${typeTotal(rMM, 11)})`)
 // The default is the fallback ring again: the real WipeTower port is not reproducible (see the [wipe tower]
 //  section). Both markers are asserted so a silent flip of the default in either direction fails here.
-ok(/prime tower \(basic/.test(rMM.gcode), `MM uses the deterministic ring by default`)
+ok(/^; prime tower \(ring, \d+ loops/m.test(rMM.gcode), `MM uses the deterministic ring by default`)
 ok(!/wipe_tower_real: real ported WipeTower/.test(rMM.gcode), `and does not reach for the real tower unasked`)
 // With an explicit opt-out (wipe_tower_real=false) the old square ring path is kept
 const rMMring = Module.slice(new Uint8Array(mmStl), JSON.stringify({ ...params, extruder_count: 2, mm_group_split: mmSplit, wipe_tower_real: false }), () => {})
-ok(/; prime tower \(basic/.test(rMMring.gcode) && typeTotal(rMMring, 11) > 0, `wipe_tower_real=false keeps the ring fallback`)
+ok(/^; prime tower \(ring, \d+ loops/m.test(rMMring.gcode) && typeTotal(rMMring, 11) > 0, `wipe_tower_real=false keeps the ring fallback`)
 const rSingle = Module.slice(new Uint8Array(mmStl), JSON.stringify(params), () => {})
 ok(!/^T[01]$/m.test(rSingle.gcode) && typeTotal(rSingle, 11) === 0, `single-material path unchanged (no T0/T1, no prime tower)`)
 
@@ -914,6 +914,75 @@ const rTpu = Module.slice(new Uint8Array(idBox), JSON.stringify({ ...idBase, fil
 ok(/^; has_tpu_in_first_layer = 1$/m.test(rTpu.gcode) && !/has_tpu_in_first_layer/.test(rNoPetg.gcode),
    `TPU in the print is surfaced, and only when there is TPU`)
 
+// ===== Purging volumes: the tower is sized from the filament pair ===================================================
+//  Upstream computes the purge from flush_volumes_matrix — the volume needed to go from filament i to filament j —
+//  so a dark colour following a light one costs more than a change between two similar ones. Without a table the
+//  tower was a fixed three loops whatever the pair, which is either waste or not enough.
+console.log('\n[purging volumes]')
+const purgeBox = makeBoxSTL(20, 20, 20)
+const purgeBase = { ...params, extruder_count: 2, outer_wall_filament_id: 2, wipe_tower_real: false }
+Module.selector_clear()
+const slicePurge = (extra) => Module.slice(new Uint8Array(purgeBox), JSON.stringify({ ...purgeBase, ...extra }), () => {})
+const rNoTable = slicePurge({})
+ok(/no purge table, fixed size/.test(rNoTable.gcode),
+   `without a table the tower keeps its fixed size, and says so`)
+// A small table and a large one, same model: the tower has to grow with the volume it is asked to purge.
+const rSmall = slicePurge({ flush_volumes_matrix: [0, 40, 40, 0] })
+const rLarge = slicePurge({ flush_volumes_matrix: [0, 400, 400, 0] })
+ok(rLarge.stats.filament_mm_purge > rSmall.stats.filament_mm_purge * 1.3,
+   `a bigger purging volume builds a bigger tower (${rSmall.stats.filament_mm_purge.toFixed(1)} -> ${rLarge.stats.filament_mm_purge.toFixed(1)} mm)`)
+// …up to what the footprint can hold. A 15mm ring saturates long before 400mm³ per change, and the honest
+//  response is to say the tower is too small rather than to under-purge in silence.
+ok(/WARNING: the tower footprint is too small/.test(rLarge.gcode) && !/too small/.test(rSmall.gcode),
+   `and reports the footprint as the limit once the ring closes on itself`)
+const loopsOf = (r) => Number((r.gcode.match(/^; prime tower \(ring, (\d+) loops/m) ?? [])[1] ?? 0)
+ok(loopsOf(rSmall) > 0 && loopsOf(rLarge) > loopsOf(rSmall),
+   `and the ring reports how many loops that took (${loopsOf(rSmall)} -> ${loopsOf(rLarge)})`)
+// The multiplier and the per-change prime volume are upstream's two scalars on top of the table.
+const rMultiplied = slicePurge({ flush_volumes_matrix: [0, 40, 40, 0], flush_multiplier: 10 })
+ok(rMultiplied.stats.filament_mm_purge > rSmall.stats.filament_mm_purge,
+   `flush_multiplier scales the whole table (${rSmall.stats.filament_mm_purge.toFixed(1)} -> ${rMultiplied.stats.filament_mm_purge.toFixed(1)} mm)`)
+const rPrimed = slicePurge({ flush_volumes_matrix: [0, 40, 40, 0], prime_volume: 200 })
+ok(rPrimed.stats.filament_mm_purge > rSmall.stats.filament_mm_purge,
+   `prime_volume adds to every change (${rPrimed.stats.filament_mm_purge.toFixed(1)} mm)`)
+// A table too small to index must not be read — a two-filament print needs a 2x2 table.
+const rShort = slicePurge({ flush_volumes_matrix: [0, 40] })
+ok(rShort.gcode === rNoTable.gcode, `a table that cannot be indexed is ignored rather than half-read`)
+
+// ===== Turning the prime tower off ==================================================================================
+//  Upstream's own default is enable_prime_tower=false, because it can send the purge into the model instead. This
+//  kernel keeps the tower on by default (it had nowhere else to put a purge until now), so what matters is that
+//  turning it off really removes it, and that the alternative destination actually absorbs the material.
+console.log('\n[tower off]')
+const offBox = makeBoxSTL(20, 20, 20)
+const offBase = { ...params, extruder_count: 2, outer_wall_filament_id: 2, wipe_tower_real: false,
+                  flush_volumes_matrix: [0, 140, 140, 0] }
+Module.selector_clear()
+const sliceOff = (extra) => Module.slice(new Uint8Array(offBox), JSON.stringify({ ...offBase, ...extra }), () => {})
+const rTowerOn = sliceOff({})
+const rTowerOff = sliceOff({ enable_prime_tower: false })
+ok(typeTotal(rTowerOn, 11) > 0, `the tower is on by default (${typeTotal(rTowerOn, 11)} tower segments)`)
+ok(typeTotal(rTowerOff, 11) === 0, `enable_prime_tower=false removes every tower segment, sustain rings included`)
+ok(rTowerOff.stats.filament_mm_purge === 0 && rTowerOff.stats.filament_mm < rTowerOn.stats.filament_mm,
+   `and the purge with it (${rTowerOn.stats.filament_mm.toFixed(1)} -> ${rTowerOff.stats.filament_mm.toFixed(1)} mm)`)
+ok(/WARNING: prime tower disabled and no flush destination/.test(rTowerOff.gcode),
+   `with nowhere for the purge to go, the G-code says the colour will carry into the model`)
+
+// Flushing into the infill: the purge becomes sparse infill printed by the tool that just took over. The material
+//  is not saved — it is moved somewhere it is not seen — so the print does not get lighter, it gets a tower fewer.
+const rFlush = sliceOff({ enable_prime_tower: false, flush_into_infill: true })
+ok(typeTotal(rFlush, 11) === 0 && /purge goes into the model's sparse infill/.test(rFlush.gcode),
+   `flush_into_infill replaces the tower rather than adding to it`)
+ok(!/WARNING: prime tower disabled and no flush destination/.test(rFlush.gcode),
+   `and the warning is gone once the purge has a destination`)
+// The diverted lines are printed by the NEW tool: that tool's share has to grow against the no-flush case.
+const toolShare = (r, t) => (r.stats.filament_mm_by_tool ?? [])[t] ?? 0
+ok(toolShare(rFlush, 1) > toolShare(rTowerOff, 1),
+   `the purging tool prints the diverted infill (T2 ${toolShare(rTowerOff,1).toFixed(1)} -> ${toolShare(rFlush,1).toFixed(1)} mm)`)
+// Total extrusion is unchanged by WHERE the infill is printed — the lines were going to be laid either way.
+ok(Math.abs(rFlush.stats.filament_mm - rTowerOff.stats.filament_mm) < rTowerOff.stats.filament_mm * 0.05,
+   `and moving infill between tools does not change how much is extruded (${rTowerOff.stats.filament_mm.toFixed(1)} vs ${rFlush.stats.filament_mm.toFixed(1)} mm)`)
+
 // ===== Wipe tower: the real port is not deterministic ===============================================================
 //  Pinned rather than left as folklore. The fallback ring must stay reproducible (it is what ships by default), and
 //  the real tower's defect must stay visible until it is fixed — a slicer whose output changes between identical
@@ -1198,6 +1267,73 @@ ok(Object.keys(t10tag.stats.role_times).length > 0,
 // determinism: identical params -> identical estimate
 const t10b = Module.slice(new Uint8Array(g10), JSON.stringify(params), () => {})
 ok(t10.stats.time_estimate === t10b.stats.time_estimate, `time estimate is deterministic`)
+
+// ===== Where the model sits must not change what it slices to =====================================================
+//  The viewer used to re-centre its slice input on the XY origin, because a model placed away from it lost infill —
+//  measured on this very box: sparse 828 -> 414, solid 427 -> 183, with no error and no warning. The cause was in
+//  infill_lines (clip_util.h): each pattern line was drawn through the origin-projected foot and extended by the
+//  region's own SIZE, so a region further from the origin than that was simply never reached. That centring is what
+//  made the slice frame follow the model, which in turn is what made the prime tower and the paint drift.
+console.log('\n[position invariance]')
+const posBox = makeBoxSTL(20, 20, 20)   // tall enough that most layers are sparse, which is what went missing
+const translateSTL = (stl, dx, dy) => {
+  const out = Buffer.from(stl)
+  const n = out.readUInt32LE(80)
+  for (let t = 0, off = 84; t < n; t++, off += 2) {
+    off += 12
+    for (let k = 0; k < 3; k++, off += 12) {
+      out.writeFloatLE(out.readFloatLE(off) + dx, off)
+      out.writeFloatLE(out.readFloatLE(off + 4) + dy, off + 4)
+    }
+  }
+  return out
+}
+const posParams = { ...params, layer_height: 0.2, infill_density: 0.15, bed_width: 400, bed_depth: 400 }
+const rolesAt = (dx, dy) => {
+  const r = Module.slice(new Uint8Array(translateSTL(posBox, dx, dy)), JSON.stringify(posParams), () => {})
+  const c = { 0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0,10:0,11:0 }
+  for (const L of r.layers) for (let i = 0; i < L.paths.length; i += 8) c[ROLE_OF(L.paths[i+3])]++
+  return { counts: c, filament: r.stats.filament_mm }
+}
+//  The box is at x,y in [0,20] as makeBoxSTL builds it, so dx=-10 is the centred case the workaround produced and
+//  everything else is a placement that used to come out short.
+const posBase = rolesAt(-10, -10)
+for (const [name, dx, dy] of [['as built (x,y in [0,20])', 0, 0], ['off +x', 30, 0], ['off +x +y', 30, 30],
+                              ['negative both', -60, -60], ['far corner', 60, 60]]) {
+  const here = rolesAt(dx, dy)
+  const same = Object.keys(posBase.counts).every(role => posBase.counts[role] === here.counts[role])
+  const segments = Object.values(here.counts).reduce((a, b) => a + b, 0)
+  ok(same && Math.abs(posBase.filament - here.filament) < 1e-3,
+     `${name}: same slice as centred (${here.filament.toFixed(1)}mm, ${segments} segments, same in every role)`)
+}
+
+// ===== A move must not cost the paint ============================================================================
+//  The marks are indexed by facet, and moving a model renumbers nothing — so rebuilding the selector on the moved
+//  coordinates (which the brush and the layer projection both need) can carry them across. This is upstream's own
+//  persistence: TriangleSelector::serialize / deserialize, the same data 3MF stores.
+console.log('\n[paint survives a move]')
+const moveBox = makeBoxSTL(20, 20, 20)
+Module.selector_prepare(new Uint8Array(moveBox))
+Module.selector_paint_state(2, 10, 10, 20, 10, 10, 60, 8.0, 2, 0)
+const paintedBeforeMove = Module.selector_painted_count_state(2)
+ok(paintedBeforeMove > 0, `a stroke marks facets to carry (${paintedBeforeMove})`)
+const keptAcrossMove = Module.selector_reprepare(new Uint8Array(translateSTL(moveBox, 40, 25)))
+ok(keptAcrossMove === true, `re-registering the moved mesh reports the marks kept`)
+ok(Module.selector_painted_count_state(2) === paintedBeforeMove,
+   `the same facets are still painted after the move (${Module.selector_painted_count_state(2)})`)
+//  And the marks must not follow a mesh they were never on: a different face count is a different model, so the
+//  call says so instead of dropping the paint somewhere arbitrary.
+const twoTriangles = Buffer.alloc(84 + 2 * 50)
+twoTriangles.writeUInt32LE(2, 80)
+for (const [t, tri] of [[0, [[0,0,0],[20,0,0],[0,20,0]]], [1, [[0,0,0],[0,20,0],[0,0,20]]]]) {
+  let off = 84 + t * 50 + 12
+  for (const v of tri) { twoTriangles.writeFloatLE(v[0], off); twoTriangles.writeFloatLE(v[1], off+4); twoTriangles.writeFloatLE(v[2], off+8); off += 12 }
+}
+ok(Module.selector_reprepare(new Uint8Array(twoTriangles)) === false,
+   `a mesh with a different face count reports the marks NOT kept`)
+ok(Module.selector_painted_count_state(2) === 0,
+   `...and starts clean rather than inheriting them (${Module.selector_painted_count_state(2)})`)
+Module.selector_clear()
 
 console.log(failed === 0 ? '\nALL NODE TESTS PASSED' : `\n${failed} TEST(S) FAILED`)
 process.exit(failed === 0 ? 0 : 1)
