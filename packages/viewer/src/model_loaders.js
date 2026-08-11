@@ -8,7 +8,59 @@ import * as THREE from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { AMFLoader } from 'three/examples/jsm/loaders/AMFLoader.js'
-import { parse3MF } from './parse_3mf.js'
+import { parse3MFProject } from './parse_3mf.js'
+import { makeParse3mfWorker } from './make_worker.js'
+
+// ---- 3MF parsing off the main thread -------------------------------------------------------------------------
+// A slicer project is the one import big enough to be felt: 52MB compressed / 315MB of XML / 3.8M triangles takes
+//  about two seconds, and on the main thread that is two seconds of dead UI. One worker is reused for the session
+//  (starting it costs a module load) and requests are tagged, so several dropped files parse without racing.
+// Everything degrades to the in-thread parser: no Worker global (node, tests), a bundler that did not emit the
+//  worker chunk, a CSP that blocks it. Slower, never broken — and the fallback is the same function the worker runs.
+let parseWorker = null
+let parseWorkerBroken = false
+let nextRequestId = 0
+const pendingParses = new Map()
+
+function parse3mfWorker() {
+  if (parseWorkerBroken || typeof Worker === 'undefined') return null
+  if (parseWorker) return parseWorker
+  try {
+    parseWorker = makeParse3mfWorker()
+    parseWorker.onmessage = (event) => {
+      const { id, objects, project, error } = event.data || {}
+      const pending = pendingParses.get(id)
+      if (!pending) return
+      pendingParses.delete(id)
+      error ? pending.reject(new Error(error)) : pending.resolve({ objects, project })
+    }
+    // A worker that dies takes every request in flight with it; they are rejected so the caller can retry rather
+    //  than hang, and the worker is not resurrected — whatever killed it will kill the next one too.
+    parseWorker.onerror = () => {
+      parseWorkerBroken = true
+      for (const [, pending] of pendingParses) pending.reject(new Error('3MF parse worker failed'))
+      pendingParses.clear()
+      parseWorker = null
+    }
+  } catch {
+    parseWorkerBroken = true
+    parseWorker = null
+  }
+  return parseWorker
+}
+
+async function parse3mf(buffer, name) {
+  const worker = parse3mfWorker()
+  if (!worker) return parse3MFProject(buffer, name)
+  try {
+    const id = ++nextRequestId
+    const result = new Promise((resolve, reject) => pendingParses.set(id, { resolve, reject }))
+    worker.postMessage({ id, buffer, baseName: name })
+    return await result
+  } catch {
+    return parse3MFProject(buffer, name)   // the buffer is never transferred, so it is still intact here
+  }
+}
 
 // Built-in formats. registerLoader() appends extensions here (the file dialog / drag-and-drop filters read this).
 export const SUPPORTED_EXT = ['stl', 'obj', '3mf', 'amf', 'ply']
@@ -109,7 +161,9 @@ export async function loadModel(name, buffer) {
     }
     case '3mf': {
       // Own parser — three's ThreeMFLoader cannot read the production extension (p:path), so every slicer-saved 3mf came out empty.
-      const objs = parse3MF(buffer, name).map(o => ({ name: o.name, modelPos: o.tris }))
+      // A slicer-written 3mf is a project: `paint` and `project` carry the preset/painting/plate state next to the mesh.
+      const { objects, project } = await parse3mf(buffer, name)
+      const objs = objects.map(o => ({ name: o.name, modelPos: o.tris, objectid: o.objectid, paint: o.paint, bbox: o.bbox, project }))
       if (!objs.length) throw new Error('No mesh in 3MF')
       return objs
     }

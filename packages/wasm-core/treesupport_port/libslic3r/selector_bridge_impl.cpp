@@ -7,8 +7,10 @@
 #include "TriangleMesh.hpp"
 #include "custom_facet_project.hpp"   // (stage 20) footprint projection
 #include "MultiMaterialSegmentation.hpp"   // the exact per-layer segmentation (upstream)
+#include <algorithm>
 #include <array>
 #include <memory>
+#include <string>
 
 using namespace Slic3r;
 
@@ -132,6 +134,61 @@ void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool 
 }
 
 int painted_count(int state) { return int(facets_of(state).indices.size()); }
+
+// ---- 3mf import ----------------------------------------------------------------------------------------------
+// Port of upstream FacetsAnnotation::set_triangle_from_string (slicer/src/libslic3r/Model.cpp:3567), which is the
+// only piece of the 3mf painting path that lives outside TriangleSelector: the selector already knows how to
+// serialize/deserialize its split trees, but the 3mf spells that bitstream as hex text on the <triangle> tag.
+// The whole batch is assembled into ONE TriangleSplittingData and deserialized in one call because deserialize()
+// resets the selector — feeding it per facet would leave only the last one.
+int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::string>& hex) {
+    if (!g_sel || facets.empty() || facets.size() != hex.size()) return 0;
+    const int facet_total = facet_count();
+
+    // triangles_to_split has to be strictly ascending by triangle_idx (upstream asserts it, and get_triangle_as_string
+    // binary-searches it). The caller's order is whatever the 3mf listed, so sort here instead of trusting it —
+    // and drop duplicates, which would otherwise put the same facet in the list twice with two bitstream offsets.
+    std::vector<size_t> order;
+    order.reserve(facets.size());
+    for (size_t i = 0; i < facets.size(); ++i)
+        if (facets[i] >= 0 && facets[i] < facet_total && !hex[i].empty()) order.push_back(i);
+    std::sort(order.begin(), order.end(), [&facets](size_t a, size_t b) { return facets[a] < facets[b]; });
+    order.erase(std::unique(order.begin(), order.end(),
+                            [&facets](size_t a, size_t b) { return facets[a] == facets[b]; }), order.end());
+
+    TriangleSelector::TriangleSplittingData data;
+    int applied = 0;
+    for (size_t i : order) {
+        const std::string& text = hex[i];
+        const size_t bitstream_start_idx = data.bitstream.size();
+        data.triangles_to_split.emplace_back(facets[i], int(bitstream_start_idx));
+        // The string is written most-significant nibble FIRST (get_triangle_as_string inserts each digit at the
+        // front), so it reads back in reverse — four bits per digit, least significant bit first.
+        bool malformed = false;
+        for (auto it = text.crbegin(); it != text.crend(); ++it) {
+            const char ch = *it;
+            int nibble;
+            if (ch >= '0' && ch <= '9')      nibble = ch - '0';
+            else if (ch >= 'A' && ch <= 'F') nibble = 10 + (ch - 'A');
+            else if (ch >= 'a' && ch <= 'f') nibble = 10 + (ch - 'a');   // upstream only writes uppercase; be liberal reading
+            else { malformed = true; break; }
+            for (int bit = 0; bit < 4; ++bit) data.bitstream.push_back(bool(nibble & (1 << bit)));
+        }
+        if (malformed) {
+            // A truncated bitstream is worse than a missing facet: deserialize() walks it as a tree and would read
+            // past this triangle's share into the next one's. Roll the facet back out entirely.
+            data.bitstream.resize(bitstream_start_idx);
+            data.triangles_to_split.pop_back();
+            continue;
+        }
+        data.update_used_states(bitstream_start_idx);
+        ++applied;
+    }
+    if (applied == 0) return 0;
+    g_sel->deserialize(data);
+    invalidate();
+    return applied;
+}
 
 std::vector<float> overlay(int state) {
     const indexed_triangle_set& its = facets_of(state);

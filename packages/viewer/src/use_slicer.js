@@ -2,6 +2,19 @@ import { useEffect, useRef } from 'react'
 import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from './make_worker.js'
 
+// The kernel's stats object, reduced to what the UI reads. One place, because the per-plate path shows the same
+//  card from the same fields and the two mappings had already started to drift.
+//  overBedBy is measured by the kernel on the EMITTED extrusions, so it includes support, skirt, brim and the raft —
+//  none of which exist yet when the viewer runs its own pre-slice bed check against the model's bounding box.
+export function statsFromKernel(s) {
+  return {
+    layers: s.layers, segments: s.path_segments, filament: s.filament_mm, timeSec: s.time_estimate,
+    engine: s.time_engine, limits: s.machine_limits,
+    overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },
+    overBedModel: !!s.over_bed_model,     // true = the model itself is off the bed, not just what was printed around it
+  }
+}
+
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
 // A real hook: it owns the refs nobody else touches (SAB view, poll timer, stream accumulator) and the two
 //  worker lifetime effects; the refs shared with the other concerns (workerRef, layer range, apiRef, …) come in as deps.
@@ -22,6 +35,10 @@ export function useSlicer(deps) {
   //  Measured time share per phase (774k tri): PASS1 7% · surfaces 6% · support 48% · emission 38% -> budget 15/5/40/40.
   const supSabRef = useRef(null)     // { arr: Uint32Array(SAB, ptr, 1) } — shared once by the mt worker
   const supPollRef = useRef(0)
+  // Which support path this slice will take — the progress counter behaves too differently between them to read the
+  //  same way (see startSupPoll). A ref because the worker's message handler is installed once, on the first render.
+  const treeSupportRef = useRef(false)
+  treeSupportRef.current = deriveKernelParams(settings).support_style === 'tree'
   const stopSupPoll = () => { if (supPollRef.current) { clearInterval(supPollRef.current); supPollRef.current = 0 } }
   // G002: cancel an in-flight slice — written straight into the SAB flag (the kernel loop observes it even while the worker is blocked in wasm)
   const cancelSlice = () => { const sab = supSabRef.current; console.info('[vp-cancel] cancelSlice, hasView=', !!sab?.cancel); if (sab?.cancel) { try { Atomics.store(sab.cancel, 0, 1) } catch { sab.cancel[0] = 1 } } }
@@ -36,10 +53,19 @@ export function useSlicer(deps) {
   const startSupPoll = (N) => {
     const sab = supSabRef.current; if (!sab) return
     stopSupPoll()
-    // Total work ≈ 3.5xN (measurement-corrected constant) — capped at 95%, then snapped on the completion tick
+    // The counter means different things on the two support paths, so one scale cannot serve both.
+    //  · grid/snug run inside the tbb ParallelScope and emit ≈3.5xN items spread across the phase — real progress.
+    //  · tree runs serial and emits tens of times more, front-loaded: the count saturates any fixed scale within
+    //    seconds while the slow work emits almost none. There it can only say "still alive", not "how far".
+    //  Reading it as progress on tree is what pinned the bar at 36% for 71.5s of a 76s slice (measured on a 53.9MB
+    //  plate); rescaling alone just moved the freeze to whatever the cap was. So tree is driven by elapsed time on
+    //  an asymptote — always moving, never claiming done. A real hang is still caught by the watchdog below.
+    const tSup = Date.now()
     supPollRef.current = setInterval(() => {
-      const ticks = sab.arr[0]
-      setProgress(0.36 + 0.51 * Math.min(0.95, ticks / (3.5 * N)))
+      const frac = treeSupportRef.current
+        ? 1 - Math.exp(-(Date.now() - tSup) / 30000)
+        : sab.arr[0] / (3.5 * N)
+      setProgress(0.36 + 0.51 * Math.min(0.95, frac))
     }, 150)
   }
   // Real PASS1 progress (0 -> 35%): the kernel writes per-mille (0..1000) into the SAB counter — starts right after the slice is sent, ends on the first progress message
@@ -113,8 +139,7 @@ export function useSlicer(deps) {
     rebuildToolpaths()
     apiRef.current?.onSliced()
     setCanvasMode('preview')   // S2: switch to Preview automatically once slicing finishes
-    setStats({ layers: result.stats.layers, segments: result.stats.path_segments, filament: result.stats.filament_mm, timeSec: result.stats.time_estimate,
-               engine: result.stats.time_engine, limits: result.stats.machine_limits })
+    setStats(statsFromKernel(result.stats))
     setOverBed(!!result.stats.over_bed)
     setLayerCount(n)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([result.gcode], { type: 'text/plain' })) })

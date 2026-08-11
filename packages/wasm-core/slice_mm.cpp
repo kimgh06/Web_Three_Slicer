@@ -602,7 +602,12 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     em::val purgeByTool=em::val::array();
     for (double f : filamentPurgeByTool) purgeByTool.call<void>("push", f);
     stats.set("filament_mm_purge_by_tool", purgeByTool); }
-  stats.set("over_bed",over_bed); stats.set("wall_crossings",(double)gw.wall_crossings);
+  // Same widening as the single-material path (finish.cpp): the model verdict cannot see support/skirt/brim/tower.
+  { const GWBedOverflow over = extrusion_bed_overflow(gw, p);
+    stats.set("over_bed", over_bed || over.any());
+    stats.set("over_bed_model", over_bed);
+    stats.set("over_bed_x", over.x); stats.set("over_bed_y", over.y); stats.set("over_bed_z", over.z); }
+  stats.set("wall_crossings",(double)gw.wall_crossings);
   stats.set("extruders",p.extruder_count);
   result.set("gcode",gw.s); result.set("stats",stats); result.set("layers",layersArr);
   return result;

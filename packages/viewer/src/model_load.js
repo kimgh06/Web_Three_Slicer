@@ -1,15 +1,150 @@
+import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
+import { plateCols } from './plate_layout.js'
 
 // Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop.
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
 //  render so the values it closes over (dragOver) stay fresh.
+
+// ---- 3mf project import ------------------------------------------------------------------------------------
+// A 3mf written by a slicer (anything off MakerWorld, or any OrcaSlicer/BambuStudio "save project") carries the
+//  preset it was sliced with, the per-object state and the plate layout next to the meshes. Importing only the
+//  geometry silently drops the half of the file the author actually tuned, so it is all read — and whatever this
+//  kernel has no equivalent for is REPORTED rather than dropped in silence.
+// The per-object metadata keys that are applied rather than dropped; anything else in there is an override this
+//  viewer has no per-object settings to hold.
+const APPLIED_OBJECT_KEYS = new Set(['name', 'extruder'])
+
+// Where an imported object goes. A slicer-written 3mf stores ABSOLUTE coordinates and lays its plates out in world
+//  space, so an object's position already encodes both which plate it is on and where on it — but only under the
+//  authoring slicer's grid rule, which is not this viewer's:
+//     upstream (PartPlate.cpp compute_shape_position / plate_stride_x): origin = (col*W*1.2, -row*D*1.2),
+//       LOGICAL_PART_PLATE_GAP = 1/5, plate origin at the plate's CORNER, rows growing along -y
+//     here (plate_layout.js):      origin = (col*(W+40),  +row*(D+40)),  plate origin at the plate's CENTRE
+//  So the coordinates are decoded with upstream's rule and re-emitted with ours. Verified against a real 6-plate
+//  MakerWorld project: every one of its 17 objects decodes to inside 0..256mm of the plate it claims.
+const UPSTREAM_PLATE_GAP_RATIO = 1 / 5
+
+function groupCentredPlacements(plates, byObjectId) {
+  // Fallback: keep each plate's objects arranged relative to each other and centre the group on our plate. Used
+  //  when the absolute decode does not check out — the arrangement survives even though the bed position does not.
+  const out = []
+  for (const plate of plates) {
+    const group = plate.objectIds.map(id => byObjectId.get(id)).filter(e => e?.bbox)
+    if (!group.length) continue
+    const minX = Math.min(...group.map(e => e.bbox.minX)), maxX = Math.max(...group.map(e => e.bbox.maxX))
+    const minY = Math.min(...group.map(e => e.bbox.minY)), maxY = Math.max(...group.map(e => e.bbox.maxY))
+    for (const e of group)
+      out.push([e.id, plate.index,
+        (e.bbox.minX + e.bbox.maxX) / 2 - (minX + maxX) / 2,
+        (e.bbox.minY + e.bbox.maxY) / 2 - (minY + maxY) / 2])
+  }
+  return out
+}
+
+/** Exported for the import test — the placement rule is the part with a wrong answer worth pinning. */
+export function platePlacements(plates, loaded, bedWidth, bedDepth) {
+  const byObjectId = new Map(loaded.map(e => [e.objectid, e]))
+  if (!(bedWidth > 0 && bedDepth > 0)) return groupCentredPlacements(plates, byObjectId)
+  const cols = plateCols(plates.length)
+  const strideX = bedWidth * (1 + UPSTREAM_PLATE_GAP_RATIO)
+  const strideY = bedDepth * (1 + UPSTREAM_PLATE_GAP_RATIO)
+  const out = []
+  let decoded = true
+  for (const plate of plates) {
+    const group = plate.objectIds.map(id => byObjectId.get(id)).filter(e => e?.bbox)
+    if (!group.length) continue
+    const originX = (plate.index % cols) * strideX
+    const originY = -Math.floor(plate.index / cols) * strideY
+    for (const e of group) {
+      const localX = (e.bbox.minX + e.bbox.maxX) / 2 - originX
+      const localY = (e.bbox.minY + e.bbox.maxY) / 2 - originY
+      // The decode is only right if every object lands on the plate it says it is on. A project written under a
+      //  different grid rule would put them somewhere else entirely, and scattering objects off the bed is worse
+      //  than losing the absolute placement — so one bad object drops the whole file to the fallback.
+      if (localX < 0 || localX > bedWidth || localY < 0 || localY > bedDepth) decoded = false
+      out.push([e.id, plate.index, localX - bedWidth / 2, localY - bedDepth / 2])
+    }
+  }
+  return decoded ? out : groupCentredPlacements(plates, byObjectId)
+}
+
+function droppedFeatures(project, loaded) {
+  const dropped = []
+  if (loaded.some(o => o.paint?.seam.size)) dropped.push('seam painting')
+  if (loaded.some(o => o.paint?.fuzzy.size)) dropped.push('fuzzy-skin painting')
+  if (project.hasLayerHeightProfile) dropped.push('variable layer height')
+  if (project.hasCustomGcodePerLayer) dropped.push('per-layer custom G-code')
+  // A per-object override only counts if it names something the config schema knows — the rest of that metadata is
+  //  bookkeeping (ids, thumbnails, mesh statistics) with nothing to apply.
+  for (const meta of project.objectMeta.values()) {
+    const overrides = Object.keys(meta).filter(key => !APPLIED_OBJECT_KEYS.has(key))
+    if (overrides.length && normalizeProjectSettings(Object.fromEntries(overrides.map(k => [k, meta[k]]))).applied) {
+      dropped.push('per-object setting overrides'); break
+    }
+  }
+  return dropped
+}
+
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   } = deps
+
+  // Everything a 3mf's Metadata/*.config asks for, applied once the meshes are in the scene. `loaded` pairs each
+  //  3mf object id with the viewer object it became, which is what the per-object and per-plate state is keyed by.
+  function applyProject(project, loaded) {
+    const notices = []
+    const imported = project.settings ? normalizeProjectSettings(project.settings) : null
+    // The bed the project was authored on. Needed twice below and BOTH times before React has applied the new
+    //  settings, so it is derived here from the incoming map rather than read back off the component.
+    const bed = imported?.applied ? deriveKernelParams(imported.settings) : null
+    if (imported?.applied) {
+      // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
+      //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
+      setSettings?.(imported.settings)
+      notices.push(`${imported.applied} settings`)
+      // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
+      //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id
+      //  vector can carry blanks for a slot with no preset), so it is what the count comes from.
+      const colors = imported.settings.filament_colour
+      if (Array.isArray(colors) && colors.length) {
+        applyProjectFilaments?.(colors.map(c => (typeof c === 'string' && c.trim()) || '#888888'))
+        notices.push(`${colors.length} filaments`)
+      }
+    }
+    for (const entry of loaded) {
+      const meta = project.objectMeta.get(entry.objectid)
+      if (!meta) continue
+      const extruder = Number(meta.extruder)
+      if (Number.isInteger(extruder) && extruder >= 1) apiRef.current?.setObjectExtruder(entry.id, extruder)
+      if (meta.name) { const o = objectsRef.current.find(x => x.id === entry.id); if (o) { o.name = meta.name; o.mesh.userData.name = meta.name } }
+    }
+    // Plates last: placing an object needs the FINAL plate count, because the plate origins are laid out against it.
+    const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth)
+    let beyondLastPlate = 0
+    if (assignments.length && applyProjectPlates) {
+      const needed = Math.max(...assignments.map(([, index]) => index)) + 1
+      applyProjectPlates(needed, bed?.bed_width, bed?.bed_depth, (plateCount) => {
+        for (const [id, index, offsetX, offsetY] of assignments) {
+          // The bed tops out at MAX_PLATES, so a project with more of them keeps those objects where they landed
+          //  rather than piling them onto the last plate — and says so, because a silently merged plate prints wrong.
+          if (index < plateCount) apiRef.current?.placeObjectOnPlate(id, index, offsetX, offsetY)
+          else beyondLastPlate++
+        }
+      })
+      notices.push(`${project.plates.length} plates`)
+    }
+    const dropped = droppedFeatures(project, loaded)
+    if (beyondLastPlate) dropped.push(`${beyondLastPlate} object(s) on plates past this viewer's limit`)
+    if (notices.length || dropped.length) {
+      setSliceNotice?.(`Imported this project's ${notices.join(' and ') || 'geometry'}.`
+        + (dropped.length ? ` Not supported by this slicer, so left out: ${dropped.join(', ')}.` : ''))
+    }
+  }
 
   async function loadFiles(fileList) {
     const files = Array.from(fileList || []).filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
@@ -23,6 +158,7 @@ export function makeModelLoad(deps) {
     setCanvasMode('prepare')   // S2: a new model goes back to Prepare
     apiRef.current?.showObjects()
     let totalTri = 0
+    let anyPaint = false
     for (const f of files) {
       try {
         const __tl0 = performance.now()   // [vp-prof] load timing (temporary)
@@ -30,12 +166,25 @@ export function makeModelLoad(deps) {
         const __tl1 = performance.now()
         const objs = await loadModel(f.name, buf)          // [{name, modelPos}] (3MF/AMF may return several)
         const __tl2 = performance.now()
-        for (const ob of objs) { apiRef.current?.addObject(ob.name, ob.modelPos); totalTri += ob.modelPos.length / 9 }
+        const loaded = []
+        for (const ob of objs) {
+          const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint)
+          totalTri += ob.modelPos.length / 9
+          if (ob.paint) anyPaint = true
+          if (added && ob.objectid) loaded.push({ objectid: ob.objectid, id: added.id, paint: ob.paint, bbox: ob.bbox })
+        }
+        // Each file carries its own project; applying per file means dropping two 3mfs in at once behaves the way
+        //  loading them one after the other does, rather than silently keeping only the last one's presets.
+        if (objs[0]?.project) applyProject(objs[0].project, loaded)
         console.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
       } catch (err) { setError(`Failed to load ${f.name}: ${(err && err.message) || err}`) }
     }
     setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false })))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
+    // Imported painting only reaches the kernel through the selector, and nothing else registers one until the user
+    //  enters a brush — so a project could otherwise be sliced with its paint still sitting in JS. Registering here
+    //  is also what makes the import one-shot: it consumes the pending marks (see support_paint.js).
+    if (anyPaint) registerSelectorRef?.current?.()
   }
   function onFiles(e) { loadFiles(e.target.files); e.target.value = '' }
   function removeObject(id) { apiRef.current?.removeObject(id); setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }

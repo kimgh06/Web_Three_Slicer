@@ -160,8 +160,15 @@ void build_facade(Print &pr, PrintRegion &reg, PrintObject &po,
     //  positive quadrant [0,bed] makes TreeSupport's m_machine_border clip (intersection_ex, TreeSupport.cpp:2188/2193/2197)
     //  cut away all support on the model's negative X/Y half — the "support on one side only" bug. So the bed is placed **centered on the origin**
     //  ([-bed/2,bed/2]) and an origin-centered model fits entirely inside (a symmetric model -> symmetric support).
+    //  Stage 35: ...and the border has to follow the SHIFT, not just the centring. The caller moves the model to the
+    //  origin by its own bbox centre (support.cpp tcx/tcy) and moves the branches back afterwards, so a border left
+    //  at [-bed/2,bed/2] describes a bed centred on the MODEL — it travels with it, and a model near the bed edge
+    //  gets branches clipped against a bed that is not there (measured: support 2.6mm past a 200mm bed's edge while
+    //  the model itself fit exactly). Subtracting the shift pins the border to the real bed, which is what upstream
+    //  does with m_machine_border.translate(plate_offset - instance.shift) (TreeSupport.cpp:657).
     const double hw = P.bed_width_mm * 0.5, hd = P.bed_depth_mm * 0.5;
-    pr.m_config.printable_area.values  = { Vec2d(-hw,-hd), Vec2d(hw,-hd), Vec2d(hw,hd), Vec2d(-hw,hd) };
+    const double sx = P.model_shift_x_mm, sy = P.model_shift_y_mm;
+    pr.m_config.printable_area.values  = { Vec2d(-hw-sx,-hd-sy), Vec2d(hw-sx,-hd-sy), Vec2d(hw-sx,hd-sy), Vec2d(-hw-sx,hd-sy) };
     pr.m_config.nozzle_diameter.values = { P.nozzle_mm };
     pr.m_config.printable_height.value = P.printable_height_mm;   // WP1: BuildVolume height (previously hardcoded to 100mm)
     pr.m_config.independent_support_layer_height.value = P.independent_support_layer_height; // WP1: gap quantization switch
@@ -260,6 +267,11 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
 {
     const size_t N = object_slices_mm.size();
     if (N == 0 || layer_print_z_mm.size() != N) return {};
+
+    // generate_normal resets this through ParallelScope; the tree path opens no such scope, so it has to reset the
+    //  counter itself. Without it a tree slice inherits whatever the previous grid slice left behind and the UI
+    //  shows a stale constant instead of starting from zero.
+    tbb_stub::prog().store(0);
 
     Print pr; PrintRegion reg; PrintObject po;
     build_facade(pr, reg, po, object_slices_mm, layer_print_z_mm, P);

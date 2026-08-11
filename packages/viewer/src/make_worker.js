@@ -7,3 +7,10 @@
 export function makeSlicerWorker() {
   return new Worker(new URL('../../engine/src/slicer.worker.js', import.meta.url), { type: 'module' })
 }
+
+// 3MF parsing worker. Unlike the slicer worker this one points INTO dist/ — the viewer's `src/` is not published
+// (packages/package.json `files` ships `viewer/dist` only), so the worker is a lib entry of the viewer's own build
+// and lands beside this file. The static `new Worker(new URL(…))` pattern is what matters either way.
+export function makeParse3mfWorker() {
+  return new Worker(new URL('./parse_3mf.worker.js', import.meta.url), { type: 'module' })
+}

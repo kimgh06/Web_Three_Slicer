@@ -24,7 +24,15 @@ em::val build_stats(const SliceCtx& C, const GW& gw, const gcode_time::Result& t
     stats.set("t_emit_ms",    tw_end - tw_sup);
     stats.set("t_flush_ms", t_flush);                    // the JS boundary's share during emit (to_f32/sink/feed)
     }
-  stats.set("over_bed", over_bed);
+  // over_bed answers "would this print leave the bed", not "is the MODEL too big" — so the model verdict from
+  //  prepare_model (which also carries the height check) is widened by what the emitted extrusions actually did.
+  //  Support/skirt/brim/raft reach past the model and were invisible to the old flag; see extrusion_bed_overflow.
+  const GWBedOverflow over = extrusion_bed_overflow(gw, *C.p);
+  stats.set("over_bed", over_bed || over.any());
+  stats.set("over_bed_model", over_bed);       // the model-only verdict, kept so the two can be told apart
+  stats.set("over_bed_x", over.x);             // how far past the bed the toolpaths reach, mm (0 = inside)
+  stats.set("over_bed_y", over.y);
+  stats.set("over_bed_z", over.z);   // emitted top layer past printable_height (raft included), mm
   // Upstream time estimate results
   stats.set("time_estimate", te.total_s);                   // total estimated print time (seconds)
   stats.set("first_layer_time", te.first_layer_s);

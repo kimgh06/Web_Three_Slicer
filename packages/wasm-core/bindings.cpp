@@ -94,6 +94,25 @@ static void selector_bucket_fill(int facet, float hx,float hy,float hz, float an
 static void selector_bucket_fill_erase(int facet, float hx,float hy,float hz, float angle_deg, bool propagate) {
   selector_bridge::bucket_fill(facet, hx,hy,hz, angle_deg, propagate, selector_bridge::STATE_NONE);
 }
+// 3mf painting import. The hex strings arrive as ONE newline-joined blob rather than an array of strings on
+// purpose: embind cannot pass a std::vector<std::string> without registering a vector type, and the JS side already
+// has to build the parallel facet-index array — a single join() there costs one allocation and keeps the binding
+// layer free of an extra registered type nothing else would use.
+static int selector_import_paint(em::val facets_val, std::string hex_joined) {
+  std::vector<int> facets = em::convertJSArrayToNumberVector<int>(facets_val);
+  if (facets.empty()) return 0;
+  std::vector<std::string> hex;
+  hex.reserve(facets.size());
+  for (size_t start = 0; start <= hex_joined.size(); ) {
+    const size_t end = hex_joined.find('\n', start);
+    if (end == std::string::npos) { hex.push_back(hex_joined.substr(start)); break; }
+    hex.push_back(hex_joined.substr(start, end - start));
+    start = end + 1;
+  }
+  // A length mismatch means the two halves of the pair came apart somewhere; the bridge rejects it rather than
+  // pairing facets with the wrong trees, and that is exactly the outcome wanted here too.
+  return selector_bridge::apply_paint_hex(facets, hex);
+}
 static void selector_clear() { selector_bridge::clear(); }
 static int  selector_facet_count() { return selector_bridge::facet_count(); }
 static int  selector_painted_count_state(int state) { return selector_bridge::painted_count(state); }
@@ -135,6 +154,7 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("selector_project_counts", &selector_project_counts); // debug: number of projected polygons per z
   // State-addressed twins: 1=ENFORCER(Extruder1), 2=BLOCKER(Extruder2), 3..16=Extruder3..16 — MMU painting.
   em::function("selector_paint_state", &selector_paint_state);
+  em::function("selector_import_paint", &selector_import_paint);   //  load a 3mf's paint_color/paint_supports hex
   em::function("selector_erase", &selector_erase);            //  the eraser: writes NONE, no state argument to coerce
   em::function("selector_painted_count_state", &selector_painted_count_state);
   em::function("selector_overlay_state", &selector_overlay_state);

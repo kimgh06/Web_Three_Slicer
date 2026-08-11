@@ -213,13 +213,34 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
+    // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
+    //  meets the bed plane. A camera looking exactly along the plane never meets it — then there is no answer.
+    const _bedPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), _bedHit = new THREE.Vector3()
+    const plateUnderPointer = (hit) => {
+      if (hit) { hit.updateMatrixWorld(true); const p = new THREE.Vector3().setFromMatrixPosition(hit.matrixWorld); return plateOfXZ(p.x, p.z) }
+      raycaster.setFromCamera(pointer, camera)
+      return raycaster.ray.intersectPlane(_bedPlane, _bedHit) ? plateOfXZ(_bedHit.x, _bedHit.z) : null
+    }
+    // Press position + the plate under it, resolved on release: a left-drag over the beds is how you orbit, so
+    //  switching plates on press would change plate every time the camera moves. Only a press that does not travel
+    //  counts as a click.
+    let downAt = null, downPlate = null
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
       if (canvasModeRef.current === 'preview') return   // S2: no gizmo/painting in preview
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
-      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
+      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick()
+      downAt = { x: ev.clientX, y: ev.clientY }; downPlate = plateUnderPointer(hit)
+      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
-    const onUp = () => {
+    const onUp = (ev) => {
+      // A press that stayed put is a click: select the plate it landed on. 4px of slop covers the wobble of a
+      //  physical click without letting an orbit drag through.
+      if (downAt) {
+        const still = Math.abs((ev?.clientX ?? downAt.x) - downAt.x) < 4 && Math.abs((ev?.clientY ?? downAt.y) - downAt.y) < 4
+        if (still && downPlate != null) deps.onPlateClicked?.(downPlate)
+        downAt = null; downPlate = null
+      }
       if (!paintDrawingRef.current) return
       paintDrawingRef.current = false; orbit.enabled = true
       if (paintFrame) { cancelAnimationFrame(paintFrame); flushPaint() }   // the last position is the one the user aimed at
@@ -333,7 +354,14 @@ export function useThreeScene(deps) {
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
       refreshCursor: () => applyCursor(),                                        // keeps the cursor hint in sync when the paint mode changes
       detachTransform: () => { selected = null; transform.detach(); paint() },   // stage 20: release the gizmo when entering painting
-      addObject: (name, modelPos) => spawnMesh(name, bakeLocal(modelPos).localPos),
+      // `paint` is a 3mf's painted facets ({color,supports,…}: Map(localTriangleIndex -> split-tree hex)), held on the
+      //  object until something registers the selector — only then is the merged facet numbering they must be rebased
+      //  onto known. bakeLocal is a per-vertex transform, so the triangle ORDER the indices refer to survives it.
+      addObject: (name, modelPos, paint = null) => {
+        const added = spawnMesh(name, bakeLocal(modelPos).localPos)
+        if (paint) { const o = objectsRef.current.find(x => x.id === added.id); if (o) o.paint = paint }
+        return added
+      },
       // ---- Shortcut support (duplicate/nudge/rotate/zoom-to) ----
       getSnapshot: (id) => {           // snapshot for copy/duplicate — localPos is immutable, so the reference is shared
         const o = objectsRef.current.find(x => x.id === id); if (!o) return null
@@ -370,6 +398,17 @@ export function useThreeScene(deps) {
         const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld)
         return plateOfXZ(wp.x, wp.z)
       },
+      /** Put an object on plate `plateIdx` at an explicit offset from that plate's centre, in MODEL mm.
+       *  This is how an imported project's layout is restored: spawnMesh placed the object with the side-by-side
+       *  placement cursor (it has no idea a project is being loaded) and bakeLocal already centred its geometry, so
+       *  the author's arrangement only exists in the offsets the importer computes — nothing here can recover it.
+       *  Model y maps to three -z, the same convention buildMergedSTL uses in the other direction.
+       *  Requires plateCountRef to already hold the final plate count: platePos() lays plates out against it. */
+      placeObjectOnPlate: (id, plateIdx, offsetModelX, offsetModelY) => {
+        const o = objectsRef.current.find(x => x.id === id); if (!o) return
+        const origin = platePos(plateIdx)
+        o.mesh.position.set(origin.x + offsetModelX, o.mesh.position.y, origin.z - offsetModelY)
+      },
       // When plateIdx != null, only objects on that plate are used and coordinates are converted to plate-local (three-x -= PX) (keeps the stage-28 contract).
       buildMergedSTL: (plateIdx = null) => {
         let arr = objectsRef.current.filter(o => o.visible !== false)
@@ -387,9 +426,19 @@ export function useThreeScene(deps) {
         //  how many faces. Moving one does not appear here — which is the point, because a move must not renumber
         //  anything and so must not cost the paint.
         const topology = []
+        // Painting imported from a 3mf, rebased from each object's own facet numbering onto the merged one. It has to
+        //  happen HERE and not at load: which objects are merged, and in what order, is decided by this function
+        //  (visibility, plate, the extruder sort below) and the kernel's selector only ever sees the result.
+        const paintImport = { color: { facets: [], hex: [] }, supports: { facets: [], hex: [] } }
         for (const o of sorted) {
           const ext = o.extruder || 1
           topology.push(`${o.id}:${ext}:${o.localPos.length / 9}`)
+          // triCount is this object's base facet index — it is only advanced at the bottom of the loop.
+          if (o.paint) for (const slot of ['color', 'supports'])
+            for (const [localTri, hex] of o.paint[slot]) {
+              paintImport[slot].facets.push(triCount + localTri)
+              paintImport[slot].hex.push(hex)
+            }
           if (tools.length === 0) tools.push(ext - 1)
           else if (ext - 1 !== tools[tools.length - 1]) { splits.push(triCount); tools.push(ext - 1) }
           if (ext >= 2 && split === 0) split = triCount   // start boundary of ext2 (the pre-N-way scalar form)
@@ -429,9 +478,20 @@ export function useThreeScene(deps) {
           if (out[i] < minX) minX = out[i]; if (out[i] > maxX) maxX = out[i]
           if (out[i + 1] < minY) minY = out[i + 1]; if (out[i + 1] > maxY) maxY = out[i + 1]
         }
+        // Ready for the kernel's selector_import_paint: a facet-index array and the matching hex strings, joined
+        //  with the newline that binding splits on. A slot with nothing painted is null, not an empty pair.
+        const paint = {}
+        for (const slot of ['color', 'supports'])
+          paint[slot] = paintImport[slot].facets.length
+            ? { facets: Int32Array.from(paintImport[slot].facets), hex: paintImport[slot].hex.join('\n') }
+            : null
         return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
-                 topology: topology.join('|'), minX, minY, maxX, maxY }
+                 topology: topology.join('|'), minX, minY, maxX, maxY, paint }
       },
+      /** Drop the pending 3mf painting after it has been handed to the kernel — the import is one-shot, and a
+       *  second one would resurrect marks the user has since erased. */
+      clearPaintImport: () => { for (const o of objectsRef.current) o.paint = null },
+      hasPaintImport: () => objectsRef.current.some(o => o.paint),
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes

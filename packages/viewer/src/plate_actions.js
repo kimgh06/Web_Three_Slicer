@@ -1,6 +1,7 @@
 import { deriveKernelParams } from 'three-slicer/settings'
 import { roleRatios } from './toolpath_segments.js'
 import { MAX_PLATES } from './plate_layout.js'
+import { statsFromKernel } from './use_slicer.js'
 
 // Per-plate slicing/caching/export (stage 29-2) + the plate tabs (add/delete/select).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -47,8 +48,7 @@ export function makePlateActions(deps) {
     }
     apiRef.current?.onSliced()
     setCanvasMode('preview')
-    setStats({ layers: r.stats.layers, segments: r.stats.path_segments, filament: r.stats.filament_mm, timeSec: r.stats.time_estimate,
-               engine: r.stats.time_engine, limits: r.stats.machine_limits })
+    setStats(statsFromKernel(r.stats))
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
   }
@@ -62,12 +62,20 @@ export function makePlateActions(deps) {
   //  Browsers throttle back-to-back downloads, so the files are spaced out.
   async function exportAllGcode() {
     setSliceMenu(false)
-    const done = Object.entries(plateResultsRef.current)
+    const sliced = Object.entries(plateResultsRef.current)
       .filter(([, r]) => r && !r.error && r.gcode)
       .sort((a, b) => Number(a[0]) - Number(b[0]))
-    if (!done.length) { setError('No slice results to export — slice first'); return }
+    // Same rule the single-plate export follows, applied per plate: a plate whose model leaves the printable
+    //  volume is skipped rather than silently written, and the notice names it so it is not just missing.
+    const done = sliced.filter(([, r]) => !r.stats?.over_bed)
+    const skipped = sliced.length - done.length
+    if (!done.length) {
+      setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
+      return
+    }
     for (const [i, r] of done) { downloadGcode(r.gcode, `plate_${Number(i) + 1}.gcode`); await _sleep(350) }
-    setSliceNotice(`Exported G-code for ${done.length} plate(s)`)
+    setSliceNotice(`Exported G-code for ${done.length} plate(s)`
+      + (skipped ? ` — skipped ${skipped} that extend beyond the bed` : ''))
   }
   async function onSlice(scope = 'current') {
     setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
@@ -78,7 +86,14 @@ export function makePlateActions(deps) {
       let sliced = 0, anyEconomy = false, anyClassic = false; const failed = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
-        if (i === selectedPlateRef.current) syncPaintSelector?.(merged)
+        // Follow the work: highlighting the plate about to be cut turns its border green, so a run over six plates
+        //  shows WHICH one is busy instead of one progress number with no place attached to it.
+        //  Deliberately NOT selectPlate(): in Preview that also swaps the result view, which would mean tearing the
+        //  toolpaths down and back up once per plate — and showing an empty one for every plate not yet sliced.
+        selectedPlateRef.current = i; setSelectedPlate(i)
+        //  Compared against the plate selected when the run STARTED, not the one selection now points at — the line
+        //  above moves that every iteration, and the brush painted the mesh of the original one.
+        if (i === idx0) syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
           const { r, economy, classicWalls } = await runSlice(merged)
@@ -93,7 +108,13 @@ export function makePlateActions(deps) {
       else { setError(''); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('Memory pressure — some plates finished in economy mode (no preview, G-code is fine)')
       else if (anyClassic) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
-      showPlateResult(plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0])
+      // The run walked the selection across every plate; put it back where the user left it (or on the one plate
+      //  that actually produced a result, which is what gets shown).
+      //  Moved the same way as inside the loop rather than through selectPlate, because in Preview that would run
+      //  showPlateResult a second time on top of the call below.
+      const landOn = plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0]
+      selectedPlateRef.current = landOn; setSelectedPlate(landOn); placeXRef.current = 0
+      showPlateResult(landOn)
     } else {
       const __tm0 = performance.now()   // [vp-prof] preprocessing timing (temporary)
       const merged = apiRef.current?.buildMergedSTL(idx0)

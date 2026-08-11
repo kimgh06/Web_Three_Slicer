@@ -15,6 +15,7 @@ import { makePlateActions } from './plate_actions.js'
 import { makeModelLoad } from './model_load.js'
 import { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
 import { makeObjectActions } from './object_actions.js'
+import { bedOverflow, overflowText } from './bed_bounds.js'
 // Stage 27: the desktop-style shell, split into presentational components (one file per panel).
 import TopBar from './ui/TopBar.jsx'
 import GizmoRail from './ui/GizmoRail.jsx'
@@ -90,6 +91,7 @@ export default function Viewport({
   const paintOverlayRef = useRef(null)  // Mesh[] — one per painted selector state (1..16)
   const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
   const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
+  const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
   const plateResultsRef = useRef({})    // {plateIdx: sliceResult} cache
   const plateOffsetsRef = useRef({})    // {plateIdx: {offX, offZ}} toolpath display offset (the plate's own origin)
@@ -109,6 +111,9 @@ export default function Viewport({
   const [error, setError] = useState('')
   const [stats, setStats] = useState(null)
   const [overBed, setOverBed] = useState(false)
+  // The same verdict as overBed, but reached without slicing: recomputed whenever the plate's contents move, so a
+  //  model dragged off the bed says so immediately instead of after the next slice. Null = everything fits.
+  const [bedOver, setBedOver] = useState(null)
   const [layerCount, setLayerCount] = useState(0)
   const [segCount, setSegCount] = useState(0)   // stage 24: number of rendered segments (instances)
   const [plateCount, setPlateCount] = useState(1)       // stage 29-2: plate count
@@ -206,7 +211,10 @@ export default function Viewport({
     //  the selector EXISTING, not on paint mode being on: in paint mode the gizmo is detached, so every real move
     //  happens with the panel closed — a paint-mode gate would never fire. Through a ref because the paint module
     //  is built further down and this handler is installed once.
-    onTransformCommitted: () => { if (selectorGeomRef.current) registerSelectorRef.current?.() },
+    onTransformCommitted: () => { if (selectorGeomRef.current) registerSelectorRef.current?.(); checkBed() },
+    // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
+    //  ref because the scene installs its handlers once and makePlateActions is built further down.
+    onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
     onTowerMoved: (x, y) => {
       const o = apiRef.current?.platePos?.(selectedPlateRef.current) ?? { x: 0, z: 0 }
       setSettings(s => ({ ...s,
@@ -218,9 +226,21 @@ export default function Viewport({
   // Refresh the bed grid from the value derived from settings (printable_area)
   const kp = deriveKernelParams(settings)
   // The bed size the tower drag needs, in a ref because the handler is installed once by the scene effect.
-  const kpRef = useRef({ bedW: 200, bedD: 200 })
-  kpRef.current = { bedW: kp.bed_width, bedD: kp.bed_depth }
+  const kpRef = useRef({ bedW: 200, bedD: 200, bedH: 0 })
+  kpRef.current = { bedW: kp.bed_width, bedD: kp.bed_depth, bedH: kp.bed_height }
   useEffect(() => { apiRef.current?.setPlates(plateCount, kp.bed_width, kp.bed_depth, selectedPlate) }, [kp.bed_width, kp.bed_depth, plateCount, selectedPlate])
+
+  // Re-answer "does this fit on the bed?" for the plate on screen. Called from every path that can move, add or
+  //  remove something — a gizmo drop, a keyboard nudge, a load/delete, a plate switch, a bed resize. Reads refs
+  //  only, because the scene installs its handlers once and would otherwise capture the first render's values.
+  function checkBed() {
+    const api = apiRef.current; if (!api) { setBedOver(null); return }
+    const plate = selectedPlateRef.current
+    const { bedW, bedD, bedH } = kpRef.current
+    const origin = api.platePos?.(plate) ?? { x: 0, z: 0 }
+    setBedOver(bedOverflow(api.modelBounds?.(plate), origin, bedW, bedD, bedH))
+  }
+  useEffect(checkBed, [objects.length, selectedPlate, kp.bed_width, kp.bed_depth, kp.bed_height])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The tower stand-in follows the same rules the slicer applies: a tower exists with two filaments, its footprint
   //  is the real tower's width or the ring's 15mm, and an unset position means "beside the model". Recomputed here
@@ -310,11 +330,42 @@ export default function Viewport({
     //  plate — that is the mesh the brush painted — and only when a selector exists at all.
     syncPaintSelector: (merged) => { if (selectorGeomRef.current) registerSelectorRef.current?.(merged) },
   })
+  selectPlateRef.current = selectPlate
+
+  // Adopt an imported project's filament list. This has to run BEFORE the per-object extruder assignment: a real
+  //  MakerWorld project routinely uses six or eight of them, and setObjectExtruder colours an object by looking its
+  //  extruder up in this array — with the default two cards, every object above T2 would stay T1-coloured and the
+  //  filament panel would not show the materials the project actually names.
+  const applyProjectFilaments = (colors) => {
+    const next = colors.slice(0, MAX_PAINT_EXTRUDERS)
+    if (!next.length) return
+    extruderColorsRef.current = next
+    setExtruderColors(next)
+    apiRef.current?.recolorObjects()
+    applyViewColors()
+  }
+
+  // Grow the bed to the plate count an imported 3mf project needs, then let it place its objects. setPlates is
+  //  called directly as well as through setPlateCount because it writes plateCountRef and plateBWRef/plateBDRef
+  //  SYNCHRONOUSLY, and those are what the plate origins are computed from — going through React state alone would
+  //  place every object against the OLD grid and let the effect below re-lay the plates underneath them.
+  // The bed must come from the PROJECT, not from `kp`: kp is derived from the settings of the render this callback
+  //  was created in, and setSettings has not landed yet. Getting that wrong is not a rounding error — the default
+  //  bed is 200mm and a Bambu project is 256mm, so the grid step moved 240 -> 296 right after placement and every
+  //  plate past the first drifted by 56mm per column (plate 2 by 112mm), which is exactly what it looked like.
+  const applyProjectPlates = (needed, bedWidth, bedDepth, place) => {
+    const n = Math.min(MAX_PLATES, Math.max(plateCountRef.current, needed))
+    const width = bedWidth > 0 ? bedWidth : kp.bed_width
+    const depth = bedDepth > 0 ? bedDepth : kp.bed_depth
+    apiRef.current?.setPlates(n, width, depth, selectedPlateRef.current)
+    setPlateCount(n)
+    place(n)
+  }
 
   // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop ----
   const { onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   })
@@ -416,7 +467,7 @@ export default function Viewport({
     apiRef.current?.setOverhang(overhangOn && canvasMode === 'prepare' ? overhangAngle : null)
   }, [overhangOn, overhangAngle, canvasMode, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
   // Stage 27 S4: filament colors/count + per-object print toggle + painting gizmo mode
-  function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
+  function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))); checkBed() }
   function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); applyViewColors(); return n }) }
   function addFilament() { setExtruderColors(cs => { if (cs.length >= MAX_PAINT_EXTRUDERS) return cs; const n = [...cs, DEFAULT_FILAMENT_COLORS[cs.length] || '#888888']; extruderColorsRef.current = n; return n }) }
   function removeFilament(index) {
@@ -495,7 +546,7 @@ export default function Viewport({
     setGizmo,
     cancelTool: () => { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() },
     rotateSelected: (rad) => apiRef.current?.rotateSelectedY(rad),
-    nudgeSelected: (dx, dy) => apiRef.current?.nudgeSelected(dx, dy),
+    nudgeSelected: (dx, dy) => { apiRef.current?.nudgeSelected(dx, dy); checkBed() },
     toggleHelp: () => setShowHelp(v => !v),
   })
 
@@ -534,7 +585,16 @@ export default function Viewport({
     changes: (lastResult.gcode?.match(/^T\d+$/gm) ?? []).length,
     x: window.__vpParams?.prime_tower_x, y: window.__vpParams?.prime_tower_y,
   } : null
-  const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} extruderColors={extruderColors}
+  // Once a slice exists the kernel's measurement is the better one — it was taken on the toolpaths that were
+  //  actually emitted, so it counts support/skirt/brim, which the viewer's model-bbox check cannot see. Before the
+  //  first slice there is nothing to read, and the viewer's own pre-slice measure is all there is.
+  const slicedOver = stats?.overBedBy && (stats.overBedBy.x > 0 || stats.overBedBy.y > 0 || stats.overBedBy.z > 0)
+    ? stats.overBedBy : null
+  const bedOverShown = slicedOver ?? bedOver
+  const bedOverText = overflowText(bedOverShown)
+
+  const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} overBedText={bedOverText}
+    overBedModel={stats?.overBedModel !== false} extruderColors={extruderColors}
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.
@@ -602,6 +662,14 @@ export default function Viewport({
               paintTool={paintTool} onPaintTool={setPaintTool} brushCursor={brushCursor} onBrushCursor={setBrushCursor}
               fillAngle={fillAngle} onFillAngle={setFillAngle}
               onBrushRadius={v => { setBrushRadius(v); brushRadiusRef.current = v }} />
+          )}
+
+          {/* Over-bed warning while arranging — the answer the stats card only gives after a slice */}
+          {ok && canvasMode === 'prepare' && bedOver && showPanel('bedWarn') && (
+            <div className="bed-warn" data-testid="bed-warn"
+                 title="The printer cannot reach outside its printable volume. Move or rescale the model to export its G-code.">
+              ⚠ Beyond the bed by {overflowText(bedOver)}
+            </div>
           )}
 
           {/* Preview stats card, bottom left */}
@@ -680,7 +748,11 @@ export default function Viewport({
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
-                onExportAll={exportAllGcode} gcodeUrl={gcodeUrl} />
+                onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
+                bedWarning={bedOver || overBed
+                  ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the bed`
+                    + (bedOverText ? ` by ${bedOverText}` : '')
+                  : ''} />
             )}
           </aside>
         )}

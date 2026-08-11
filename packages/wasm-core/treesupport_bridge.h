@@ -60,6 +60,11 @@ struct Params {
     double base_pattern_spacing_mm = 2.5;  // support_base_pattern_spacing
     double bed_width_mm            = 200.0;
     double bed_depth_mm            = 200.0;
+    // How far the caller shifted the model to bring it near the origin (support.cpp's tcx/tcy). The bed has to make
+    //  the SAME move, or the border the branches are clipped against follows the model instead of staying put.
+    //  Upstream does exactly this: m_machine_border.translate(plate_offset - instance.shift) (TreeSupport.cpp:657).
+    double model_shift_x_mm        = 0.0;
+    double model_shift_y_mm        = 0.0;
     double printable_height_mm     = 250.0; // WP1: -> PrintConfig::printable_height (BuildVolume height)
     // WP2: keys used only by the normal (grid/snug) support port — defaults identical to the upstream config defaults
     std::string normal_style       = "grid";  // grid|snug → smsGrid|smsSnug

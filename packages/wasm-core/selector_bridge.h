@@ -4,6 +4,7 @@
 // painted enforcer/blocker its with treesupport_bridge (both port world). Mesh coords are the kernel's
 // transformed coords (XY-centered, z-min=0) so facet indices + hit points line up with the kernel slice.
 #pragma once
+#include <string>
 #include <vector>
 #include <utility>
 
@@ -66,6 +67,15 @@ void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool 
 
 // Overlay triangles for the painted state: flat x,y,z per vertex, 3 vertices per triangle (three.js render).
 std::vector<float> overlay(int state);
+
+// Load painting straight out of a 3mf. Upstream stores a painted facet as a hex string on the <triangle> tag
+// (Format/bbs_3mf.cpp: paint_color / paint_supports), each being that facet's split tree written as a bitstream —
+// the SAME encoding TriangleSelector::serialize() produces, so the marks arrive as a full sub-triangle tree rather
+// than one state per source facet. `facets[i]` is the facet index `hex[i]` belongs to; the pair arrays must be the
+// same length, and the facet numbering must be the one this selector was constructed with.
+// REPLACES every existing mark (upstream's deserialize resets first) — this is an import, not a merge.
+// Returns how many of the given facets were actually loaded; 0 means nothing was applied and the selector is untouched.
+int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::string>& hex);
 
 // Project the painted facets of one state to per-layer polygons (mm rings) at the given slice-z's,
 // via slice_mesh_slabs — the grid/tree_lite kernel path consumes these. one entry per z.

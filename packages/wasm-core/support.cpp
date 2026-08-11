@@ -82,6 +82,8 @@ void support_run(SliceCtx& C) {
     tsp.interface_spacing_mm=p.support_interface_spacing;
     tsp.base_pattern_spacing_mm=p.support_base_pattern_spacing;
     tsp.bed_width_mm=p.bed_width; tsp.bed_depth_mm=p.bed_depth;
+    // The rings below were shifted by −tcx/−tcy; the bed must be shifted with them or the clip window follows the model.
+    tsp.model_shift_x_mm=tcx; tsp.model_shift_y_mm=tcy;
     tsp.printable_height_mm=p.printable_height;                     // WP1: BuildVolume height (previously hardcoded to 100mm)
     tsp.resolution_mm=p.gcode_resolution;   // stage 33: path simplification tolerance for the tree path (the upstream print_config "resolution")
     std::vector<treesupport_bridge::LayerOut> tlayers;

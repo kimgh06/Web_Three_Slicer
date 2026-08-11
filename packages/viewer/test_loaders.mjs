@@ -15,7 +15,7 @@ const cases = [
 let ran = 0
 for (const [path, minObjs, minTris] of cases) {
   if (!existsSync(path)) { console.log(`skip (missing): ${path}`); continue }
-  const objs = parse3MF(readFileSync(path), 'x')
+  const objs = await parse3MF(readFileSync(path), 'x')
   const tris = objs.reduce((a, o) => a + o.tris.length / 9, 0)
   assert.ok(objs.length >= minObjs, `${path}: objects ${objs.length} < ${minObjs}`)
   assert.ok(tris >= minTris, `${path}: triangles ${tris} < ${minTris}`)
