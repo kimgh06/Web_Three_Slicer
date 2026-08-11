@@ -10,7 +10,7 @@ import { computeColors } from './toolpath_views.js'
 export function makeToolpathView(deps) {
   const {
     three, plateTpRef, toolpathRef, segDataRef, layersDataRef, plateResultsRef, plateOffsetsRef,
-    lineWidthRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef, selectedPlateRef,
+    lineWidthRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef, selectedPlateRef, extruderColorsRef,
     settings, setSegCount, setColorRange, setRoleLegend,
   } = deps
 
@@ -67,6 +67,8 @@ export function makeToolpathView(deps) {
     const S = (k, def) => { const v = settingRaw(settings, k); const n = parseFloat(v); return Number.isFinite(n) ? n : def }
     const ow = S('outer_wall_speed', 60)
     return {
+      // The filament palette, so the Filament view can paint each tool in its own colour rather than a stand-in.
+      toolColors: extruderColorsRef?.current ?? [],
       speedByType: {
         1: ow, 2: S('sparse_infill_speed', 40), 3: S('internal_solid_infill_speed', 45),
         4: ow, 5: S('support_speed', 35), 6: S('support_speed', 35), 7: S('gap_infill_speed', 30),

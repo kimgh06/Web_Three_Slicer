@@ -1,7 +1,11 @@
 import React from 'react'
+import { PaintToolRow, isFillTool } from './MaterialPaintPanel.jsx'
 
 // Floating brush panel shown while support painting is active.
-export default function PaintPanel({ paintMode, onPaintMode, onClear, brushRadius, onBrushRadius, paintCounts }) {
+export default function PaintPanel({
+  paintMode, onPaintMode, onClear, brushRadius, onBrushRadius, paintCounts,
+  paintTool, onPaintTool, brushCursor, onBrushCursor, fillAngle, onFillAngle,
+}) {
   return (
     <div className="brush-panel" data-testid="paint-tools">
       <div className="bp-title">Support painting</div>
@@ -11,11 +15,17 @@ export default function PaintPanel({ paintMode, onPaintMode, onClear, brushRadiu
         <button onClick={onClear} data-testid="paint-clear" title="Clear every painted enforcer/blocker area">Clear</button>
         <button onClick={() => onPaintMode('off')} data-testid="paint-off" title="Leave painting mode (Esc)">Close</button>
       </div>
-      <label className="bp-radius">Brush radius {brushRadius}mm
-        <input type="range" min="1" max="15" step="0.5" value={brushRadius}
-          onChange={e => onBrushRadius(parseFloat(e.target.value))} data-testid="brush-radius" />
-      </label>
-      <div className="muted bp-counts" data-testid="paint-counts">enforcer {paintCounts.enf} · blocker {paintCounts.blk} · drag over the model to paint</div>
+      {/* The same tools the material panel offers: both brushes write to one selector, so the fills reach enforcer
+          and blocker marks without a second implementation. */}
+      <PaintToolRow tool={paintTool} onTool={onPaintTool} cursor={brushCursor} onCursor={onBrushCursor}
+        fillAngle={fillAngle} onFillAngle={onFillAngle} />
+      {!isFillTool(paintTool) && (
+        <label className="bp-radius">Brush radius {brushRadius}mm
+          <input type="range" min="1" max="15" step="0.5" value={brushRadius}
+            onChange={e => onBrushRadius(parseFloat(e.target.value))} data-testid="brush-radius" />
+        </label>
+      )}
+      <div className="muted bp-counts" data-testid="paint-counts">enforcer {paintCounts.enf} · blocker {paintCounts.blk} · {isFillTool(paintTool) ? 'click the model to fill' : 'drag over the model to paint'}</div>
     </div>
   )
 }

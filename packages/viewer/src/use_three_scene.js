@@ -24,7 +24,7 @@ function bakeLocal(modelPos) {
 export function useThreeScene(deps) {
   const {
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
-    canvasModeRef, paintModeRef, brushRadiusRef, paintXformRef, extruderColorsRef,
+    canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
   } = deps
 
@@ -121,8 +121,29 @@ export function useThreeScene(deps) {
       toPointer(ev); const hit = pickHit(); if (!hit || hit.faceIndex == null) return
       const toK = v => [v.x - X.cx, -v.z - X.cy, v.y - X.minz]   // viewer(Y-up) -> STL(Z-up) -> kernel
       const hk = toK(hit.point), ck = toK(camera.position)
+      // The tool travels with the stroke rather than being stamped later: a fill takes an angle where a brush takes
+      //  a radius, so the message has to say which of the two it is at the point the hit is taken. `radius`/`cx..cz`
+      //  ride along for the brush; the worker's fill dispatch simply does not read them.
+      const brush = paintToolRef?.current ?? { tool: 'brush', cursor: 'sphere', angle: 30 }
       workerRef.current?.postMessage({ cmd:'paint', facet:hit.faceIndex, hx:hk[0],hy:hk[1],hz:hk[2],
-        cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer' })
+        cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer',
+        tool: brush.tool, cursor: brush.cursor, angle: brush.angle })
+    }
+    // A pointermove can fire several times per frame (and far above 60Hz on a high-rate mouse), and each one costs a
+    //  worker round trip plus an overlay rebuild. Coalescing to one stroke per animation frame keeps the brush at the
+    //  cursor without queueing work the frame cannot show anyway — the dropped samples are between two positions the
+    //  same brush radius already covers.
+    let pendingPaintEvent = null, paintFrame = 0
+    const flushPaint = () => { paintFrame = 0; const ev = pendingPaintEvent; pendingPaintEvent = null; if (ev) paintAt(ev) }
+    const queuePaint = ev => {
+      pendingPaintEvent = ev
+      if (!paintFrame) paintFrame = requestAnimationFrame(flushPaint)
+    }
+    // A fill is one click: it selects by mesh topology, so repeating it for every pointermove of a drag would redo
+    //  the same flood over the same facets. The brush is the opposite — dragging is how it covers an area.
+    const paintToolIsFill = () => {
+      const tool = paintToolRef?.current?.tool
+      return tool === 'smart' || tool === 'bucket' || tool === 'triangle'
     }
     // Cursor hints: crosshair in paint mode, pointer when hovering an object, default otherwise (camera control).
     const applyCursor = () => {
@@ -133,7 +154,7 @@ export function useThreeScene(deps) {
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
-      if (paintModeRef.current !== 'off') { if (paintDrawingRef.current) paintAt(ev); return }
+      if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
@@ -141,7 +162,11 @@ export function useThreeScene(deps) {
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
-    const onUp = () => { if (paintDrawingRef.current) { paintDrawingRef.current = false; orbit.enabled = true } }
+    const onUp = () => {
+      if (!paintDrawingRef.current) return
+      paintDrawingRef.current = false; orbit.enabled = true
+      if (paintFrame) { cancelAnimationFrame(paintFrame); flushPaint() }   // the last position is the one the user aimed at
+    }
     // Double click: on an object = zoom to it, on empty space = clear the selection (3D app convention)
     const onDblClick = ev => {
       if (ev.button !== 0 || canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
@@ -151,7 +176,9 @@ export function useThreeScene(deps) {
     }
     // Wheel: adjusts the brush radius in paint mode (upstream GLGizmoPainterBase convention) — otherwise plain OrbitControls zoom.
     const onWheel = ev => {
-      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview') return
+      // A fill has no radius, so the wheel has nothing to adjust — it goes back to being the zoom, rather than
+      //  being swallowed to change a number the panel is not even showing.
+      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview' || paintToolIsFill()) return
       ev.preventDefault(); ev.stopPropagation()
       const v = Math.min(15, Math.max(1, brushRadiusRef.current + (ev.deltaY < 0 ? 0.5 : -0.5)))
       brushRadiusRef.current = v; setBrushRadius(v)
@@ -326,7 +353,10 @@ export function useThreeScene(deps) {
           for (let k = 0; k < 3; k++) { dvw.setFloat32(off, out[vi++], true); dvw.setFloat32(off + 4, out[vi++], true); dvw.setFloat32(off + 8, out[vi++], true); off += 12 }
           dvw.setUint16(off, 0, true); off += 2
         }
-        return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3 }
+        // Half extents of the centered content, so the slicer side can place the prime tower NEXT to the model
+        //  rather than at the bed-corner default (measured: model at the bed centre, tower 90mm away at (10,10)).
+        return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
+                 halfW: (mxx - mnx) / 2, halfD: (mxy - mny) / 2 }
       },
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)

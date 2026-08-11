@@ -6,6 +6,12 @@
 // This file owns the CPU side only: kernel layers -> the PathVertex stream the GPU consumes.
 import { TYPE_COLOR, TYPE_LABEL, packColor } from './toolpath_palette.js'
 
+// The stride-8 role field (paths[k+3]) carries the printing extruder alongside the role: value = role + tool * 16.
+//  Roles only ever run 0..11, so the spare high bits are used instead of widening the stride to 9 — the segment
+//  stream is the largest array the viewer holds, and a 9th float would cost +12.5% of it for one small integer.
+//  Output sliced before this encoding existed is entirely below 16, so it decodes to its own role and tool 0.
+const ROLE_MASK = 15, TOOL_SHIFT = 4
+
 // ── CPU data preparation (pure functions — testable under node) ───────────────
 //  Kernel layers[{z,paths(stride8),widths[]}] -> PathVertex stream + segment indices.
 //  Follows the upstream extract_pos_and_or_hwa: position.z -= 0.5*height, angle = atan2(prev x this, prev · this).
@@ -19,36 +25,39 @@ export function buildSegmentData(layers, defaultLineWidth) {
   for (let i = 0; i < L; i++) { const z = layers[i].z; layerH[i] = Math.max(0.02, i === 0 ? z : z - layers[i - 1].z) }
 
   // PathVertex stream (raw)
-  const vx = [], vy = [], vz = [], vh = [], vw = [], vtype = [], vlayer = []
+  const vx = [], vy = [], vz = [], vh = [], vw = [], vtype = [], vtool = [], vlayer = []
   const realNext = []          // realNext[i]=true -> segment (i,i+1) is an extrusion segment that actually gets drawn
   const segIdA = [], segLayer = []
   const typeLengths = new Float64Array(16)   // stage 25 S6.3: total extruded length per type (for the role-share legend)
   const travel = [], travelLayer = []   // travels: [x0,y0,z0,x1,y1,z1] per seg
-  let lastIdx = -1, lastX = 0, lastY = 0, lastZ = 0, lastType = -1, curLayer = 0
+  let lastIdx = -1, lastX = 0, lastY = 0, lastZ = 0, lastEncoded = -1, curLayer = 0
   const EPS = 1e-4
-  const push = (x, y, z, t, h, w) => { vx.push(x); vy.push(y); vz.push(z); vtype.push(t); vh.push(h); vw.push(w); vlayer.push(curLayer); realNext.push(false); return vx.length - 1 }
+  const push = (x, y, z, t, tool, h, w) => { vx.push(x); vy.push(y); vz.push(z); vtype.push(t); vtool.push(tool); vh.push(h); vw.push(w); vlayer.push(curLayer); realNext.push(false); return vx.length - 1 }
 
   for (let li = 0; li < L; li++) {
     const paths = layers[li].paths, widths = layers[li].widths, h = layerH[li]
     curLayer = li
     if (!paths) continue
     for (let k = 0; k < paths.length; k += 8) {
-      const type = paths[k + 3]
+      const encoded = paths[k + 3]                                  // role + tool * 16 (see ROLE_MASK above)
+      const type = encoded & ROLE_MASK, tool = encoded >>> TOOL_SHIFT
       const x0 = paths[k], y0 = paths[k + 1], z0 = paths[k + 2], x1 = paths[k + 4], y1 = paths[k + 5], z1 = paths[k + 6]
       if (type === 0) { travel.push(x0, y0, z0, x1, y1, z1); travelLayer.push(li); continue }
       const w = (widths && widths[k / 8] > 0) ? widths[k / 8] : lw
-      if (type < 16) typeLengths[type] += Math.hypot(x1 - x0, y1 - y0)   // accumulate length per role
+      typeLengths[type] += Math.hypot(x1 - x0, y1 - y0)   // accumulate length per role — the mask keeps the index in range
       let idA
-      if (lastIdx >= 0 && lastType === type &&
+      // Compared on the encoded value, so a tool change breaks the run: two extruders meeting at the same point are
+      //  separate beads and must not be mitered into one. For untooled output the encoded value *is* the role.
+      if (lastIdx >= 0 && lastEncoded === encoded &&
           Math.abs(lastX - x0) < EPS && Math.abs(lastY - y0) < EPS && Math.abs(lastZ - z0) < EPS) {
-        idA = lastIdx                    // reuse the previous segment's endpoint (connected) -> shared vertex
-        push(x1, y1, z1, type, h, w)     // append endpoint B at idA+1
+        idA = lastIdx                          // reuse the previous segment's endpoint (connected) -> shared vertex
+        push(x1, y1, z1, type, tool, h, w)     // append endpoint B at idA+1
       } else {
-        idA = push(x0, y0, z0, type, h, w)   // new run: start A
-        push(x1, y1, z1, type, h, w)         // end B (= idA+1)
+        idA = push(x0, y0, z0, type, tool, h, w)   // new run: start A
+        push(x1, y1, z1, type, tool, h, w)         // end B (= idA+1)
       }
       realNext[idA] = true
-      lastIdx = idA + 1; lastX = x1; lastY = y1; lastZ = z1; lastType = type
+      lastIdx = idA + 1; lastX = x1; lastY = y1; lastZ = z1; lastEncoded = encoded
       segIdA.push(idA); segLayer.push(li)
     }
   }
@@ -86,8 +95,8 @@ export function buildSegmentData(layers, defaultLineWidth) {
   const segIndex = new Uint32Array(nSeg * 4)
   for (let s = 0; s < nSeg; s++) { segIndex[s * 4] = segIdA[s]; segIndex[s * 4 + 1] = segLayer[s] }
   // Per-vertex metadata for view-type coloring (used only to recompute value -> color; pure)
-  const meta = { vType: new Uint8Array(nV), vWidth: new Float32Array(nV), vHeight: new Float32Array(nV), vLayer: new Int32Array(nV) }
-  for (let i = 0; i < nV; i++) { meta.vType[i] = vtype[i]; meta.vWidth[i] = vw[i]; meta.vHeight[i] = vh[i]; meta.vLayer[i] = vlayer[i] }
+  const meta = { vType: new Uint8Array(nV), vTool: new Uint8Array(nV), vWidth: new Float32Array(nV), vHeight: new Float32Array(nV), vLayer: new Int32Array(nV) }
+  for (let i = 0; i < nV; i++) { meta.vType[i] = vtype[i]; meta.vTool[i] = vtool[i]; meta.vWidth[i] = vw[i]; meta.vHeight[i] = vh[i]; meta.vLayer[i] = vlayer[i] }
   const layerSegPrefix = new Int32Array(L + 1)   // prefix[n] = number of segments with layer<n (segLayer is ascending)
   { let s = 0; for (let n = 0; n < L; n++) { while (s < nSeg && segLayer[s] === n) s++; layerSegPrefix[n + 1] = s } }
   // Travels (layer order) + prefix

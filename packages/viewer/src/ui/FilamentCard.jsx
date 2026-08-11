@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { filamentPresets } from 'three-slicer/settings'
 import { uiTree } from 'three-slicer/data'
+import { paintedFacetCount } from './MaterialPaintPanel.jsx'
 
 // What a material owns: every option upstream puts on the filament tab, not just the ten the kernel reads.
 //  Saving only the kernel keys would silently drop the rest of the user's edits from the panel below, and the
@@ -28,7 +29,10 @@ const scalarOf = v => (Array.isArray(v) ? v[0] : v)
 
 // Filament card: one material per extruder. Selecting a row aims the material/preset pickers (and the settings
 // form) at that extruder; the colors keep feeding the object meshes and the prime tower.
-export default function FilamentCard({ colors, onColor, onAdd, onRemove, settings, setSettings, filamentPanel }) {
+export default function FilamentCard({
+  colors, onColor, onAdd, onRemove, settings, setSettings, filamentPanel,
+  paintMode, onPaintExtruder, paintCounts,
+}) {
   // Materials are printer-specific and live in a lazily loaded artifact, so they arrive after a printer is picked.
   const printer = settings?.printer_settings_id ?? ''
   const [api, setApi] = useState(null)
@@ -52,6 +56,18 @@ export default function FilamentCard({ colors, onColor, onAdd, onRemove, setting
   // Writes the whole assignment at once. Rebuilding every column (rather than patching one index) is what makes
   //  removing a material actually remove its values: an extruder set back to "Custom (defaults)" contributes null,
   //  and a column of only nulls drops out of the map entirely.
+  // The material NAME of a preset. It rides on the preset entry rather than on its settings (web/extract_all.py
+  //  keeps the artifact to the keys the kernel reads, and filament_type is not one of them), so it has to be looked
+  //  up here — otherwise `filament_type` stays the schema's single default and a second filament of a different
+  //  material cannot be expressed at all. That is what left the G-code footer and the legend badge saying "PLA" for
+  //  every extruder no matter what was picked.
+  const typeOfName = (loaded, savedPresets, name) => {
+    if (!name) return null
+    if (savedPresets?.[name]) return 'Saved'
+    const found = (printer ? loaded?.listFor(printer) : loaded?.all())?.find(m => m.name === name)
+    return found?.type || null
+  }
+
   const assign = (loaded, saved, names, prev) => {
     const keys = [...new Set([...(loaded?.keys ?? []), ...FILAMENT_PAGE_KEYS])]
     const columns = names.map(name => (name ? (saved[name] ?? loaded?.settingsFor(name) ?? null) : null))
@@ -61,8 +77,11 @@ export default function FilamentCard({ colors, onColor, onAdd, onRemove, setting
       const column = columns.map(vals => (vals && key in vals ? scalarOf(vals[key]) : null))
       if (column.some(v => v != null)) next[key] = column
     }
-    if (names.every(name => !name)) { delete next.filament_settings_id; return next }
+    if (names.every(name => !name)) { delete next.filament_settings_id; delete next.filament_type; return next }
     next.filament_settings_id = names
+    // One entry per extruder, the same shape filament_settings_id has — upstream stores filament_type that way too.
+    const types = names.map(name => typeOfName(loaded, saved, name))
+    if (types.some(t => t)) next.filament_type = types.map(t => t ?? '')
     return next
   }
   const applyAt = (index, name, prev, saved = custom) =>
@@ -210,11 +229,20 @@ export default function FilamentCard({ colors, onColor, onAdd, onRemove, setting
   const panel = typeof filamentPanel === 'function' ? filamentPanel(project(settings ?? {}), setPanelSettings) : filamentPanel
 
   const label = name => (name ? name.replace(/\s*@.*$/, '') : '—')
+
+  // The row's brush button doubles as the extruder picker: starting to paint with T2 is also selecting T2, so a
+  //  click does both rather than leaving the pickers below aimed at whatever row was last clicked. `paintMode`
+  //  stays absent until the host wires material painting, and then the button simply never lights up.
+  const materialPainting = paintMode === 'material'
+  const startPainting = (index) => { setActive(index); onPaintExtruder?.(index) }
+
   return (
     <section className="side-card" data-testid="filament-section">
       <div className="sc-head">🧵 Filament <span className="sc-count">{count}</span>
         <span className="sc-head-btns">
-          <button onClick={onAdd} disabled={count >= 4} title="Add a filament (extruder) — up to 4, assignable per object" data-testid="filament-add">+</button>
+          {/* 16 is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
+              the honest limit here too — the kernel takes per-extruder vectors of any length. */}
+          <button onClick={onAdd} disabled={count >= 16} title="Add a filament (extruder) — up to 16, assignable per object or by painting" data-testid="filament-add">+</button>
           <button onClick={removeExtruder} disabled={count <= 1} title="Remove the selected filament — objects using it move to T1, later tools shift down" data-testid="filament-del">−</button>
         </span>
       </div>
@@ -226,6 +254,24 @@ export default function FilamentCard({ colors, onColor, onAdd, onRemove, setting
                  title={`T${i + 1} filament color`} data-testid={`filament-color-${i}`} />
           <span className="fil-t">T{i + 1}</span>
           <span className="fil-mat" data-testid={`filament-material-${i}`}>{label(materials[i])}</span>
+          {/* T1 is not "the first material" but the fallback the slicer uses for every facet nobody painted —
+              worth saying on the row, because otherwise painting T2 looks like it should need painting T1 too. */}
+          {i === 0 && (
+            <span className="fil-badge" data-testid="filament-default-badge"
+                  title="Default extruder — everything not painted with another tool prints with this one">default</span>
+          )}
+          {paintedFacetCount(paintCounts, i) > 0 && (
+            <span className="fil-count" data-testid={`filament-paint-count-${i}`}
+                  title={`${paintedFacetCount(paintCounts, i)} facets painted for T${i + 1}`}>
+              {paintedFacetCount(paintCounts, i)}
+            </span>
+          )}
+          {onPaintExtruder && (
+            <button className={materialPainting && i === active ? 'fil-paint on' : 'fil-paint'}
+                    onClick={e => { e.stopPropagation(); startPainting(i) }}
+                    data-testid={`filament-paint-${i}`}
+                    title={`Brush parts of a model to print with T${i + 1}`}>🖌</button>
+          )}
         </div>
       ))}
       {catalog.types.length > 0 && (<>

@@ -8,11 +8,17 @@ export const VERTEX_DATA: number[]
 export const TYPE_COLOR: Record<number, number[]>
 export const TYPE_LABEL: Record<number, string>
 
+/**
+ * Per-extruder colors for the Filament view. Categorical, not semantic — the toolpath stream carries a tool index and
+ * nothing about the material, and a machine may have more extruders than entries, so index it modulo its length.
+ */
+export const TOOL_COLOR: number[][]
+
 /** Blue-to-red 11-color heatmap (libvgcode ColorRange.hpp:14) */
 export const DEFAULT_RANGES_COLORS: number[][]
 
 export interface ViewTypeDef {
-  key: 'feature' | 'speed' | 'height' | 'width' | 'fan' | 'temp'
+  key: 'feature' | 'speed' | 'height' | 'width' | 'fan' | 'temp' | 'filament'
   label: string
   /** Whether values are continuous (heatmap). False means a fixed color. */
   cont: boolean
@@ -23,6 +29,8 @@ export const VIEW_TYPES: ViewTypeDef[]
 /** Per-vertex extra data */
 export interface SegmentMeta {
   vType: Uint8Array
+  /** Printing extruder, decoded out of the role field's high bits. Untooled output decodes to 0, i.e. single material. */
+  vTool: Uint8Array
   vWidth: Float32Array
   vHeight: Float32Array
   vLayer: Int32Array

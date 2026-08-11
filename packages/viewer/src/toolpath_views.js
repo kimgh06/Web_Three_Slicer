@@ -1,14 +1,18 @@
 // View-type coloring: kernel/derived per-vertex values -> the packed color texture the shader reads.
-import { TYPE_COLOR, DEFAULT_RANGES_COLORS, packColor, rangeColorAt } from './toolpath_palette.js'
+import { TYPE_COLOR, TOOL_COLOR, DEFAULT_RANGES_COLORS, packColor, rangeColorAt, hexToRgb } from './toolpath_palette.js'
 
-// View type list (the 6 highest-priority EViewType entries from the desktop app). value(i)=view value of vertex i, cont=continuous (heatmap) / false=fixed color.
+// View type list (the highest-priority EViewType entries from the desktop app). value(i)=view value of vertex i, cont=continuous (heatmap) / false=fixed color.
 export const VIEW_TYPES = [
-  { key: 'feature', label: 'Feature type', cont: false, unit: '' },
-  { key: 'speed',   label: 'Speed',        cont: true,  unit: 'mm/s' },
-  { key: 'height',  label: 'Layer Height', cont: true,  unit: 'mm' },
-  { key: 'width',   label: 'Line Width',   cont: true,  unit: 'mm' },
-  { key: 'fan',     label: 'Fan Speed',    cont: true,  unit: '%' },
-  { key: 'temp',    label: 'Temperature',  cont: true,  unit: '°C' },
+  { key: 'feature',  label: 'Feature type', cont: false, unit: '' },
+  { key: 'speed',    label: 'Speed',        cont: true,  unit: 'mm/s' },
+  { key: 'height',   label: 'Layer Height', cont: true,  unit: 'mm' },
+  { key: 'width',    label: 'Line Width',   cont: true,  unit: 'mm' },
+  { key: 'fan',      label: 'Fan Speed',    cont: true,  unit: '%' },
+  { key: 'temp',     label: 'Temperature',  cont: true,  unit: '°C' },
+  // Last, like upstream's EViewType::Tool: it answers "did my painted regions come out on the extruder I assigned?",
+  //  which is a check you run after slicing, not a property you scrub through. Discrete like the feature view — an
+  //  extruder index is a label, and a heatmap over it would imply tool 2 sits "between" tools 1 and 3.
+  { key: 'filament', label: 'Filament',     cont: false, unit: '' },
 ]
 // Per-vertex view value. speed/fan/temp are absent from the kernel toolpath, so they are derived from settings (the cheap option, kernel unchanged).
 //  ctx: { speedByType:{type:val}, firstLayerSpeed, fanByType or fanFirstLayers, tempNormal, tempFirst, closeFanLayers }
@@ -28,8 +32,17 @@ export function computeColors(data, viewType, ctx) {
   const { meta, nV } = data
   const color = new Float32Array(nV * 4)
   const vt = VIEW_TYPES.find(v => v.key === viewType) || VIEW_TYPES[0]
-  if (!vt.cont) {   // Feature type: fixed color per type
-    for (let i = 0; i < nV; i++) color[i * 4] = packColor(TYPE_COLOR[meta.vType[i]] || TYPE_COLOR[1])
+  if (!vt.cont) {   // Fixed color per vertex: by role (feature type) or by printing extruder (filament)
+    //  vTool is read defensively because a segment stream built by an older viewer build has no tool channel at all;
+    //  that data is single-extruder by definition, so falling back to tool 0 colors it as one material.
+    //  The Filament view paints each tool in that filament's OWN colour when the host supplied one (ctx.toolColors,
+    //  the same list the filament card and the stats legend read), falling back to the categorical palette per tool.
+    //  Without this the preview contradicts every other place the filament appears.
+    const toolRgb = (ctx?.toolColors ?? []).map(hexToRgb)
+    const fixedColorAt = vt.key === 'filament'
+      ? (i => { const t = meta.vTool ? meta.vTool[i] : 0; return toolRgb[t] || TOOL_COLOR[t % TOOL_COLOR.length] })
+      : (i => TYPE_COLOR[meta.vType[i]] || TYPE_COLOR[1])
+    for (let i = 0; i < nV; i++) color[i * 4] = packColor(fixedColorAt(i))
     return { color, min: 0, max: 0, viewType, label: vt.label, unit: vt.unit, cont: false }
   }
   // Continuous views: value range (extrusion vertices only) -> heatmap
