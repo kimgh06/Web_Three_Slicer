@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
+import { deriveKernelParams, settingRaw, settingScalar } from 'three-slicer/settings'
 import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
@@ -29,6 +29,7 @@ import StatsCard from './ui/StatsCard.jsx'
 import PrinterCard from './ui/PrinterCard.jsx'
 import FilamentCard from './ui/FilamentCard.jsx'
 import ObjectList from './ui/ObjectList.jsx'
+import TowerCard from './ui/TowerCard.jsx'
 import SliceBar from './ui/SliceBar.jsx'
 
 // 3D viewport + browser-only slicing (WASM, track C stage 4).
@@ -87,10 +88,11 @@ export default function Viewport({
   const brushRadiusRef = useRef(5)
   const paintXformRef = useRef(null)    // {cx,cy,minz} kernel transform (object STL bbox)
   const paintOverlayRef = useRef(null)  // Mesh[] — one per painted selector state (1..16)
-  const selectorGeomRef = useRef(null)  // identity of the mesh the kernel's selector holds (null = none registered)
+  const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
+  const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
   const plateResultsRef = useRef({})    // {plateIdx: sliceResult} cache
-  const plateOffsetsRef = useRef({})    // {plateIdx: {offX, offZ}} toolpath display offset (compensates the centered slice)
+  const plateOffsetsRef = useRef({})    // {plateIdx: {offX, offZ}} toolpath display offset (the plate's own origin)
   const selectedPlateRef = useRef(0)
   const plateCountRef = useRef(1)
   const placeXRef = useRef(0)           // object placement cursor within the selected plate (plate-relative)
@@ -193,13 +195,64 @@ export default function Viewport({
   // ---- three.js scene (renderer/camera/controls/pointer handlers + the imperative apiRef surface) ----
   const { mountRef, three } = useThreeScene({
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
-    canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
+    canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, paintOverlayRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
+    // Dragging the tower box is how a position becomes chosen: it writes the same wipe_tower_x/y the card edits,
+    //  so the two controls are one setting seen two ways.
+    //  The drop lands in world coordinates and the setting is a bed coordinate, so the plate's origin comes back
+    //  off — the same conversion the box's placement makes going the other way.
+    // A move/rotate/scale changes the coordinates the kernel's selector holds, so it has to be handed the new
+    //  ones — otherwise the overlay stays where the model was and a slice projects the paint there too. Gated on
+    //  the selector EXISTING, not on paint mode being on: in paint mode the gizmo is detached, so every real move
+    //  happens with the panel closed — a paint-mode gate would never fire. Through a ref because the paint module
+    //  is built further down and this handler is installed once.
+    onTransformCommitted: () => { if (selectorGeomRef.current) registerSelectorRef.current?.() },
+    onTowerMoved: (x, y) => {
+      const o = apiRef.current?.platePos?.(selectedPlateRef.current) ?? { x: 0, z: 0 }
+      setSettings(s => ({ ...s,
+        wipe_tower_x: Math.round((x - o.x + kpRef.current.bedW / 2) * 10) / 10,
+        wipe_tower_y: Math.round((y + o.z + kpRef.current.bedD / 2) * 10) / 10 }))
+    },
   })
 
   // Refresh the bed grid from the value derived from settings (printable_area)
   const kp = deriveKernelParams(settings)
+  // The bed size the tower drag needs, in a ref because the handler is installed once by the scene effect.
+  const kpRef = useRef({ bedW: 200, bedD: 200 })
+  kpRef.current = { bedW: kp.bed_width, bedD: kp.bed_depth }
   useEffect(() => { apiRef.current?.setPlates(plateCount, kp.bed_width, kp.bed_depth, selectedPlate) }, [kp.bed_width, kp.bed_depth, plateCount, selectedPlate])
+
+  // The tower stand-in follows the same rules the slicer applies: a tower exists with two filaments, its footprint
+  //  is the real tower's width or the ring's 15mm, and an unset position means "beside the model". Recomputed here
+  //  rather than in the scene so both the box and the slice read one source.
+  useEffect(() => {
+    const api = apiRef.current; if (!api) return
+    const multi = extruderColors.length > 1
+    // No box when there is no tower: a single filament, the preview, an empty plate, or the tower switched off.
+    const towerOff = settings?.enable_prime_tower === false
+    if (!multi || towerOff || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
+    const size = wipeTowerReal ? (Number(settingRaw(settings, 'prime_tower_width')) || 30) : 15
+    const box = api.modelBounds?.(selectedPlate)
+    const bedW = kp.bed_width, bedD = kp.bed_depth
+    // The box is drawn in world coordinates and a bed coordinate is plate-local, so the plate's own origin is the
+    //  one conversion between them — the same origin the slice frame subtracts.
+    const origin = api.platePos?.(selectedPlate) ?? { x: 0, z: 0 }
+    // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
+    const chosen = (key) => { const v = settings?.[key]; const n = Number(Array.isArray(v) ? v[0] : v)
+      return (v != null && v !== '' && Number.isFinite(n)) ? n : NaN }
+    const setX = chosen('wipe_tower_x'), setY = chosen('wipe_tower_y')
+    const auto = !Number.isFinite(setX)
+    // Auto mirrors use_slicer's placement exactly: one gap to the model's left, level with the model's middle,
+    //  clamped to the bed. Both now read the same box in the same frame, so the drawn tower is the sliced one.
+    const gap = 5
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
+    const x = auto ? origin.x + clamp((box ? box.minX - origin.x : 0) - gap - size / 2, -bedW / 2 + size / 2, bedW / 2 - size / 2)
+                   : origin.x + setX - bedW / 2 + size / 2
+    const y = auto ? -origin.z + clamp(box ? (box.minY + box.maxY) / 2 + origin.z : 0, -bedD / 2 + size / 2, bedD / 2 - size / 2)
+                   : -origin.z + setY - bedD / 2 + size / 2
+    const height = Math.max(2, box?.height ?? 20)
+    api.setPrimeTower?.({ x, y, size, height })
+  }, [extruderColors.length, canvasMode, objects.length, wipeTowerReal, settings, selectedPlate, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -233,11 +286,12 @@ export default function Viewport({
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
-  const { rebuildPaintOverlay, setPaintMode, clearPaint } = makeSupportPaint({
+  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector } = makeSupportPaint({
     three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
     paintXformRef, paintOverlayRef, paintModeRef, materialExtruderRef, extruderColorsRef,
     setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice,
   })
+  registerSelectorRef.current = registerSelector
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
@@ -251,6 +305,10 @@ export default function Viewport({
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate,
+    // Belt to the commit hook's braces: a move can reach a slice without a gizmo commit (keyboard nudge, plate
+    //  re-arrange), so the slice itself hands the selector the mesh it is about to cut. Only for the selected
+    //  plate — that is the mesh the brush painted — and only when a selector exists at all.
+    syncPaintSelector: (merged) => { if (selectorGeomRef.current) registerSelectorRef.current?.(merged) },
   })
 
   // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop ----
@@ -468,6 +526,14 @@ export default function Viewport({
   // The material each filament is, read from the same settings map the filament card writes — so the legend says
   //  "T2 ABS 203.6 mm" rather than leaving the colour swatch to carry the whole identity.
   const asList = (key) => { const raw = settingRaw(settings, key); return Array.isArray(raw) ? raw : (raw ? [raw] : []) }
+  // The tower's own outcome, so the card can show settings and result together. Tool changes are counted from the
+  //  G-code because the kernel reports them only in the (opt-in) stats block, and the card must not depend on that.
+  const lastResult = plateResultsRef.current[selectedPlateRef.current]
+  const towerStats = lastResult?.stats && Number.isFinite(lastResult.stats.filament_mm_purge) ? {
+    purge: lastResult.stats.filament_mm_purge,
+    changes: (lastResult.gcode?.match(/^T\d+$/gm) ?? []).length,
+    x: window.__vpParams?.prime_tower_x, y: window.__vpParams?.prime_tower_y,
+  } : null
   const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} extruderColors={extruderColors}
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
@@ -578,8 +644,14 @@ export default function Viewport({
                   supportFilament={supportFilament}
                   onSupportFilament={v => setSettings(s => ({ ...s, support_filament: v }))}
                   supportInterfaceFilament={supportInterfaceFilament}
-                  onSupportInterfaceFilament={v => setSettings(s => ({ ...s, support_interface_filament: v }))}
-                  wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)} />
+                  onSupportInterfaceFilament={v => setSettings(s => ({ ...s, support_interface_filament: v }))} />
+              )}
+
+              {/* A prime tower only exists with a second filament, so the card appears with one. */}
+              {extruderColors.length > 1 && showPanel('towerCard') && (
+                <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
+                  wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
+                  towerStats={towerStats} />
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}

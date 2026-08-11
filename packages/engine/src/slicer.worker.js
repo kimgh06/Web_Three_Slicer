@@ -114,7 +114,13 @@ self.onmessage = async (e) => {
     // Warmup: only load the kernel (+ spawn the mt pthread pool) ahead of time — removes the perceived load on the first slice
     if (d.cmd === 'warmup') { self.postMessage({ type: 'warm' }); return }
     // Stage 20: manual support painting — selector state persists in this worker Module (slicing uses the same Module).
-    if (d.cmd === 'prepare') { Module.selector_prepare(new Uint8Array(d.stl)); self.postMessage({ type: 'prepared', facets: Module.selector_facet_count() }); return }
+    // `keepPaint` says the mesh is the same model in a new place, so the marks carry over — the reply reports whether
+    //  they actually did, since a face-count change makes the kernel fall back to a clean registration.
+    if (d.cmd === 'prepare') {
+      const kept = d.keepPaint ? Module.selector_reprepare(new Uint8Array(d.stl)) : (Module.selector_prepare(new Uint8Array(d.stl)), false)
+      self.postMessage({ type: 'prepared', facets: Module.selector_facet_count(), kept })
+      return
+    }
     // paint: legacy {enforcer:boolean} stays on the boolean binding (false == BLOCKER); {state:1..16} reaches any
     //  extruder through the state binding. `enf`/`blk` are always reported so an old listener keeps working, and the
     //  per-state `counts` map is added ONLY when the message asked for states (keeps the legacy reply byte-identical).

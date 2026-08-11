@@ -245,15 +245,17 @@ export function useSlicer(deps) {
     params.gcode_config_block = true
 
     // Prime tower next to the model. The kernel's default corner (10,10) is wherever the bed is, not wherever the
-    //  model is — measured 90mm of travel per tool change with a centred model. The merged STL is XY-centred, so
-    //  the model spans [-halfW, halfW] in slice coordinates and bed x = bedW/2 + slice x; the tower sits one gap
-    //  to the model's left, vertically centred, clamped inside the bed for a model that nearly fills it.
-    if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.halfW)) {
+    //  model is — measured 90mm of travel per tool change with a centred model. Only when nothing chose a position:
+    //  deriveKernelParams already wrote prime_tower_x/y if the card or a drag set wipe_tower_x/y, and this used to
+    //  overwrite that on every slice, so a tower dragged in Prepare sliced somewhere else.
+    if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.minX) && params.prime_tower_x == null) {
       const towerSide = (params.wipe_tower_real ?? true) ? (params.prime_tower_width ?? 30) : 15
       const gap = 5
       const bedW = params.bed_width ?? 200, bedD = params.bed_depth ?? 200
-      params.prime_tower_x = Math.min(Math.max(bedW / 2 - merged.halfW - gap - towerSide, 1), bedW - towerSide - 1)
-      params.prime_tower_y = Math.min(Math.max(bedD / 2 - towerSide / 2, 1), bedD - towerSide - 1)
+      // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
+      const modelLeft = merged.minX + bedW / 2, modelMidY = (merged.minY + merged.maxY) / 2 + bedD / 2
+      params.prime_tower_x = Math.min(Math.max(modelLeft - gap - towerSide, 1), bedW - towerSide - 1)
+      params.prime_tower_y = Math.min(Math.max(modelMidY - towerSide / 2, 1), bedD - towerSide - 1)
     }
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows

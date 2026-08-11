@@ -188,24 +188,34 @@ export function makeSupportPaint(deps) {
     three.current.invalidate?.()   // worker message path (scene changed without a React re-render)
   }
   function clearPaintOverlay() { disposeOverlayMeshes(); paintOverlayRef.current = null }
-  // mode: 'off' | 'enforcer' | 'blocker' | 'material'. Entering either brush leaves the other, because one facet
-  //  carries one selector state (see paintStateFor above).
-  function setPaintMode(mode) {
-    if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
-    if (mode !== 'off') {
-      const merged = apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
-      // Stage 29: the merged STL is centered (Cmx,Cmy subtracted) -> the paint raycast (world) must subtract the same amount to match the selector. Cmx=offX, Cmy=-offZ.
-      paintXformRef.current = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
-      apiRef.current?.detachTransform()
-      // Re-register ONLY when the mesh really differs from the one the selector holds. Same mesh -> the selector
-      //  already has the right facets and every mark on them, so the brush resumes where it left off.
-      const identity = geomIdentity(merged.buf)
-      if (selectorGeomRef.current !== identity) {
-        // "had paint", not "had a selector": swapping the model with nothing painted resets nothing worth saying.
-        const seen = lastCounts(getWorker())
-        const hadPaint = Object.values(seen).some(count => count > 0)
-        paintStateAwareWorker().postMessage({ cmd: 'prepare', stl: merged.buf })
-        selectorGeomRef.current = identity
+  // Hand the kernel the mesh the brush is about to work on. Called on entering a brush AND on every transform
+  //  commit while one is active — a model that moved under the cursor would otherwise be painted where it was.
+  function registerSelector(prebuiltMerged = null) {
+    const merged = prebuiltMerged ?? apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
+    // The selector holds plate-local coordinates, so a raycast hit (world) subtracts the plate origin to match it.
+    //  This used to be the model's own bbox centre, which changed the moment the model was dragged — every stroke
+    //  after a move landed at the offset the model had when it was last sliced. A plate origin does not move.
+    paintXformRef.current = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
+    // Re-register ONLY when the mesh really differs from the one the selector holds. Same mesh -> the selector
+    //  already has the right facets and every mark on them, so the brush resumes where it left off.
+    const held = selectorGeomRef.current
+    const identity = geomIdentity(merged.buf)
+    if (held?.identity !== identity) {
+      // "had paint", not "had a selector": swapping the model with nothing painted resets nothing worth saying.
+      const seen = lastCounts(getWorker())
+      const hadPaint = Object.values(seen).some(count => count > 0)
+      // Same objects with the same faces at new coordinates is a MOVE, not a different model. The selector is
+      //  rebuilt either way — the brush and the layer projection both work on real positions — but a move has no
+      //  business costing the paint, so the marks are carried across the rebuild by facet index.
+      const moved = held != null && held.topology === merged.topology
+      const worker = paintStateAwareWorker()
+      worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: moved })
+      selectorGeomRef.current = { identity, topology: merged.topology }
+      if (moved) {
+        // The marks came across; their geometry did not. Every overlay triangle still describes where the model
+        //  used to be, and no facet count changed, so nothing else would ask for the redraw.
+        if (hadPaint) worker.postMessage({ cmd: 'overlay' })
+      } else {
         // A fresh selector holds nothing, so every number and every mesh derived from the old one has to go with
         //  it — including the enf/blk pair, whose stale value used to keep showing a count the kernel no longer had.
         setPaintStateCounts?.({})
@@ -218,6 +228,12 @@ export function makeSupportPaint(deps) {
                                      + 'the facets it was brushed onto.')
       }
     }
+  }
+  // mode: 'off' | 'enforcer' | 'blocker' | 'material'. Entering either brush leaves the other, because one facet
+  //  carries one selector state (see paintStateFor above).
+  function setPaintMode(mode) {
+    if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
+    if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector() }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }
@@ -225,5 +241,5 @@ export function makeSupportPaint(deps) {
   //  clear reply only carries `counts` when the request asked for states, and the answer would be all-zero anyway.
   function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); setPaintStateCounts?.({}) }
 
-  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint }
+  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector }
 }

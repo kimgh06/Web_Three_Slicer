@@ -13,7 +13,7 @@ export function makePlateActions(deps) {
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, syncPaintSelector,
     onSlicedRef,
   } = deps
 
@@ -78,6 +78,7 @@ export function makePlateActions(deps) {
       let sliced = 0, anyEconomy = false, anyClassic = false; const failed = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
+        if (i === selectedPlateRef.current) syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
           const { r, economy, classicWalls } = await runSlice(merged)
@@ -98,6 +99,7 @@ export function makePlateActions(deps) {
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
       console.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
+      if (idx0 === selectedPlateRef.current) syncPaintSelector?.(merged)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
