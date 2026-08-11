@@ -18,7 +18,7 @@ function filamentLabel(types, ids, index) {
   return id ? id.replace(/\s*@.*$/, '') : ''      // no type set — fall back to the preset name, minus its printer suffix
 }
 
-export default function StatsCard({ stats, overBed, extruderColors, filamentTypes, filamentIds }) {
+export default function StatsCard({ stats, overBed, overBedText, overBedModel = true, extruderColors, filamentTypes, filamentIds }) {
   if (!stats) return null
   // A per-tool split only says anything once a second tool actually extrudes: on a single-material print it would
   //  restate the total on its own line. So the breakdown appears only when two or more tools used filament, and
@@ -76,7 +76,15 @@ export default function StatsCard({ stats, overBed, extruderColors, filamentType
           </div>
         )}
       </>)}
-      {overBed && <div className="slice-warn" data-testid="over-bed">⚠ Model extends beyond the bed</div>}
+      {/* "Beyond the bed" alone leaves the next two questions unanswered: by how much, and what is actually out
+          there. Naming the toolpaths when the model itself fits is the difference between "shrink the model" and
+          "it is the support/skirt/brim" — the second is fixed by moving inward a few mm, not by rescaling. */}
+      {overBed && (
+        <div className="slice-warn" data-testid="over-bed">
+          ⚠ {overBedModel ? 'Model extends' : 'Support/skirt/brim extends'} beyond the bed
+          {overBedText ? ` by ${overBedText}` : ''} — G-code export is blocked
+        </div>
+      )}
     </>
   )
 }

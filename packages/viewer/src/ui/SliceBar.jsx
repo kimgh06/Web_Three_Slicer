@@ -4,7 +4,7 @@ import React from 'react'
 // and the G-code export link. While a slice runs the button cancels it.
 export default function SliceBar({
   autoSlice, onAutoSlice, slicing, progress, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
-  slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl,
+  slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl, bedWarning,
 }) {
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
@@ -29,9 +29,14 @@ export default function SliceBar({
           </div>
         )}
       </div>
-      {gcodeUrl
+      {/* Slicing something that hangs off the bed is fine — inspecting it is how you see the problem. Saving the
+          file is not: those coordinates drive a machine that cannot reach them, so export is where this stops. */}
+      {gcodeUrl && !bedWarning
         ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</a>
-        : <button className="export-btn" disabled title="Export G-code — enabled after slicing">Export G-code</button>}
+        : <button className="export-btn" disabled data-testid="gcode-dl-blocked"
+            title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.` : 'Export G-code — enabled after slicing'}>
+            Export G-code
+          </button>}
     </div>
   )
 }

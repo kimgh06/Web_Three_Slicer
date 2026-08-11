@@ -48,6 +48,10 @@ template<class I, class F> void parallel_for(const blocked_range<I>& r, const F&
   }
 #endif
   f(r);
+  // The serial path has to tick too. The counter is what the UI polls through the SAB to animate the support band,
+  //  and the tree path runs serial ON PURPOSE (see stub_parallel.h) — so without this the progress bar sat at exactly
+  //  36% for the whole of a tree-support slice (measured 71.5s of 76s on a 53.9MB plate) and read as a hang.
+  tbb_stub::prog().fetch_add((uint32_t)r.size());
 }
 template<class R, class F> void parallel_for(const R& r, const F& f){ f(r); }
 template<class R, class F, class P> void parallel_for(const R& r, const F& f, P&&){ parallel_for(r, f); }
@@ -61,6 +65,8 @@ template<class I, class F> void parallel_for(I b, I e, const F& f){
   }
 #endif
   for (I i = b; i < e; ++i) f(i);
+  //  Serial only — the threaded branch above returns early, so this never double-counts what it already ticked.
+  if (e > b) tbb_stub::prog().fetch_add((uint32_t)(e - b));
 }
 namespace this_task_arena { inline int max_concurrency(){ return 1; } }
 }

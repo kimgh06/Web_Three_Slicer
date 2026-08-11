@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+struct GWBedOverflow { double x = 0.0, y = 0.0, z = 0.0; bool any() const { return x > 0.0 || y > 0.0 || z > 0.0; } };
+
 // ---- G-code writer (relative E, z_hop, parameterized retraction) ----------------
 // (performance) Fixed-point formatter for the G-code hot path — ~5x faster than snprintf (fmt_bench2 measurements: 2 datasets x 2 runs, 0 mismatches out of 2M).
 //  At a rounding boundary (|frac−0.5|<1e-6) it returns nullptr -> the caller falls back to snprintf, guaranteeing byte-identical output.
@@ -46,6 +48,18 @@ struct GW {
   double px=0, py=0, z=0;
   double e_per_mm=0, filament=0;
   long   segments=0;
+  // Extent of everything actually EXTRUDED, in model coordinates (the G-code adds offX/offY on the way out).
+  //  The model's own bbox cannot answer "does this print fit on the bed": support, skirt, brim and the raft are
+  //  generated during slicing and reach past it. Upstream asks the same question of the finished G-code
+  //  (BuildVolume::all_paths_inside over GCodeProcessorResult::moves), which is what makes it indifferent to
+  //  WHICH feature produced a path. Travels are excluded there and here — only extrusions have to stay on the bed.
+  double exMinX=1e18, exMaxX=-1e18, exMinY=1e18, exMaxY=-1e18, exMaxZ=-1e18;
+  inline void note_xy(double x, double y) {
+    if (x < exMinX) exMinX = x;   if (x > exMaxX) exMaxX = x;
+    if (y < exMinY) exMinY = y;   if (y > exMaxY) exMaxY = y;
+    if (z > exMaxZ) exMaxZ = z;   // the layer z this extrusion is being written at
+  }
+  bool extruded_anything() const { return exMaxX >= exMinX; }
   int    curF=-1;
   double retract_len=0.8; int retractF=1800; // mm, mm/min
   double retract_min_travel=2.0;             // stage 33: retraction_minimum_travel (formerly the TRAVEL_RETRACT_MIN constant)
@@ -232,6 +246,7 @@ struct GW {
     if (dry) { px=x; py=y; curF=fPrint; return; }   // G003 dry run (assumes pe off — guarded in parallel mode)
     int fUse = pe_feed(d, fPrint);               // PE-lite: apply the flow change rate limit (fPrint when off)
     double dE = e_per_mm * d; filament += dE; ++segments;
+    note_xy(px, py); note_xy(x, y);   // both ends: an open path's first point follows a travel, so it is noted nowhere else
     char* r = buf; memcpy(r, "G1 X", 4); r += 4;
     r = fmt_fixed_safe(r, x+offX, 3);
     if (r) { memcpy(r, " Y", 2); r = fmt_fixed_safe(r+2, y+offY, 3); }
@@ -248,6 +263,8 @@ struct GW {
   void extrude_z(double x, double y, double zz, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
     double dE = e_per_mm * d; filament += dE; ++segments;
+    note_xy(px, py); note_xy(x, y);
+    if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
     if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz,dE,fPrint); curF=fPrint; }
     else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz,dE); }
     raw(buf); px=x; py=y; z=zz;
@@ -256,6 +273,8 @@ struct GW {
   void extrude_zf(double x, double y, double zz, double flowMul, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
     double dE = e_per_mm * d * flowMul; filament += dE; ++segments;
+    note_xy(px, py); note_xy(x, y);
+    if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
     if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz,dE,fPrint); curF=fPrint; }
     else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz,dE); }
     raw(buf); px=x; py=y; z=zz;
@@ -266,6 +285,10 @@ struct GW {
   void extrude_run(const std::vector<DPt>& pts, int fPrint) {
     if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=fPrint; } return; }
     if (!arc_fitting) { for (size_t i=1;i<pts.size();++i) extrude(pts[i].x,pts[i].y,fPrint); return; }
+    // try_arc swallows the points it turns into one G2/G3, so they never reach extrude() and its note_xy. Noting
+    //  every input point here instead keeps the extent honest: the arc was fitted to these points to within the
+    //  fitting tolerance, so it cannot reach materially past them.
+    for (const DPt& q : pts) note_xy(q.x, q.y);
     size_t i=0, n=pts.size();
     while (i+1<n) { size_t j=try_arc(pts,i,fPrint); if (j>i) i=j; else { extrude(pts[i+1].x,pts[i+1].y,fPrint); ++i; } }
   }
@@ -299,3 +322,23 @@ struct GW {
     return bestE;
   }
 };
+
+// How far the EMITTED extrusions reach past the printable area, per axis in mm (0 on an axis that stays inside).
+//  This is the check that sees support, skirt, brim, raft and the prime tower: all of them are produced during
+//  slicing, so the model bbox prepare_model() measures cannot predict any of them. Upstream answers the same
+//  question the same way, over the finished G-code rather than the model (BuildVolume::all_paths_inside).
+//  Z is measured here too, for the same reason: a raft lifts every model layer, so the model's own height cannot
+//  answer whether the print clears the ceiling. Upstream splits this into a second warning taken from the same
+//  G-code (ToolHeightOutside — the top layer's z against max_print_height), and this is that check.
+//  The tolerance is upstream's BedEpsilon (3 * EPSILON, libslic3r.h): it absorbs coordinate noise, not an overhang.
+inline GWBedOverflow extrusion_bed_overflow(const GW& gw, const Params& p) {
+  GWBedOverflow over;
+  if (!gw.extruded_anything()) return over;          // nothing was printed -> nothing can be off the bed
+  const double eps = 3e-4;
+  const double halfW = p.bed_width * 0.5, halfD = p.bed_depth * 0.5;
+  over.x = std::max(0.0, std::max(gw.exMaxX - halfW, -halfW - gw.exMinX) - eps);
+  over.y = std::max(0.0, std::max(gw.exMaxY - halfD, -halfD - gw.exMinY) - eps);
+  // bed_height 0 = the profile states no ceiling, so nothing is ever too tall (same rule as prepare_model).
+  if (p.bed_height > 0.0) over.z = std::max(0.0, gw.exMaxZ - p.bed_height - eps);
+  return over;
+}

@@ -1335,5 +1335,74 @@ ok(Module.selector_painted_count_state(2) === 0,
    `...and starts clean rather than inheriting them (${Module.selector_painted_count_state(2)})`)
 Module.selector_clear()
 
+// ===== The bed verdict must see what SLICING adds, not only the model ============================================
+//  Support, skirt, brim, raft and the prime tower are produced during slicing, so the model bbox prepare_model()
+//  measures cannot predict any of them: a model that fits exactly can still drive the head off the bed. over_bed is
+//  therefore widened by the extent of the EMITTED extrusions — the same question upstream asks of the finished
+//  G-code (BuildVolume::all_paths_inside). These cases pin the mechanism, not any one feature's clipping policy.
+console.log('\n[bed: judged on the emitted toolpaths]')
+const bedParams = { ...params, bed_width: 200, bed_depth: 200 }
+const sliceOnBed = (stl, extra) => Module.slice(new Uint8Array(stl), JSON.stringify({ ...bedParams, ...extra }), () => {})
+//  x 80..100 = flush against the +X bed edge. The model fits exactly; anything added around it does not.
+const cubeAtEdge = translateSTL(makeBoxSTL(20, 20, 20), 80, -10)
+
+//  Control first: without a skirt or brim nothing reaches past the model, so the new check must not invent an overflow.
+const bedFlush = sliceOnBed(cubeAtEdge, { skirt_loops: 0, brim_width: 0 })
+ok(bedFlush.stats.over_bed === false, `a bare model flush against the bed edge is not over the bed`)
+ok(bedFlush.stats.over_bed_x === 0 && bedFlush.stats.over_bed_y === 0, `...and reports zero overflow on both axes`)
+
+//  Skirt: offset outward from the contour with no bed clip, so it leaves the bed while the model does not.
+const bedSkirt = sliceOnBed(cubeAtEdge, { skirt_loops: 1, skirt_distance: 2, brim_width: 0 })
+ok(bedSkirt.stats.over_bed === true, `a skirt leaving the bed is caught (${bedSkirt.stats.over_bed_x.toFixed(2)}mm past)`)
+ok(bedSkirt.stats.over_bed_model === false, `...and is attributed to the toolpaths, not to the model`)
+ok(bedSkirt.stats.over_bed_x > 1.5, `...with the overflow measured, not just flagged (${bedSkirt.stats.over_bed_x.toFixed(2)}mm)`)
+
+//  Brim: the same hole, further out — so a 5mm brim must report MORE overflow than a 2mm skirt.
+const bedBrim = sliceOnBed(cubeAtEdge, { skirt_loops: 0, brim_width: 5 })
+ok(bedBrim.stats.over_bed === true, `a brim leaving the bed is caught (${bedBrim.stats.over_bed_x.toFixed(2)}mm past)`)
+ok(bedBrim.stats.over_bed_x > bedSkirt.stats.over_bed_x,
+   `a 5mm brim reaches further out than a 2mm skirt (${bedBrim.stats.over_bed_x.toFixed(2)} > ${bedSkirt.stats.over_bed_x.toFixed(2)})`)
+
+//  The model check keeps its own job: a model genuinely off the bed is still reported AS the model being off.
+const bedModelOff = sliceOnBed(translateSTL(makeBoxSTL(20, 20, 20), 95, -10), { skirt_loops: 0, brim_width: 0 })
+ok(bedModelOff.stats.over_bed === true && bedModelOff.stats.over_bed_model === true,
+   `a model past the bed edge is still reported by the model check`)
+ok(bedModelOff.stats.over_bed_x > 14, `...and now carries how far past it reaches (${bedModelOff.stats.over_bed_x.toFixed(2)}mm)`)
+
+//  Nothing near an edge: skirt and brim both on, and still no overflow claimed.
+const bedCentred = sliceOnBed(makeBoxSTL(20, 20, 20), { skirt_loops: 2, skirt_distance: 2, brim_width: 5 })
+ok(bedCentred.stats.over_bed === false, `a centred model with skirt+brim stays on the bed`)
+
+//  Height has the same shape of hole: a raft lifts every model layer, so the MODEL's height cannot say whether the
+//  print clears the ceiling. Upstream takes this from the same G-code as a second warning (ToolHeightOutside — the
+//  top layer's z against max_print_height), so the emitted top z is what gets compared here too.
+const bedCeil = { ...bedParams, skirt_loops: 0, brim_width: 0, bed_height: 20.3 }   // 20mm cube -> 19.8 top, fits
+const raftLift = (extra) => Module.slice(new Uint8Array(makeBoxSTL(20, 20, 20)), JSON.stringify({ ...bedCeil, ...extra }), () => {})
+const bedNoRaft = raftLift({ raft_layers: 0 })
+ok(bedNoRaft.stats.over_bed === false, `a model that clears the ceiling on its own is not over the bed`)
+const bedRaft = raftLift({ raft_layers: 3 })
+ok(bedRaft.stats.over_bed === true && bedRaft.stats.over_bed_model === false,
+   `a raft lifting the print past printable_height is caught, and blamed on the print not the model`)
+ok(bedRaft.stats.over_bed_z > 0.2, `...with the lift measured (${bedRaft.stats.over_bed_z.toFixed(2)}mm over)`)
+//  printable_height 0 means the profile states no ceiling — nothing is ever too tall (same rule as prepare_model).
+ok(raftLift({ raft_layers: 3, bed_height: 0 }).stats.over_bed === false,
+   `with no stated ceiling, height is never reported`)
+
+//  Tree support is the one feature that IS clipped to the bed (upstream m_machine_border), so it must stay on it
+//  wherever the model stands. The clip window used to be centred on the model rather than the bed — it travelled
+//  with the object, so support beside a model at the edge was clipped against a bed that was not there.
+console.log('\n[bed: tree support is clipped to the BED, not to the model]')
+const tableAtEdge = translateSTL(makeTableSTL(), 80, -10)     // cap x 80..100 — flush against the +X edge
+const treeNoSkirt = { enable_support: true, support_style: 'tree', support_threshold_angle: 30,
+                      support_top_z_distance: 0.2, support_xy_distance: 0.35, skirt_loops: 0, brim_width: 0 }
+const bedTreeEdge = sliceOnBed(tableAtEdge, treeNoSkirt)
+ok(typeTotal(bedTreeEdge, 5) > 0, `the edge model still generates tree support (type5=${typeTotal(bedTreeEdge, 5)})`)
+ok(bedTreeEdge.stats.over_bed_x === 0 && bedTreeEdge.stats.over_bed_y === 0,
+   `tree support beside a model at the bed edge stays on the bed (x=${bedTreeEdge.stats.over_bed_x.toFixed(2)}, y=${bedTreeEdge.stats.over_bed_y.toFixed(2)})`)
+//  ...and clipping to the real bed must not have cost the support everywhere else: centred, it is unchanged.
+const bedTreeCentre = sliceOnBed(makeTableSTL(), treeNoSkirt)
+ok(typeTotal(bedTreeCentre, 5) > 0, `a centred model's tree support is unaffected (type5=${typeTotal(bedTreeCentre, 5)})`)
+ok(bedTreeCentre.stats.over_bed === false, `...and is not over the bed either`)
+
 console.log(failed === 0 ? '\nALL NODE TESTS PASSED' : `\n${failed} TEST(S) FAILED`)
 process.exit(failed === 0 ? 0 : 1)

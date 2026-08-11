@@ -92,6 +92,12 @@
 .bp-actions { margin-top: 6px; }
 .bp-note { margin-top: 6px; font-size: 10.5px; line-height: 1.35; color: #8b98a2; }
 
+/* Over-bed warning while arranging. Sits where the stats card does in Preview — the two never show at once, so the
+   same corner carries "here is the problem" in both modes. Amber rather than red: the model is still slicable. */
+.bed-warn { position: absolute; left: 14px; bottom: 32px; z-index: 2;
+  background: rgba(58,42,16,.94); border: 1px solid #7a5a1e; border-radius: 10px;
+  padding: 8px 13px; font-size: 12.5px; color: #f0c060; }
+
 /* Preview stats card, bottom left */
 .stats-card { position: absolute; left: 14px; bottom: 32px; background: rgba(22,27,33,.93); border: 1px solid #2c353d;
   border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.7; z-index: 2; color: #cdd6dd; }

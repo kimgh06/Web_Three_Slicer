@@ -213,13 +213,34 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
+    // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
+    //  meets the bed plane. A camera looking exactly along the plane never meets it — then there is no answer.
+    const _bedPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), _bedHit = new THREE.Vector3()
+    const plateUnderPointer = (hit) => {
+      if (hit) { hit.updateMatrixWorld(true); const p = new THREE.Vector3().setFromMatrixPosition(hit.matrixWorld); return plateOfXZ(p.x, p.z) }
+      raycaster.setFromCamera(pointer, camera)
+      return raycaster.ray.intersectPlane(_bedPlane, _bedHit) ? plateOfXZ(_bedHit.x, _bedHit.z) : null
+    }
+    // Press position + the plate under it, resolved on release: a left-drag over the beds is how you orbit, so
+    //  switching plates on press would change plate every time the camera moves. Only a press that does not travel
+    //  counts as a click.
+    let downAt = null, downPlate = null
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
       if (canvasModeRef.current === 'preview') return   // S2: no gizmo/painting in preview
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
-      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
+      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick()
+      downAt = { x: ev.clientX, y: ev.clientY }; downPlate = plateUnderPointer(hit)
+      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
-    const onUp = () => {
+    const onUp = (ev) => {
+      // A press that stayed put is a click: select the plate it landed on. 4px of slop covers the wobble of a
+      //  physical click without letting an orbit drag through.
+      if (downAt) {
+        const still = Math.abs((ev?.clientX ?? downAt.x) - downAt.x) < 4 && Math.abs((ev?.clientY ?? downAt.y) - downAt.y) < 4
+        if (still && downPlate != null) deps.onPlateClicked?.(downPlate)
+        downAt = null; downPlate = null
+      }
       if (!paintDrawingRef.current) return
       paintDrawingRef.current = false; orbit.enabled = true
       if (paintFrame) { cancelAnimationFrame(paintFrame); flushPaint() }   // the last position is the one the user aimed at
