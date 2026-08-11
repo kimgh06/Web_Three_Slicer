@@ -9,7 +9,7 @@ export default defineConfig({
   root: dirname(fileURLToPath(import.meta.url)),   // pins entry/outDir even when run from the repo root cwd via --config
   build: {
     lib: {
-      entry: { Viewport: 'src/Viewport.jsx', toolpath_gpu: 'src/toolpath_gpu.js', model_loaders: 'src/model_loaders.js' },
+      entry: { Viewport: 'src/Viewport.jsx', toolpath_gpu: 'src/toolpath_gpu.js', model_loaders: 'src/model_loaders.js', gcode_parse: 'src/gcode_parse.js' },
       formats: ['es'],
     },
     outDir: 'dist',
