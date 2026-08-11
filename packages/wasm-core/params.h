@@ -1,6 +1,8 @@
 // params.h — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 #pragma once
+#include <algorithm>
 #include <string>
+#include <vector>
 
 // ---- Parameters (stage-1 names unchanged + stage-2 additions) ------------------
 struct Params {
@@ -42,6 +44,11 @@ struct Params {
   bool   support_on_build_plate_only=false;             // support_on_build_plate_only: only support reaching the bed
   int    support_interface_bottom_layers=0;             // support_interface_bottom_layers (0 = none)
   bool   support_grid_snap=true;                        // equivalent of the upstream SupportGridPattern (default behavior of the grid style)
+  // Upstream support_filament / support_interface_filament (both coInt, min 0). The value is a 1-based filament
+  //  index and 0 means "Default" — no dedicated filament, keep whatever tool is loaded. With 0 the kernel emits no
+  //  T command at all, so the single-material G-code is exactly what it was.
+  int    support_filament=0;                            // filament for the support base (and, upstream, the raft)
+  int    support_interface_filament=0;                  // filament for the support interface
   double tree_lite_shrink=0.5, tree_lite_min_radius=1.5;// tree_lite taper constants (our own approximation — no matching upstream key)
   // WP1: shape keys for the real tree support (support_style=tree) — defaults identical to the upstream PrintConfig defaults
   std::string tree_style="organic";                     // organic|slim|strong|hybrid (upstream support_style smsTree*)
@@ -96,13 +103,88 @@ struct Params {
   bool   reduce_crossing_wall=false;                    // wall-avoiding travel
   double max_volumetric_extrusion_rate_slope=0.0;       // PE-lite flow change rate limit (mm³/s², 0=off)
   int    extruder_count=1;                              // multi-material: how many extruders are used (1|2)
+  // Per-extruder filament values, indexed by tool: a two-material print wants ABS at 270 on T0 and PLA at 220 on
+  //  T1, which the scalars above cannot express. Empty (the default) means every tool uses the scalar, so a
+  //  single-material slice — and any host that never sends these — behaves exactly as before.
+  std::vector<double> extruder_nozzle_temp, extruder_filament_diameter, extruder_flow_ratio,
+                      extruder_retract_length, extruder_retract_speed, extruder_z_hop;
+  static double forTool(const std::vector<double>& per, int tool, double fallback) {
+    return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
+  }
   int    mm_group_split=0;                              // triangle group boundary index ([0,split)=T0, [split,N)=T1)
+  // N-way grouping: every boundary in triangle order, so three materials are three groups rather than the second
+  //  one silently swallowing the third. Empty falls back to the single mm_group_split above.
+  //  mm_group_tools names the tool each group prints with — extruder numbers can be sparse (objects on T1 and T3
+  //  only), and the per-extruder filament arrays are indexed by the real tool, not by group position.
+  std::vector<double> mm_group_splits, mm_group_tools;
+  // Per-feature filament, upstream's *_filament_id family (PrintConfig.cpp). 1-based filament index, 0 = "Default"
+  //  meaning the tool the region already prints with. Only the features slice_multimaterial actually emits are
+  //  honoured: it prints walls and sparse infill and has no shell detection, so the top/bottom/solid ids are parsed
+  //  and reported but cannot be applied — see slice_mm.cpp, which says so in the G-code rather than silently
+  //  ignoring them.
+  int    outer_wall_filament_id=0, inner_wall_filament_id=0, sparse_infill_filament_id=0;
+  int    top_surface_filament_id=0, bottom_surface_filament_id=0, internal_solid_filament_id=0;
+  // Upstream's filament_map: which PHYSICAL extruder each filament is loaded into (1-based), for machines with more
+  //  than one nozzle. Empty (the default) is the identity — filament i is extruder i — which is what every
+  //  single-nozzle machine has and what keeps the emitted T numbers unchanged.
+  //  It changes two things: the number after T, and whether a change has to purge at all. Two filaments sharing one
+  //  nozzle must purge the old colour out; two on different nozzles never mix, so the tower is skipped entirely.
+  std::vector<double> filament_map;
+  // Upstream's purging volumes (PrintConfig flush_volumes_matrix): a flat N×N table in mm³ where entry [from*N+to]
+  //  is how much has to be pushed out to go from filament `from` to filament `to`. It is what makes white->black
+  //  cost more than white->white; without it every change purges the same fixed amount, which is either wasteful
+  //  or not enough depending on the pair. Empty = no table, and the tower keeps its previous fixed size.
+  // Whether a prime tower is built at all. Upstream's own default is FALSE, because it can send the purge into the
+  //  model instead (flush_into_infill below); this kernel defaults to TRUE because until that option existed the
+  //  tower was the only place the purge could go, and flipping the default would silently change every existing
+  //  multi-material slice. The UI offers all three destinations.
+  bool   enable_prime_tower=true;
+  // Purge into the model's own sparse infill instead of a tower (upstream flush_into_infill). The material is not
+  //  thrown away — it is printed where nobody sees it — but it only works where the layer HAS sparse infill to
+  //  give, so what a layer cannot absorb still needs a tower.
+  bool   flush_into_infill=false;
+  std::vector<double> flush_volumes_matrix;
+  double flush_multiplier=1.0;                          // upstream scales the whole table by this
+  double prime_volume=0.0;                              // extra volume primed on every change, on top of the pair's
+  // How much filament a change from `from` to `to` has to purge, in mm³. Returns <0 when the host sent no table,
+  //  which the caller reads as "keep the fixed tower you always printed".
+  double flushVolume(int from, int to, int extruderCount) const {
+    const int n = extruderCount > 0 ? extruderCount : 1;
+    const size_t idx = (size_t)from * (size_t)n + (size_t)to;
+    if ((int)flush_volumes_matrix.size() < n * n || idx >= flush_volumes_matrix.size()) return -1.0;
+    const double mult = flush_multiplier > 1e-6 ? flush_multiplier : 1.0;
+    return std::max(0.0, flush_volumes_matrix[idx] * mult + prime_volume);
+  }
+  // Per-filament material identity and physical constants. Upstream carries all of these as one entry per filament
+  //  and reports them in the G-code footer; the kernel needs density/cost only to turn extruded millimetres into
+  //  the grams and currency a user actually reasons about, and the type only to make the two decisions upstream
+  //  makes by material name (PETG's extra unretract, TPU on the first layer).
+  std::vector<std::string> filament_type, filament_settings_id;
+  std::vector<double> filament_density;      // g/cm3, per filament
+  std::vector<double> filament_cost;         // currency per kg, per filament
+  // Upstream always writes the per-filament totals and the config dump. Here they are opt-in, because every byte the
+  //  default path emits is pinned by golden.mjs — the viewer turns them on, so the shipped app matches upstream
+  //  while `slice()` with a bare params object still produces exactly the G-code it always did.
+  bool   gcode_stats_block=false;            // ; filament used [mm]/[cm3]/[g], cost, total filament change
+  bool   gcode_config_block=false;           // ; CONFIG_BLOCK_START … the parameters this slice ran with … END
+  std::string params_json;                   // the raw params object, for the config block above
+  int    physicalExtruderOf(int tool) const {          // tool (0-based) -> physical extruder (0-based)
+    return (tool >= 0 && tool < (int)filament_map.size()) ? std::max(0, (int)filament_map[tool] - 1) : tool;
+  }
   bool   auto_center=false;                             // stage 28: true = realign the combined bbox to the origin (stage-3 legacy). false (default) = trust the viewer coordinates (no realignment, only Z seating) -> the toolpath overlaps the on-screen model exactly. Upstream = only the plate origin offset (GCode.cpp:932).
   // Stage 33: the default switched to true. Evidence (compare_wipetower.mjs measurements, 2-box MM):
   //  the real path succeeded on 49/49 layers without a fallback, purge volumes are actually computed (filament 1098 -> 4902mm),
   //  the upstream G-code structure is emitted (343 CP TOOLCHANGE/WIPE_TOWER markers), and there is no performance penalty (25ms vs 31ms).
   //  The old false path (three 15mm square rings) is decoration with no notion of purging and unfit for real G-code — kept only as a fallback.
-  bool   wipe_tower_real=true;                          // stage 12: use the real WipeTower.generate() on MM changes instead of the stage-6 square ring
+  // Default OFF again. The ported WipeTower is NOT deterministic: slicing the same input three times in one
+  //  process produced three different G-code files, differing only in feedrates — 76, 50 and 42 lines of "F0"
+  //  respectively, while the filament total (1566.2021 mm) and segment count (2210) were identical every time.
+  //  F0 is not a feedrate a printer accepts, and a slicer that cannot reproduce its own output cannot be diffed
+  //  or trusted. The fallback ring is deterministic (measured: three identical runs, zero F0 lines), so it is
+  //  what runs unless a caller explicitly asks for the real tower. See the [wipe tower] invariants in test.mjs.
+  //  Suspected cause: set_extruder() reads ~14 per-filament config vectors with get_at(idx) for idx 0 and 1, and
+  //  config_bridge.cpp sizes only three of them to two entries — extruder_printable_height is even left empty.
+  bool   wipe_tower_real=false;                         // stage 12: use the real WipeTower.generate() on MM changes instead of the stage-6 square ring
   double prime_tower_width=30.0;                        //  width of the real WipeTower (mm). Separate from the square ring width (15).
   // New in stage 7 (the real Arachne port)
   std::string wall_generator="classic";                // classic|arachne (arachne = the real ported WallToolPaths)

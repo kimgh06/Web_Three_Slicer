@@ -23,7 +23,7 @@ EOF
 npm i --no-audit --no-fund "${T[@]}" >/dev/null
 cat > run.mjs <<'EOF'
 import { createSlicer, engineWorkerURL } from 'three-slicer'
-import { deriveKernelParams, schemaDefault, printerSettings, printersByVendor, processPresets } from 'three-slicer/settings'
+import { deriveKernelParams, schemaDefault, printerSettings, printersByVendor, processPresets, filamentPresets } from 'three-slicer/settings'
 import { makeCfg, disabledKeys } from 'three-slicer/toggle'
 import { schema, uiTree, toggleRules, invalidationMap } from 'three-slicer/data'
 import rawSchema from 'three-slicer/data/config-schema.json' with { type: 'json' }
@@ -44,6 +44,15 @@ if (!anyPrinter) throw new Error('printersByVendor is empty')
 if (!printerSettings(anyPrinter)) throw new Error('printerSettings failed for ' + anyPrinter)
 const proc = await processPresets()
 if (!proc.keys.length) throw new Error('processPresets carries no keys')
+const fil = await filamentPresets()
+if (!fil.keys.length) throw new Error('filamentPresets carries no keys')
+// The recommendation list is declared on the machine model and so is nozzle-agnostic — filamentPresets narrows
+//  it to the compatible set. A regression here would offer a material upstream marks incompatible.
+const withMaterials = Object.values(printersByVendor).flatMap(m => Object.keys(m)).find(n => fil.listFor(n).length)
+if (!withMaterials) throw new Error('no printer has a compatible material list')
+const compatible = new Set(fil.listFor(withMaterials).map(f => f.name))
+if (fil.recommendedFor(withMaterials).some(f => !compatible.has(f.name)))
+  throw new Error('recommendedFor is not a subset of listFor for ' + withMaterials)
 console.log('  node OK —', Object.keys(schema).length, 'keys,',
   Object.values(printersByVendor).reduce((n, m) => n + Object.keys(m).length, 0), 'printers loaded')
 EOF
@@ -70,7 +79,7 @@ cat > tsconfig.json <<'EOF'
 EOF
 cat > src/check.ts <<'EOF'
 import { createSlicer, type SlicerSettings } from 'three-slicer'
-import { deriveKernelParams, settingScalar } from 'three-slicer/settings'
+import { deriveKernelParams, settingScalar, filamentPresets, type FilamentPreset } from 'three-slicer/settings'
 import { makeCfg, disabledKeys } from 'three-slicer/toggle'
 import { buildSegmentData, computeColors, VIEW_TYPES } from 'three-slicer/viewer/toolpath'
 import { loadModel, SUPPORTED_EXT, splitConnectedComponents } from 'three-slicer/viewer/loaders'
@@ -96,6 +105,8 @@ export async function main(buf: ArrayBuffer) {
   const data = buildSegmentData([], 0.42)
   const c = computeColors(data, VIEW_TYPES[0].key, { firstLayerSpeed: 20 })
   const pages = uiTree[Object.keys(uiTree)[0]][0].groups[0].options.length
+  const materials: FilamentPreset[] = (await filamentPresets()).listFor('Bambu Lab X1 Carbon 0.4 nozzle')
+  const material: string = materials[0].type
   return { n, dis, name, ext: SUPPORTED_EXT[0], cont: c.cont, pages, keys: Object.keys(schema).length, raw: Object.keys(rawSchema).length }
 }
 EOF

@@ -5,8 +5,11 @@ import type { UIPage } from './data/ui-tree.json.d.ts'
 import type { ToggleGroup } from './data/toggle-rules.json.d.ts'
 import type { InvalidationRule } from './data/invalidation-map.json.d.ts'
 import type { PrinterData, PrinterRow, PrinterEntry } from './data/printers.json.d.ts'
+import type { ProcessData } from './data/processes.js.d.ts'
+import type { FilamentData, FilamentRow, FilamentEntry } from './data/filaments.js.d.ts'
 
 export type { ConfigOption, UIPage, ToggleGroup, InvalidationRule, PrinterData, PrinterRow, PrinterEntry }
+export type { ProcessData, FilamentData, FilamentRow, FilamentEntry }
 
 /** The 907 option definitions */
 export const schema: Record<string, ConfigOption>
@@ -18,3 +21,7 @@ export const toggleRules: Record<string, ToggleGroup>
 export const invalidationMap: Record<string, InvalidationRule[]>
 /** Machine limits per printer, from the upstream vendor profiles */
 export const printers: PrinterData
+// The two large artifacts load on demand — read them through processPresets()/filamentPresets()
+// in three-slicer/settings rather than decoding the column layout here.
+export function loadProcesses(): Promise<ProcessData>
+export function loadFilaments(): Promise<FilamentData>

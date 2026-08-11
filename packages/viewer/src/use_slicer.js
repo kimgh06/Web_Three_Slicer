@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams } from 'three-slicer/settings'
+import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from './make_worker.js'
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
@@ -8,9 +8,9 @@ import { makeSlicerWorker } from './make_worker.js'
 export function useSlicer(deps) {
   const {
     settings, wipeTowerReal, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
-    rebuildToolpaths, rebuildPaintOverlay,
+    paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount,
-    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts,
+    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
   } = deps
 
   const pendingSliceRef = useRef(null)  // promise-based slice (for the sequential all-plates run) + the stage-30 watchdog timer
@@ -72,8 +72,11 @@ export function useSlicer(deps) {
         else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
         else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('Slice failed: ' + d.error); setSlicing(false) } }
         else if (d.type === 'prepared') { /* selector mesh registered */ }
-        else if (d.type === 'painted') { setPaintCounts({ enf: d.enf, blk: d.blk }); wk.postMessage({ cmd: 'overlay' }) }
-        else if (d.type === 'overlay') { rebuildPaintOverlay(d.enf, d.blk) }
+        // The overlay request that follows a stroke is issued by support_paint.js, which is the one place that knows
+        //  which states actually changed — asking for all of them on every sample is what made painting slow down as
+        //  the painted area grew. This listener keeps only the enf/blk pair it has always kept.
+        else if (d.type === 'painted') { setPaintCounts({ enf: d.enf, blk: d.blk }) }
+        else if (d.type === 'overlay') { rebuildPaintOverlay(d.enf, d.blk, d.overlays) }
       }
       // Stage-30 OOM detection: worker error/messageerror -> reject the in-flight slice (the ladder decides on an economy retry).
       // Late errors from an already-discarded worker are ignored. An emscripten abort raises an error event per pthread, so
@@ -202,9 +205,78 @@ export function useSlicer(deps) {
   }
   function buildParams(merged) {
     const params = deriveKernelParams(settings)
-    if (merged.extruders >= 2 && merged.split > 0) { params.extruder_count = merged.extruders; params.mm_group_split = merged.split; params.wipe_tower_real = wipeTowerReal }
+    if (merged.extruders >= 2 && merged.split > 0) {
+      params.extruder_count = merged.extruders; params.mm_group_split = merged.split
+      // One group per extruder run — mm_group_split alone can only express two.
+      if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
+      params.wipe_tower_real = wipeTowerReal
+    }
+    // Material painting assigns tools per facet, so `merged` — which reads whole-object assignment only — cannot
+    //  see it. The kernel gates its multi-tool path on `extruder_count >= 2 && (groups || painted tools)`, so a
+    //  painted-but-unassigned model short-circuits on the FIRST term and the paint is silently ignored: measured
+    //  as a painted and an unpainted export coming out byte-identical. Selector state s addresses extruder s
+    //  (ENFORCER==Extruder1), so the highest painted state is the extruder count the kernel has to allow for.
+    const paintedStates = Object.entries(paintStateCountsRef?.current ?? {})
+      .filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
+    const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
+    if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
+      params.extruder_count = Math.max(params.extruder_count ?? 1, highestPaintedState)
+      params.wipe_tower_real = wipeTowerReal
+    }
+    // Filament identity and physical constants, straight from the settings map the filament card writes. Upstream
+    //  reports all of these in the G-code footer; without them an export says how much filament it used but not
+    //  what the filament was. Also switches on the two footer blocks — the kernel leaves them off so its own
+    //  default output stays byte-identical, and the app is the thing that wants to behave like upstream.
+    const perFilament = (key) => {
+      const raw = settingRaw(settings, key)
+      const list = Array.isArray(raw) ? raw : (raw == null || raw === '' ? [] : [raw])
+      return list.length ? list : undefined
+    }
+    const asNumbers = (list) => list && list.map(v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 })
+    const filamentType = perFilament('filament_type')
+    const filamentId   = perFilament('filament_settings_id')
+    const density      = asNumbers(perFilament('filament_density'))
+    const cost         = asNumbers(perFilament('filament_cost'))
+    if (filamentType) params.filament_type = filamentType
+    if (filamentId)   params.filament_settings_id = filamentId
+    if (density)      params.filament_density = density
+    if (cost)         params.filament_cost = cost
+    params.gcode_stats_block = true
+    params.gcode_config_block = true
+
+    // Prime tower next to the model. The kernel's default corner (10,10) is wherever the bed is, not wherever the
+    //  model is — measured 90mm of travel per tool change with a centred model. Only when nothing chose a position:
+    //  deriveKernelParams already wrote prime_tower_x/y if the card or a drag set wipe_tower_x/y, and this used to
+    //  overwrite that on every slice, so a tower dragged in Prepare sliced somewhere else.
+    if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.minX) && params.prime_tower_x == null) {
+      const towerSide = (params.wipe_tower_real ?? true) ? (params.prime_tower_width ?? 30) : 15
+      const gap = 5
+      const bedW = params.bed_width ?? 200, bedD = params.bed_depth ?? 200
+      // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
+      const modelLeft = merged.minX + bedW / 2, modelMidY = (merged.minY + merged.maxY) / 2 + bedD / 2
+      params.prime_tower_x = Math.min(Math.max(modelLeft - gap - towerSide, 1), bedW - towerSide - 1)
+      params.prime_tower_y = Math.min(Math.max(modelMidY - towerSide / 2, 1), bedD - towerSide - 1)
+    }
+    // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
+    //  visible in the result — the export just comes out single-material. Said here, at the one place that knows
+    //  both the paint and the settings, because the alternative is the user concluding the brush is broken.
+    //  · support on: slicer_core.cpp keeps painted models on the single-material path (slice_multimaterial emits
+    //    no support, and one selector state cannot say "blocker" and "Extruder2" apart).
+    //  · only T1 painted: state 1 IS the default extruder, so there is no second tool to switch to.
+    if (paintedStates.length) {
+      // Support and material painting now slice together — the multi-material path runs the same support pass the
+      //  single-material one does. What survives is the AMBIGUITY: one selector, and upstream's enum makes a support
+      //  BLOCKER and Extruder2 the same mark, so a model carrying both reads the blocker as a material.
+      if (params.enable_support && paintedStates.includes(2))
+        setSliceNotice?.('Support is on and T2 is painted. One facet carries one mark, and a support blocker is ' +
+                         'the same mark as T2 — the painted areas were sliced as T2, not as blocked support.')
+      else if (highestPaintedState < 2)
+        setSliceNotice?.('Only T1 was painted. T1 is the default extruder every unpainted facet already uses, ' +
+                         'so the slice is unchanged — paint T2 or higher to get a second material.')
+    }
     if (downgradeRef.current) { params.sparse_infill_pattern = 'rectilinear'; params.infill_density = Math.min(params.infill_density ?? 0.15, 0.08); params.economy = true }  // downgrade retry
     if (typeof window !== 'undefined' && window.__vpForceTree) { params.enable_support = true; params.support_style = 'tree'; params.support_threshold_angle = 40 }  // stage-31 test hook: force tree support (not set in production)
+    if (typeof window !== 'undefined') window.__vpParams = params   // dev/test aid: the parameters actually handed to the kernel
     return params
   }
   // One merged STL through the whole ladder: parameters + incremental digest + the last-successful-geometry bookkeeping.

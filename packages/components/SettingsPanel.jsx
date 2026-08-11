@@ -129,7 +129,7 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
     <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
       {!only && <div className="sp-top">
-        <input className="sp-search" placeholder="Search options (907)…" value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
+        <input className="sp-search" placeholder={`Search options (${Object.keys(schema).length})…`} value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
         {!q && (<>
           <label className="sp-builder"><span>Settings group</span>
             <select value={builder} onChange={e => { setBuilder(e.target.value); setPageIdx(0) }}>

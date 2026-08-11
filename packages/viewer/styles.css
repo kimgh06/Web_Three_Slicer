@@ -76,14 +76,31 @@
 .bp-modes button { padding: 3px 9px; border: 1px solid #2c353d; background: #1a2027; color: #cdd6dd; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .bp-modes button.enf.on { background: #2b6cff; color: #fff; border-color: #2b6cff; }
 .bp-modes button.blk.on { background: #e23b3b; color: #fff; border-color: #e23b3b; }
+/* Tool row (brush / smart / bucket / triangle + the brush's cursor shape). Its own selected style rather than
+   .bp-chip's white outline: a chip carries the filament colour and needs a border that reads on any of them,
+   while a tool button only has to look pressed. */
+.bp-tools { margin-top: 6px; }
+.bp-tool.on { background: #2c353d; color: #fff; border-color: #46525c; }
 .bp-radius { display: block; font-size: 12px; color: #aebcc6; margin-top: 8px; }
 .bp-radius input { width: 100%; }
 .bp-counts { margin-top: 6px; font-size: 11px; }
+/* Material brush: the chip IS the filament colour, so its background is inline and only the framing is here.
+   The active ring is drawn outside the box (outline, not border) — a border would resize the chip on selection. */
+.bp-chip { min-width: 30px; font-weight: 700; border-color: rgba(0,0,0,.35) !important; }
+.bp-chip.on { outline: 2px solid #fff; outline-offset: 1px; }
+.bp-eraser { background: #1a2027 !important; color: #cdd6dd !important; font-weight: 400; }
+.bp-actions { margin-top: 6px; }
+.bp-note { margin-top: 6px; font-size: 10.5px; line-height: 1.35; color: #8b98a2; }
 
 /* Preview stats card, bottom left */
 .stats-card { position: absolute; left: 14px; bottom: 32px; background: rgba(22,27,33,.93); border: 1px solid #2c353d;
   border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.7; z-index: 2; color: #cdd6dd; }
 .stats-card b { color: #9fe3bd; }
+/* Per-extruder filament breakdown under the total — indented so it reads as a detail of the line above. */
+.stat-tool { display: flex; align-items: center; gap: 5px; font-size: 12px; margin-left: 10px; }
+.stat-swatch { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(255,255,255,.28); flex: 0 0 auto; }
+/* Purge belongs to no extruder, so it gets hatching rather than a colour that would read as a fifth tool. */
+.stat-swatch-purge { background: repeating-linear-gradient(45deg, #6d7780 0 2px, #39424a 2px 4px); }
 
 /* S4 right sidebar (light) */
 .sidebar { flex: 0 0 384px; width: 384px; display: flex; flex-direction: column; background: #eef0f2; color: #24282e;
@@ -95,15 +112,29 @@
 .sc-head-btns { margin-left: auto; display: flex; gap: 4px; }
 .sc-head-btns button { width: 22px; height: 22px; border: 1px solid #d3d6db; background: #f6f7f8; border-radius: 5px; cursor: pointer; font-size: 14px; line-height: 1; color: #333; }
 .sc-head-btns button:disabled { opacity: .4; cursor: not-allowed; }
+/* Preset actions carry a label, so they override the 22px square the +/− icon buttons above are sized to. */
+.sc-preset-btns button { width: auto; padding: 0 8px; font-size: 11px; white-space: nowrap; }
+.sc-dirty { color: #c47f00; font-weight: 600; }
 .sc-info { display: flex; justify-content: space-between; font-size: 12px; color: #5a6069; padding: 2px 0; }
 .sc-info b { color: #24282e; }
 .side-warn { margin: 0 2px; font-size: 12px; }
 
 .filament-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 .filament-row input[type=color] { width: 28px; height: 22px; border: 1px solid #ccc; border-radius: 5px; padding: 0; cursor: pointer; background: none; }
+/* One row per extruder, and the row is the selector for which extruder the pickers below edit. */
+.filament-row { cursor: pointer; border-radius: 5px; padding-left: 4px; }
+.filament-row.fil-active { background: #eef6f0; box-shadow: inset 2px 0 0 #00ae42; }
+.fil-mat { font-size: 11.5px; color: #5a6069; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-note { color: #8a9099; font-size: 11px; font-style: italic; }
 .fil-t { font-weight: 700; font-size: 12px; width: 20px; }
-.fil-swatch { width: 15px; height: 15px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
-.fil-hex { font-size: 11px; margin-left: auto; }
+/* The material name is the row's flexible column, so the paint controls are pinned to the right of it. */
+.fil-mat { flex: 1; min-width: 0; }   /* min-width:0 is what lets a flex item actually ellipsis instead of overflowing */
+.fil-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+  color: #5a6069; background: #eceef1; border-radius: 7px; padding: 1px 5px; white-space: nowrap; }
+.fil-count { font-size: 10px; font-weight: 700; color: #fff; background: #2b6cff; border-radius: 7px; padding: 0 5px; }
+.fil-paint { border: 1px solid #d3d6db; background: #f6f7f8; border-radius: 5px; cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 3px 5px; }
+.fil-paint.on { background: #2b6cff; border-color: #2b6cff; }
 
 .obj-list2 { list-style: none; margin: 0 0 6px; padding: 0; }
 .obj-list2 li { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; }
@@ -112,6 +143,8 @@
 .obj-list2 .obj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #24282e; }
 .obj-list2 .obj-ext { border: 1px solid #d0d3d8; border-radius: 5px; font-size: 11px; padding: 1px 3px; background: #fff; }
 .obj-del { border: 0; background: #fbe9ec; color: #d0435a; border-radius: 5px; cursor: pointer; padding: 0 6px; }
+/* Marks a row whose object carries material paint — the extruder select next to it then covers only the rest of it. */
+.obj-painted { font-size: 10px; line-height: 1; background: #e6efff; border-radius: 6px; padding: 2px 4px; }
 .side-card .slice-support { color: #444; font-size: 12px; margin: 5px 0 0; }
 
 /* Process card = embedded settings panel (light, full width) */
@@ -168,6 +201,8 @@
   background: #fff; color: #24282e; cursor: pointer; white-space: nowrap; }
 .sup-paint.on { background: #2b6cff; border-color: #2b6cff; color: #fff; }
 .sup-paint:disabled { opacity: .45; cursor: not-allowed; }
+/* Sits in the light sidebar, so it cannot borrow .slice-warn's colour (tuned for the dark viewport overlay). */
+.sup-filament-warn { margin: 2px 0 2px 22px; font-size: 11px; line-height: 1.35; color: #a06a00; }
 .slice-btn { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: 7px;
   background: #00ae42; color: #fff; font-weight: 700; cursor: pointer; }
 .slice-btn:disabled { background: #3a4650; color: #8b98a2; cursor: not-allowed; }
@@ -252,3 +287,16 @@
 .sc-bed { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: #222; }
 .sc-bed input { width: 54px; padding: 1px 4px; font-size: 12px; font-weight: 600; text-align: right;
   border: 1px solid #ccd0d5; border-radius: 5px; background: #fff; color: #222; }
+/* Model/Tower breakdown inside a filament row — secondary to the total it qualifies, so it reads as an aside. */
+.stat-split { color: #8b98a2; font-size: 11px; }
+/* Material name next to the tool number in the filament legend — a label, so it sits quieter than the amount. */
+.stat-type { margin-left: 4px; padding: 0 4px; border-radius: 3px; background: #2c353d; color: #aebcc6; font-size: 10.5px; }
+/* Purge matrix: one row/column per filament, so it has to stay legible at 3-4 columns inside a 300px card. */
+.purge-grid { width: 100%; border-collapse: collapse; font-size: 11px; }
+.purge-grid th { font-weight: 600; color: #aebcc6; padding: 2px 3px; white-space: nowrap; }
+.purge-grid th .stat-swatch { margin-right: 3px; vertical-align: middle; }
+.purge-grid td { padding: 1px 2px; text-align: center; }
+.purge-grid input { width: 100%; min-width: 42px; background: #1a2027; border: 1px solid #2c353d; color: #cdd6dd;
+  border-radius: 4px; padding: 2px 3px; font-size: 11px; }
+.sc-num input { width: 62px; background: #1a2027; border: 1px solid #2c353d; color: #cdd6dd; border-radius: 4px;
+  padding: 2px 5px; font-size: 12px; margin-left: 4px; }

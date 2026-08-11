@@ -8,6 +8,26 @@ export const TYPE_COLOR = {
   7: [0.95, 0.85, 0.25], 8: [0.90, 0.35, 0.65], 9: [0.90, 0.25, 0.25],
   10: [0.60, 0.82, 0.55], 11: [0.30, 0.72, 0.70],
 }
+// Per-extruder colors for the Filament view. Positional, not semantic: the toolpath stream carries a tool index and
+//  nothing about the material, so this is a categorical palette (distinct in hue *and* lightness, so the regions stay
+//  tellable apart on a mono display). Indexed modulo its length — a machine may have more extruders than entries.
+export const TOOL_COLOR = [
+  [0.85, 0.28, 0.25], [0.20, 0.52, 0.85], [0.25, 0.72, 0.38], [0.96, 0.74, 0.16],
+  [0.62, 0.36, 0.82], [0.18, 0.74, 0.74], [0.95, 0.50, 0.15], [0.55, 0.56, 0.60],
+]
+
+// '#rgb'/'#rrggbb' -> [r,g,b] in 0..1, or null when it is not a colour at all. The Filament view prefers the user's
+//  own filament colours over the categorical palette above — upstream does the same (GCodeViewer.cpp reads
+//  `filament_colour` straight into set_tool_colors), and a preview that paints T1 red while the filament chip is
+//  blue is the one thing that view must never do. TOOL_COLOR stays as the fallback for a tool with no colour set.
+export function hexToRgb(hex) {
+  const raw = String(hex ?? '').trim().replace(/^#/, '')
+  if (raw.length !== 3 && raw.length !== 6) return null
+  const full = raw.length === 3 ? raw.split('').map(d => d + d).join('') : raw
+  const channels = [0, 2, 4].map(o => parseInt(full.slice(o, o + 2), 16) / 255)
+  return channels.some(Number.isNaN) ? null : channels
+}
+
 export function packColor(c) {   // [r,g,b] 0..1 -> r<<16|g<<8|b (inverse of the upstream decode_color; exact in f32 below 2^24)
   const r = Math.round(c[0] * 255), g = Math.round(c[1] * 255), b = Math.round(c[2] * 255)
   return (r << 16) | (g << 8) | b

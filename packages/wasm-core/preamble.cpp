@@ -21,6 +21,8 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
   gw.scarf_len   = p.scarf_length;
   gw.pe_slope    = (p.pe_lite ? std::max(0.0, p.max_volumetric_extrusion_rate_slope) : 0.0);   // in-kernel PE-lite only when pe_lite; else real PE post-processes
   gw.filament_area = PI * p.filament_diameter * p.filament_diameter / 4.0;
+  gw.tool_filament_diameter = p.filament_diameter;   // single-material path: one tool, so these never change again
+  gw.tool_flow_ratio        = p.flow_ratio;
   gw.avoid_walls = p.reduce_crossing_wall;                                 // wall-avoiding travel
   bool realPE    = (!p.pe_lite && p.max_volumetric_extrusion_rate_slope > 0);
   gw.emit_pe_tags = p.emit_pe_tags || realPE;                             // tags are emitted automatically when the real PE is used

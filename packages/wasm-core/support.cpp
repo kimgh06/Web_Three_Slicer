@@ -139,8 +139,10 @@ void support_run(SliceCtx& C) {
     int ifaceN = std::max(1, p.support_interface_top_layers);
     // Stage 20: painted enforcers/blockers -> per-layer polygons (slice_mesh_slabs projection, the same slice_z as the facade)
     std::vector<double> sliceZs(N); for (int j=0;j<N;++j) sliceZs[j]=L[j].z - p.layer_height*0.5;
-    auto projToPaths=[&](bool enf)->std::vector<Paths>{
-      auto pl = selector_bridge::project_layers(sliceZs, enf);
+    // The bridge now takes an EnforcerBlockerType state number (1..16) instead of a bool, so the two support states
+    //  are named explicitly here — ENFORCER/BLOCKER are exactly what the old true/false meant.
+    auto projToPaths=[&](int state)->std::vector<Paths>{
+      auto pl = selector_bridge::project_layers(sliceZs, state);
       std::vector<Paths> out(N);
       for (int j=0;j<N && j<(int)pl.size();++j) for (auto& ring:pl[j]) {
         Path pa; pa.reserve(ring.size());
@@ -149,7 +151,8 @@ void support_run(SliceCtx& C) {
       }
       return out;
     };
-    std::vector<Paths> enfL = projToPaths(true), blkL = projToPaths(false);
+    std::vector<Paths> enfL = projToPaths(selector_bridge::STATE_ENFORCER),
+                       blkL = projToPaths(selector_bridge::STATE_BLOCKER);
     // Overhang: contour_i − offset(contour_{i-1}, +maxStep)
     // Stage 33: the old morphological opening (offset -openR -> +openR) is removed. The opening erased whole bands narrower than
     //  2*openR (=1.26w), so on gentle slopes (measured from 25°) no support was generated at all

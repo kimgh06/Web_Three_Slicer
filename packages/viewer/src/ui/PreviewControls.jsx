@@ -1,19 +1,24 @@
 import React from 'react'
 import { VIEW_TYPES } from '../toolpath_views.js'
-import { DEFAULT_RANGES_COLORS } from '../toolpath_palette.js'
+import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from '../toolpath_palette.js'
 
 const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`
 
 // Preview sidebar controls: view type select, the dual layer slider and the legend
-// (a gradient for continuous views, role shares for the feature view).
+// (a gradient for continuous views, role shares for the feature view, extruder swatches for the filament view).
 export default function PreviewControls({
   viewType, onViewType, layerCount, layerLo, layerHi, segCount, singleLayer,
-  onLayerLo, onLayerHi, onToggleSingle, showTravel, onToggleTravel, colorRange, roleLegend,
+  onLayerLo, onLayerHi, onToggleSingle, showTravel, onToggleTravel, colorRange, roleLegend, extruderColors,
 }) {
+  // The filament view is categorical like the feature view, so it takes the swatch legend rather than the gradient —
+  //  but its categories are extruders, not roles, and roleLegend would otherwise label them Wall/Sparse/Solid.
+  //  At least one entry, because a host that passes no filament list is still slicing with one extruder.
+  const filamentView = viewType === 'filament'
+  const extruderCount = Math.max(1, Array.isArray(extruderColors) ? extruderColors.length : 0)
   return (
     <div className="slice-layer" data-testid="preview-controls">
       <label className="view-type-row">View type
-        <select value={viewType} onChange={onViewType} data-testid="view-type-select" title="What the toolpath colors represent — feature type, speed, layer height, width, fan, temperature">
+        <select value={viewType} onChange={onViewType} data-testid="view-type-select" title="What the toolpath colors represent — feature type, speed, layer height, width, fan, temperature, printing filament">
           {VIEW_TYPES.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
         </select>
       </label>
@@ -27,7 +32,20 @@ export default function PreviewControls({
         <button className={singleLayer ? 'on' : ''} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
         <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="Show non-extruding moves as gray lines (T)" /> Travel</label>
       </div>
-      {colorRange && colorRange.cont ? (
+      {filamentView ? (
+        // Swatches only, no share percentage: buildSegmentData accumulates extruded length per feature type
+        //  (typeLengths) and never per tool, so a "% per extruder" here would be made up. The millimetres per tool
+        //  are the stats card's job. The colors come from TOOL_COLOR because that is exactly what computeColors
+        //  paints the segments with — an extruderColors swatch would show the user's picker color, not the toolpath.
+        <div className="role-legend" data-testid="view-legend">
+          {Array.from({ length: extruderCount }, (_unused, index) => (
+            <span key={index} className="role-item">
+              <i style={{ background: rgb(TOOL_COLOR[index % TOOL_COLOR.length]) }} />
+              T{index + 1}
+            </span>
+          ))}
+        </div>
+      ) : colorRange && colorRange.cont ? (
         <div className="grad-legend" data-testid="view-legend">
           <div className="grad-title">{colorRange.label} <span className="muted">{colorRange.unit}</span></div>
           <div className="grad-bar" data-testid="gradient-bar" style={{ background: `linear-gradient(to right, ${DEFAULT_RANGES_COLORS.map(rgb).join(',')})` }} />

@@ -18,6 +18,42 @@ static double jget(const std::string& s, const char* key, double d) {
   size_t p = jfind_val(s, key);
   return (p == std::string::npos) ? d : std::strtod(s.c_str() + p, nullptr);
 }
+// `"key": [270, 220]` -> {270, 220}. Absent or non-array yields an empty vector, which every reader treats as
+//  "no per-extruder values, use the scalar" — so an older host that sends nothing keeps the previous behaviour.
+static std::vector<double> jarr(const std::string& s, const char* key) {
+  std::vector<double> out;
+  size_t p = jfind_val(s, key);
+  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
+  for (++p; p < s.size() && s[p] != ']'; ) {
+    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
+    if (p >= s.size() || s[p] == ']') break;
+    char* end = nullptr;
+    double v = std::strtod(s.c_str() + p, &end);
+    if (end == s.c_str() + p) break;            // not a number — stop instead of spinning on the same character
+    out.push_back(v);
+    p = (size_t)(end - s.c_str());
+  }
+  return out;
+}
+// `"key": ["PLA", "ABS"]` -> {"PLA","ABS"}. Same contract as jarr: absent or non-array yields empty, which every
+//  reader treats as "the host sent no per-filament strings". No escape handling — these are option values
+//  (material names, preset ids), not the custom G-code jstr below has to unescape.
+static std::vector<std::string> jstrarr(const std::string& s, const char* key) {
+  std::vector<std::string> out;
+  size_t p = jfind_val(s, key);
+  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
+  for (++p; p < s.size() && s[p] != ']'; ) {
+    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
+    if (p >= s.size() || s[p] == ']') break;
+    if (s[p] == 'n') { out.push_back(std::string()); p += 4; continue; }   // JSON null -> "no value for this slot"
+    if (s[p] != '"') break;
+    size_t end = s.find('"', p + 1);
+    if (end == std::string::npos) break;
+    out.push_back(s.substr(p + 1, end - p - 1));
+    p = end + 1;
+  }
+  return out;
+}
 static bool jbool(const std::string& s, const char* key, bool d) {
   size_t p = jfind_val(s, key);
   if (p == std::string::npos) return d;
@@ -112,6 +148,8 @@ Params parse_params(const std::string& j) {
   p.support_on_build_plate_only   = jbool(j,"support_on_build_plate_only",p.support_on_build_plate_only);
   p.support_interface_bottom_layers = (int)jget(j,"support_interface_bottom_layers",p.support_interface_bottom_layers);
   p.support_grid_snap             = jbool(j,"support_grid_snap",p.support_grid_snap);
+  p.support_filament              = (int)jget(j,"support_filament",p.support_filament);
+  p.support_interface_filament    = (int)jget(j,"support_interface_filament",p.support_interface_filament);
   p.tree_lite_shrink              = jget(j,"tree_lite_shrink",p.tree_lite_shrink);
   p.tree_lite_min_radius          = jget(j,"tree_lite_min_radius",p.tree_lite_min_radius);
   // WP1: parsing the real tree support shape keys — the upstream UI keys (with the organic suffix) win, falling back to the suffix-less keys
@@ -164,7 +202,34 @@ Params parse_params(const std::string& j) {
   p.reduce_crossing_wall          = jbool(j,"reduce_crossing_wall",p.reduce_crossing_wall);
   p.max_volumetric_extrusion_rate_slope = jget(j,"max_volumetric_extrusion_rate_slope",p.max_volumetric_extrusion_rate_slope);
   p.extruder_count                = (int)jget(j,"extruder_count",p.extruder_count);
+  p.extruder_nozzle_temp          = jarr(j,"extruder_nozzle_temp");
+  p.extruder_filament_diameter    = jarr(j,"extruder_filament_diameter");
+  p.extruder_flow_ratio           = jarr(j,"extruder_flow_ratio");
+  p.extruder_retract_length       = jarr(j,"extruder_retract_length");
+  p.extruder_retract_speed        = jarr(j,"extruder_retract_speed");
+  p.extruder_z_hop                = jarr(j,"extruder_z_hop");
   p.mm_group_split                = (int)jget(j,"mm_group_split",p.mm_group_split);
+  p.mm_group_splits               = jarr(j,"mm_group_splits");
+  p.mm_group_tools                = jarr(j,"mm_group_tools");
+  p.outer_wall_filament_id        = (int)jget(j,"outer_wall_filament_id",p.outer_wall_filament_id);
+  p.inner_wall_filament_id        = (int)jget(j,"inner_wall_filament_id",p.inner_wall_filament_id);
+  p.sparse_infill_filament_id     = (int)jget(j,"sparse_infill_filament_id",p.sparse_infill_filament_id);
+  p.top_surface_filament_id       = (int)jget(j,"top_surface_filament_id",p.top_surface_filament_id);
+  p.bottom_surface_filament_id    = (int)jget(j,"bottom_surface_filament_id",p.bottom_surface_filament_id);
+  p.internal_solid_filament_id    = (int)jget(j,"internal_solid_filament_id",p.internal_solid_filament_id);
+  p.filament_map                  = jarr(j,"filament_map");
+  p.enable_prime_tower            = jbool(j,"enable_prime_tower",p.enable_prime_tower);
+  p.flush_into_infill              = jbool(j,"flush_into_infill",p.flush_into_infill);
+  p.flush_volumes_matrix          = jarr(j,"flush_volumes_matrix");
+  p.flush_multiplier              = jget(j,"flush_multiplier",p.flush_multiplier);
+  p.prime_volume                  = jget(j,"prime_volume",p.prime_volume);
+  p.filament_type                 = jstrarr(j,"filament_type");
+  p.filament_settings_id          = jstrarr(j,"filament_settings_id");
+  p.filament_density              = jarr(j,"filament_density");
+  p.filament_cost                 = jarr(j,"filament_cost");
+  p.gcode_stats_block             = jbool(j,"gcode_stats_block",p.gcode_stats_block);
+  p.gcode_config_block            = jbool(j,"gcode_config_block",p.gcode_config_block);
+  p.params_json                   = j;
   p.auto_center                   = jbool(j,"auto_center",p.auto_center);   // stage 28
   p.wipe_tower_real               = jbool(j,"wipe_tower_real",p.wipe_tower_real);
   p.prime_tower_width             = jget(j,"prime_tower_width",p.prime_tower_width);

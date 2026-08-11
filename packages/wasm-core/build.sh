@@ -95,6 +95,7 @@ CONFIG_INC="$CONFIG_INC -Iarachne_port/gcodeproc/inc -Iarachne_port/gcodeproc/st
 TS=treesupport_port; TL=$TS/libslic3r
 TS_UNIQUE_SRC="
   $TL/treesupport_bridge_impl.cpp $TL/selector_bridge_impl.cpp $TL/TriangleSelector.cpp
+  $TL/MultiMaterialSegmentation.cpp
   $TL/Support/SupportCommon.cpp $TL/Support/TreeModelVolumes.cpp $TL/Support/TreeSupport3D.cpp $TL/Support/TreeSupport.cpp
   $TL/Support/SupportMaterial.cpp $TL/layerregion_flow_impl.cpp
   $TL/Flow.cpp $TL/Layer.cpp $TL/MutablePolygon.cpp $TL/BuildVolume.cpp $TL/SurfaceCollection.cpp

@@ -26,7 +26,7 @@ int main() {
     std::vector<float> verts; std::vector<int> tris; weld_table(verts, tris);
     selector_bridge::construct(verts, tris);
     printf("selector: facet_count=%d verts=%zu\n", selector_bridge::facet_count(), verts.size()/3);
-    selector_bridge::paint(12, 0,0,10, 0,0,-40, 20.f, true);   // enforcer on cap underside
+    selector_bridge::paint(12, 0,0,10, 0,0,-40, 20.f, selector_bridge::STATE_ENFORCER, selector_bridge::CURSOR_SPHERE);   // enforcer on cap underside
     printf("enforcer painted facets=%d\n", selector_bridge::painted_count(true));
     std::vector<float> ov = selector_bridge::overlay(true);
     printf("overlay tris=%zu\n", ov.size()/9);

@@ -1,6 +1,6 @@
 {
   "name": "three-slicer",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), React viewer with GPU toolpath preview, and schema-driven settings UI.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -41,6 +41,10 @@
       "types": "./types/viewer-loaders.d.ts",
       "default": "./viewer/dist/model_loaders.js"
     },
+    "./viewer/gcode": {
+      "types": "./types/viewer-gcode.d.ts",
+      "default": "./viewer/dist/gcode_parse.js"
+    },
     "./components": {
       "types": "./types/components.d.ts",
       "default": "./components/dist/SettingsPanel.js"
@@ -69,6 +73,7 @@
   },
   "files": [
     "engine",
+    "!engine/**/.omc",
     "types",
     "components/dist",
     "viewer/dist",
@@ -80,6 +85,7 @@
     "data/invalidation-map.json",
     "data/printers.json",
     "data/processes.js",
+    "data/filaments.js",
     "README.md",
     "LICENSE.txt"
   ],
@@ -97,8 +103,15 @@
     "wasm",
     "orcaslicer",
     "three",
+    "three.js",
     "react",
     "arachne",
-    "tree-support"
+    "tree-support",
+    "three-slicer",
+    "slicer",
+    "3d",
+    "mesh",
+    "clipping"
   ]
 }
+

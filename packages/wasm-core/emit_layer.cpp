@@ -4,6 +4,19 @@
 
 #include <cstdio>
 
+// support_filament / support_interface_filament are upstream coInt filament indices: 0 = "Default" (keep the tool
+// that is loaded), 1..n = that filament, which is tool n-1. Returning -1 for the default is what makes GW::set_tool
+// a no-op, so the default configuration emits no T command anywhere and the G-code is unchanged.
+// ponytail: only the T command is switched — the extruder's own filament diameter/flow (Params::forTool) is not
+//  reloaded for the support block, so a support filament of a different diameter still extrudes at the object's
+//  E-per-mm. Wire loadTool-style reloading here once the single-material path tracks per-tool flow at all.
+static const int OBJECT_TOOL = 0;   // the tool the model itself prints with on the single-material path
+static int support_tool_of(int filament_index) { return filament_index > 0 ? filament_index - 1 : -1; }
+// The T command and the toolpath stream's tool channel have to move together, or the preview colours support with
+//  the object's filament while the G-code prints it with another. -1 ("Default", keep the loaded tool) leaves both
+//  alone, so the default configuration still emits no T command and no tool bits at all.
+static void use_tool(GW& gw, int tool) { gw.set_tool(tool); if (tool >= 0) g_seg_tool = tool; }
+
 // G003 step 1: the normal layer emission body extracted — a single implementation shared by the serial path and (in step 2) the parallel writer.
 //  Behavior unchanged (a pure move) — equivalence verified by the golden and st vs mt gates.
 static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
@@ -31,14 +44,19 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
     auto setW = [&](double ww){ gw.set_e_per_mm_width(ww, ld.h, p); g_seg_w_cur = (float)ww; };
 
     // --- Emission: support -> skirt/brim -> walls (seam/scarf) -> thin walls -> gap fill -> bridge -> solid -> sparse ---
+    const int supportTool  = support_tool_of(p.support_filament);           // -1 = keep the object's tool
+    const int interfaceTool = support_tool_of(p.support_interface_filament);
     if (!supI.empty() || !supB.empty()) {
       gw.raw("; support");
-      if (!supI.empty()) emit_lines(gw, tp, supI, zE, 5.0f, fPrint, fTravel);
-      if (!supB.empty()) emit_lines(gw, tp, supB, zE, 5.0f, fPrint, fTravel);
+      if (!supI.empty()) { use_tool(gw, interfaceTool); emit_lines(gw, tp, supI, zE, 5.0f, fPrint, fTravel); }
+      if (!supB.empty()) { use_tool(gw, supportTool);   emit_lines(gw, tp, supB, zE, 5.0f, fPrint, fTravel); }
+      use_tool(gw, OBJECT_TOOL);
     }
     if (p.enable_support && !ld.supTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
       gw.raw("; support (organic tree — real ported TreeSupport)");
+      use_tool(gw, supportTool);                                       // branches are one body: the base filament covers them
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fPrint, fTravel);
+      use_tool(gw, OBJECT_TOOL);
     }
     if (!flExtra.empty()) { gw.raw(brim ? "; skirt/brim" : "; skirt"); emit_loops(gw, tp, flExtra, zE, 4.0f, fPrint, fTravel, -1, seamCtx); }
     if (p.wall_generator=="arachne" && !ld.arachneWalls.empty()) {
@@ -108,14 +126,19 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
     const int fSup = pre.fSup;
     Paths& eI = pre.supI;
     Paths& eB = pre.supB;
+    const int supportTool  = support_tool_of(p.support_filament);
+    const int interfaceTool = support_tool_of(p.support_interface_filament);
     if (!eI.empty() || !eB.empty()) {
       gw.raw("; support");
-      if (!eI.empty()) emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel);
-      if (!eB.empty()) emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel);
+      if (!eI.empty()) { use_tool(gw, interfaceTool); emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel); }
+      if (!eB.empty()) { use_tool(gw, supportTool);   emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel); }
+      use_tool(gw, OBJECT_TOOL);
     }
     if (p.enable_support && !ld.supTree.empty()) {
       gw.raw("; support (organic tree — real ported TreeSupport)");
+      use_tool(gw, supportTool);
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
+      use_tool(gw, OBJECT_TOOL);
     }
     return;
   }

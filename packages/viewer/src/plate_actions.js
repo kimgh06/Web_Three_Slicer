@@ -13,8 +13,13 @@ export function makePlateActions(deps) {
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, syncPaintSelector,
+    onSlicedRef,
   } = deps
+
+  // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
+  //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.
+  const announceSlice = (plate, r) => { if (r && !r.error) onSlicedRef?.current?.({ plate, stats: r.stats, gcode: r.gcode }) }
 
   // Shows a cached result in Preview — every cached plate's toolpath renders at its own offset simultaneously,
   //  and idx becomes the focus (target of the slider/stats/G-code). Focusing a plate with no cache = empty state (leftovers cleared).
@@ -73,10 +78,11 @@ export function makePlateActions(deps) {
       let sliced = 0, anyEconomy = false, anyClassic = false; const failed = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
+        if (i === selectedPlateRef.current) syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         try {
           const { r, economy, classicWalls } = await runSlice(merged)
-          plateResultsRef.current[i] = r; refreshSlicedCount(); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
+          plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
           if (economy) anyEconomy = true
           if (classicWalls) anyClassic = true
         } catch (e) { failed.push(i + 1) }   // E1: even on failure, g-code from plates that already finished is preserved and available
@@ -93,12 +99,13 @@ export function makePlateActions(deps) {
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
       console.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
+      if (idx0 === selectedPlateRef.current) syncPaintSelector?.(merged)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
         const { r, economy, classicWalls, params } = await runSlice(merged)
         if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
-        plateResultsRef.current[idx0] = r; refreshSlicedCount(); setSlicing(false); showPlateResult(idx0)
+        plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
         setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
         if (economy) setSliceNotice('Memory pressure — finished in economy mode (no preview, G-code can still be downloaded)')
         else if (classicWalls) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')

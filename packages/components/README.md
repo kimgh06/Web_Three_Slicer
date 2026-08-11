@@ -4,7 +4,7 @@ Reusable React components for the browser slicer. Props-driven — no global sta
 
 ## `<SettingsPanel/>`
 
-An OrcaSlicer-style settings form generated from `@three-slicer/data` (schema + UI tree + toggle rules): tab/page/group navigation, mode filter (simple/advanced/expert), search across 907 options, dirty markers with per-option reset, and enable/disable rules evaluation.
+An OrcaSlicer-style settings form generated from `@three-slicer/data` (schema + UI tree + toggle rules): tab/page/group navigation, mode filter (simple/advanced/expert), search across 923 options, dirty markers with per-option reset, and enable/disable rules evaluation.
 
 ```bash
 npm i three-slicer/components react

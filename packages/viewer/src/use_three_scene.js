@@ -24,7 +24,7 @@ function bakeLocal(modelPos) {
 export function useThreeScene(deps) {
   const {
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
-    canvasModeRef, paintModeRef, brushRadiusRef, paintXformRef, extruderColorsRef,
+    canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
   } = deps
 
@@ -89,7 +89,49 @@ export function useThreeScene(deps) {
     //  cannot slice negative z, so sinking is unsupported -> any minZ≠0 snaps to 0 in either direction. World bbox minY (three height) -> 0.
     const _seatBox = new THREE.Box3()
     const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const minY = _seatBox.min.y; if (Number.isFinite(minY) && Math.abs(minY) > 1e-4) { m.position.y -= minY; m.updateMatrixWorld(true) } }
-    transform.addEventListener('dragging-changed', e => { orbit.enabled = !e.value; if (!e.value) seatMesh(transform.object); three.current.invalidate?.() })
+    // The paint overlay is baked in world coordinates and rebuilt from the kernel only on commit, so between grab
+    //  and drop it would sit still while the mesh moves under it. Instead, the delta from the grab pose rides on
+    //  the overlay meshes every objectChange — position, rotation and scale all fold into one matrix — and the
+    //  commit's kernel rebuild then replaces the approximation with the truth.
+    //  ponytail: the WHOLE overlay follows the dragged object; with paint on several objects the others' marks
+    //  ride along for the duration of the drag (snapped right on drop). Splitting per object needs the kernel to
+    //  report each overlay triangle's source facet.
+    const paintDragStartInverse = new THREE.Matrix4(), paintDragDelta = new THREE.Matrix4()
+    const paintDragBase = new Map()   // overlay mesh -> its matrix at grab (a prior drag's delta may still be on it)
+    let paintDragging = false
+    transform.addEventListener('objectChange', () => {
+      if (!paintDragging || !transform.object) return
+      transform.object.updateMatrixWorld(true)
+      paintDragDelta.copy(transform.object.matrixWorld).multiply(paintDragStartInverse)
+      for (const [mesh, base] of paintDragBase) {
+        mesh.matrixAutoUpdate = false
+        mesh.matrix.multiplyMatrices(paintDragDelta, base)
+      }
+    })
+    transform.addEventListener('dragging-changed', e => {
+      orbit.enabled = !e.value
+      if (e.value) {
+        paintDragBase.clear()
+        const overlays = deps.paintOverlayRef?.current
+        paintDragging = !!(overlays && overlays.size && transform.object && !transform.object.userData?.isPrimeTower)
+        if (paintDragging) {
+          transform.object.updateMatrixWorld(true)
+          paintDragStartInverse.copy(transform.object.matrixWorld).invert()
+          for (const mesh of overlays.values()) paintDragBase.set(mesh, mesh.matrix.clone())
+        }
+      } else paintDragging = false
+      if (!e.value) {
+        // The tower stands on the bed by definition and has no geometry to seat — it reports its new XY instead.
+        if (transform.object && transform.object.userData?.isPrimeTower) {
+          transform.object.position.y = transform.object.userData.halfHeight
+          // The kernel reads prime_tower_x/y as the tower's CORNER (ptx .. ptx+side), so the box's centre has to
+          //  give up half its footprint on the way out — otherwise a dropped tower re-renders half a width away.
+          const half = transform.object.scale.x / 2
+          deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half)
+        } else { seatMesh(transform.object); deps.onTransformCommitted?.() }
+      }
+      three.current.invalidate?.()
+    })
     scene.add(transform)
 
     three.current = { scene, camera, renderer, orbit, transform, objectsGroup, toolpathGroup, plateBeds: [] }
@@ -107,8 +149,23 @@ export function useThreeScene(deps) {
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
     let hovered = null, selected = null, objIdCounter = 0   // the placement cursor is placeXRef (plate-relative)
-    const activeMeshes = () => objectsRef.current.map(o => o.mesh)
-    const paint = () => { for (const m of activeMeshes()) m.material.emissive.setHex(m === selected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000) }
+    // The prime tower as a scene object, the way upstream carries it (a GLVolume with is_wipe_tower). Before this
+    //  the tower existed only in the sliced result, so "does it collide with the model?" could not be answered
+    //  until after slicing. It is pickable and moves on the same TransformControls the objects use; dragging it
+    //  writes wipe_tower_x/y, which is what turns the placement from automatic into chosen.
+    let towerMesh = null
+    const activeMeshes = () => {
+      const list = objectsRef.current.map(o => o.mesh)
+      if (towerMesh && towerMesh.visible) list.push(towerMesh)
+      return list
+    }
+    // Selection tint. The tower is pickable but is drawn with an unlit material, which has no emissive channel —
+    //  tinting it threw on every hover and left the click handler half-run (a paint stroke after it never
+    //  registered). It shows selection through its own opacity instead.
+    const paint = () => { for (const m of activeMeshes()) {
+      if (m.material.emissive) m.material.emissive.setHex(m === selected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
+      else if (m.userData?.isPrimeTower) m.material.opacity = m === selected ? 0.6 : m === hovered ? 0.5 : 0.35
+    } }
     const statusText = () => objectsRef.current.length
       ? `${objectsRef.current.length} object(s) · selected: ${selected ? selected.userData.name : '—'} | M/R/S · left-drag to orbit · ? for shortcuts`
       : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selected ? selected.userData.name : '—'} | left-drag to orbit · ? for shortcuts`
@@ -121,8 +178,29 @@ export function useThreeScene(deps) {
       toPointer(ev); const hit = pickHit(); if (!hit || hit.faceIndex == null) return
       const toK = v => [v.x - X.cx, -v.z - X.cy, v.y - X.minz]   // viewer(Y-up) -> STL(Z-up) -> kernel
       const hk = toK(hit.point), ck = toK(camera.position)
+      // The tool travels with the stroke rather than being stamped later: a fill takes an angle where a brush takes
+      //  a radius, so the message has to say which of the two it is at the point the hit is taken. `radius`/`cx..cz`
+      //  ride along for the brush; the worker's fill dispatch simply does not read them.
+      const brush = paintToolRef?.current ?? { tool: 'brush', cursor: 'sphere', angle: 30 }
       workerRef.current?.postMessage({ cmd:'paint', facet:hit.faceIndex, hx:hk[0],hy:hk[1],hz:hk[2],
-        cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer' })
+        cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer',
+        tool: brush.tool, cursor: brush.cursor, angle: brush.angle })
+    }
+    // A pointermove can fire several times per frame (and far above 60Hz on a high-rate mouse), and each one costs a
+    //  worker round trip plus an overlay rebuild. Coalescing to one stroke per animation frame keeps the brush at the
+    //  cursor without queueing work the frame cannot show anyway — the dropped samples are between two positions the
+    //  same brush radius already covers.
+    let pendingPaintEvent = null, paintFrame = 0
+    const flushPaint = () => { paintFrame = 0; const ev = pendingPaintEvent; pendingPaintEvent = null; if (ev) paintAt(ev) }
+    const queuePaint = ev => {
+      pendingPaintEvent = ev
+      if (!paintFrame) paintFrame = requestAnimationFrame(flushPaint)
+    }
+    // A fill is one click: it selects by mesh topology, so repeating it for every pointermove of a drag would redo
+    //  the same flood over the same facets. The brush is the opposite — dragging is how it covers an area.
+    const paintToolIsFill = () => {
+      const tool = paintToolRef?.current?.tool
+      return tool === 'smart' || tool === 'bucket' || tool === 'triangle'
     }
     // Cursor hints: crosshair in paint mode, pointer when hovering an object, default otherwise (camera control).
     const applyCursor = () => {
@@ -133,7 +211,7 @@ export function useThreeScene(deps) {
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
-      if (paintModeRef.current !== 'off') { if (paintDrawingRef.current) paintAt(ev); return }
+      if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
@@ -141,7 +219,11 @@ export function useThreeScene(deps) {
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
-    const onUp = () => { if (paintDrawingRef.current) { paintDrawingRef.current = false; orbit.enabled = true } }
+    const onUp = () => {
+      if (!paintDrawingRef.current) return
+      paintDrawingRef.current = false; orbit.enabled = true
+      if (paintFrame) { cancelAnimationFrame(paintFrame); flushPaint() }   // the last position is the one the user aimed at
+    }
     // Double click: on an object = zoom to it, on empty space = clear the selection (3D app convention)
     const onDblClick = ev => {
       if (ev.button !== 0 || canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
@@ -151,7 +233,9 @@ export function useThreeScene(deps) {
     }
     // Wheel: adjusts the brush radius in paint mode (upstream GLGizmoPainterBase convention) — otherwise plain OrbitControls zoom.
     const onWheel = ev => {
-      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview') return
+      // A fill has no radius, so the wheel has nothing to adjust — it goes back to being the zoom, rather than
+      //  being swallowed to change a number the panel is not even showing.
+      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview' || paintToolIsFill()) return
       ev.preventDefault(); ev.stopPropagation()
       const v = Math.min(15, Math.max(1, brushRadiusRef.current + (ev.deltaY < 0 ? 0.5 : -0.5)))
       brushRadiusRef.current = v; setBrushRadius(v)
@@ -294,23 +378,40 @@ export function useThreeScene(deps) {
         const sorted = [...arr].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
         const usedExtruders = new Set(sorted.map(o => o.extruder || 1))
         const tmp = new THREE.Vector3(); const out = []
+        // One boundary per extruder change, not just the first: with objects on T1/T2/T3 a single boundary would
+        //  fold T3's triangles into T2's group and print them with T2's material. `tools` carries the real
+        //  extruder number of each group, because assignments can skip one (T1 and T3 with nothing on T2).
         let triCount = 0, split = 0
+        const splits = [], tools = []
+        // What the selector's facet numbering depends on: which objects are in the merge, in what order, each with
+        //  how many faces. Moving one does not appear here — which is the point, because a move must not renumber
+        //  anything and so must not cost the paint.
+        const topology = []
         for (const o of sorted) {
-          if ((o.extruder || 1) >= 2 && split === 0) split = triCount   // start boundary of ext2
+          const ext = o.extruder || 1
+          topology.push(`${o.id}:${ext}:${o.localPos.length / 9}`)
+          if (tools.length === 0) tools.push(ext - 1)
+          else if (ext - 1 !== tools[tools.length - 1]) { splits.push(triCount); tools.push(ext - 1) }
+          if (ext >= 2 && split === 0) split = triCount   // start boundary of ext2 (the pre-N-way scalar form)
           o.mesh.updateMatrixWorld(true)
           const M = o.mesh.matrixWorld, lp = o.localPos
           for (let i = 0; i < lp.length; i += 3) { tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M); out.push(tmp.x, -tmp.z, tmp.y) }  // Rinv -> model (world)
           triCount += lp.length / 9
         }
-        // Stage 29: center the slice input on the XY origin (symmetric coordinates). The upstream desktop also centers via m_plate_origin before slicing.
-        //  Why: after stage 28 P2 (removing the re-alignment), some asymmetric/negative coordinates (e.g. x[0,20], y[-10,10]) triggered
-        //  memory OOB in the kernel skirt/infill paths (symmetric coordinates were fine — golden was fine too). Centering avoids it, and the toolpath is offset by the same amount so it still overlaps the on-screen model.
-        let mnx = 1e18, mny = 1e18, mxx = -1e18, mxy = -1e18
-        for (let i = 0; i < out.length; i += 3) { if (out[i] < mnx) mnx = out[i]; if (out[i] > mxx) mxx = out[i]; if (out[i + 1] < mny) mny = out[i + 1]; if (out[i + 1] > mxy) mxy = out[i + 1] }
-        const Cmx = (mnx + mxx) / 2, Cmy = (mny + mxy) / 2   // XY center of the world content (includes the plate offset PX)
-        for (let i = 0; i < out.length; i += 3) { out[i] -= Cmx; out[i + 1] -= Cmy }
-        // Toolpath display offset (three): content world center model(Cmx,Cmy) -> three(x=Cmx, z=-Cmy). Cmx already includes the plate PX -> it renders on that plate.
-        const offX3 = Cmx, offZ3 = -Cmy
+        // The slice frame is the PLATE, not the model. This used to subtract the content's own bbox centre, which
+        //  made the frame move whenever the model moved — and everything anchored to something else then needed a
+        //  correction nobody owned: the prime tower drifted by exactly the model's off-centre amount, and the paint
+        //  transform went stale on the first drag. Subtracting the plate origin instead gives a frame that does not
+        //  move, so a bed coordinate means the same thing to the slicer, the scene and the G-code.
+        //  (The centring was a workaround for a kernel that lost infill away from the origin — clip_util.h
+        //  infill_lines, fixed: six placements of the same cube now slice to the same 1043.9 mm.)
+        //  Upstream does the same thing with m_plate_origin.
+        const origin = platePos(plateIdx != null ? plateIdx : selectedPlateRef.current)
+        const originModelX = origin.x, originModelY = -origin.z      // three(x,z) -> model(x,y)
+        for (let i = 0; i < out.length; i += 3) { out[i] -= originModelX; out[i + 1] -= originModelY }
+        // Toolpath display offset: put the plate back where it lives. Plate 0 is the origin, so a single-plate
+        //  project slices in world coordinates and needs no offset at all.
+        const offX3 = origin.x, offZ3 = origin.z
         const buf = new ArrayBuffer(84 + triCount * 50), dvw = new DataView(buf)
         dvw.setUint32(80, triCount, true)
         let off = 84, vi = 0
@@ -319,7 +420,17 @@ export function useThreeScene(deps) {
           for (let k = 0; k < 3; k++) { dvw.setFloat32(off, out[vi++], true); dvw.setFloat32(off + 4, out[vi++], true); dvw.setFloat32(off + 8, out[vi++], true); off += 12 }
           dvw.setUint16(off, 0, true); off += 2
         }
-        return { buf, split, extruders: usedExtruders.size, offX: offX3, offZ: offZ3 }
+        // The content's own box in slice coordinates, so the slicer side can place the prime tower NEXT to the model
+        //  rather than at the bed-corner default (measured: model at the bed centre, tower 90mm away at (10,10)).
+        //  The box, not half-extents: the model is no longer centred in this frame, so where it sits matters as
+        //  much as how big it is.
+        let minX = 1e18, minY = 1e18, maxX = -1e18, maxY = -1e18
+        for (let i = 0; i < out.length; i += 3) {
+          if (out[i] < minX) minX = out[i]; if (out[i] > maxX) maxX = out[i]
+          if (out[i + 1] < minY) minY = out[i + 1]; if (out[i + 1] > maxY) maxY = out[i + 1]
+        }
+        return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
+                 topology: topology.join('|'), minX, minY, maxX, maxY }
       },
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
@@ -334,6 +445,42 @@ export function useThreeScene(deps) {
       placeOnBed: () => { for (const o of objectsRef.current) o.mesh.position.y = 0; if (selected) transform.update?.() },
       onSliced: () => { objectsGroup.visible = false; transform.detach(); selected = null; paint() },
       showObjects: () => { objectsGroup.visible = true },
+      // Footprint + height of everything currently on the plate, in the same coordinates the tower box uses.
+      modelBounds: (plateIdx = null) => {
+        let objs = objectsRef.current.filter(o => o.visible !== false)
+        if (plateIdx != null) objs = objs.filter(o => { o.mesh.updateMatrixWorld(true); const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld); return plateOfXZ(wp.x, wp.z) === plateIdx })
+        const meshes = objs.map(o => o.mesh)
+        if (!meshes.length) return null
+        const box = new THREE.Box3()
+        for (const m of meshes) { m.updateMatrixWorld(true); box.expandByObject(m) }
+        if (!Number.isFinite(box.min.x)) return null
+        return { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z, height: box.max.y - box.min.y }
+      },
+      // Draw (or move) the tower stand-in. size/height in mm, x/y in the same bed-centred coordinates the objects
+      //  use. Passing null removes it — a single-filament print has no tower to show.
+      setPrimeTower: (box) => {
+        const t = three.current
+        if (!box) {
+          if (towerMesh) { if (selected === towerMesh) { selected = null; transform.detach() }
+            t.scene.remove(towerMesh); towerMesh.geometry.dispose(); towerMesh.material.dispose(); towerMesh = null }
+          return
+        }
+        const { x, y, size, height } = box
+        if (!towerMesh) {
+          const geo = new THREE.BoxGeometry(1, 1, 1)
+          // Translucent and unlit so it reads as a placeholder rather than a part to be printed, and so the model
+          //  behind it stays visible when the two overlap — which is exactly the case worth seeing.
+          const mat = new THREE.MeshBasicMaterial({ color: 0x4fd1c5, transparent: true, opacity: 0.35, depthWrite: false })
+          towerMesh = new THREE.Mesh(geo, mat)
+          towerMesh.userData = { name: 'Prime tower', isPrimeTower: true }
+          t.scene.add(towerMesh)
+        }
+        towerMesh.userData.halfHeight = height / 2
+        towerMesh.scale.set(size, height, size)
+        towerMesh.position.set(x, height / 2, -y)      // model(x,y) -> three(x, up, -y)
+        towerMesh.visible = true
+        t.invalidate?.()
+      },
       // Stage 29-2: render N plates — each plate = grid + border, offset by PX_i, with the selected plate's border highlighted.
       setPlates: (n, bw, bd, sel) => {
         const t = three.current

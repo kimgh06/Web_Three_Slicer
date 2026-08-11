@@ -1,12 +1,21 @@
 // Maps the actual values of the (editable) right-hand settings panel -> kernel slice parameters.
 //  - Settings state is a sparse map (key->value): only edited keys are stored, otherwise the config-schema default.
 //  - For vector types (coFloats/coInts, …) only the first element is used/edited (simplification).
-import { schema, printers, loadProcesses } from './data.js'
+import { schema, printers, loadProcesses, loadFilaments } from './data.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
 // Normalize to a scalar ([0] for vectors)
-export function settingScalar(settings, key) { const v = settingRaw(settings, key); return Array.isArray(v) ? v[0] : v }
+// A per-extruder column reduced to the single value the kernel's scalar reader wants. The FIRST SET entry, not
+//  literally index 0: the filament card writes one column per extruder and leaves a null wherever that extruder has
+//  no preset, so an assignment that starts at T2 puts a null at index 0. Taking that null made filament_diameter 0,
+//  which divides into the extrusion maths and turned the whole slice into NaN — measured as
+//  "; filament used [mm] = nan, nan" from a print whose T1 had no material picked.
+export function settingScalar(settings, key) {
+  const v = settingRaw(settings, key)
+  if (!Array.isArray(v)) return v
+  return v.find(entry => entry != null && entry !== '') ?? v[0]
+}
 
 // Stage 8: real ported Fill patterns (gyroid TPMS/honeycomb/3dhoneycomb/crosshatch/concentric) + the older approximations
 const KERNEL_PATTERNS = ['rectilinear', 'grid', 'triangles', 'zigzag', 'gyroid', 'gyroid_approx',
@@ -67,6 +76,45 @@ export function processPresets() {
   return processesPromise
 }
 
+// Filament (material) presets — same lazy facade as the process presets above, over the ~540 KB filaments.js.
+//  Entries come out as objects rather than bare names because a material picker groups by type, and the type
+//  label only exists in this file. Both lists are in upstream order: byPrinter is the compatible set,
+//  defaultsByModel the vendor's recommendation (a subset, so the two overlap by design).
+let filamentsPromise = null
+export function filamentPresets() {
+  filamentsPromise ??= loadFilaments().then(data => {
+    // type/vendor are empty strings when the profile chain declares neither — the picker buckets those itself
+    const view = i => { const [name, , type, vendor] = data.presets[i]; return { name, type, vendor } }
+    return {
+      /** Every key a filament preset can set — clear these before applying a different material */
+      keys: data.keys,
+      /** Every material in the catalog — for a picker shown before any printer is chosen */
+      all: () => data.presets.map((_, i) => view(i)),
+      /** Materials compatible with a printer profile, as `{name, type, vendor}` */
+      listFor: (printerProfileName) => (data.byPrinter[printerProfileName] ?? []).map(view),
+      /** The vendor's recommended materials for that printer's model, same shape as listFor.
+       *  Filtered to the compatible set, which is not redundant: the recommendation is declared on the machine
+       *  *model* and so is nozzle-agnostic, while its entries name nozzle-specific presets ("… @Kobra 3 0.4 nozzle").
+       *  On a 0.2 nozzle profile 41% of the raw entries (1749 of 4259 across all printers) name a material whose
+       *  own compatible list excludes it — offering those would apply a preset upstream considers incompatible. */
+      recommendedFor: (printerProfileName) => {
+        const compatible = new Set(data.byPrinter[printerProfileName] ?? [])
+        return (data.defaultsByModel[printerEntry(printerProfileName)?.[2] ?? ''] ?? [])
+          .filter(i => compatible.has(i)).map(view)
+      },
+      /** The settings a material applies, ready to merge. `null` when unknown. */
+      settingsFor: (presetName) => {
+        const preset = data.presets.find(([name]) => name === presetName)
+        if (!preset) return null
+        const row = data.sets[preset[1]], out = {}
+        data.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
+        return out
+      },
+    }
+  })
+  return filamentsPromise
+}
+
 function printerEntry(profileName) {
   for (const models of Object.values(printers.byVendor)) {
     const entry = models[profileName]
@@ -94,6 +142,15 @@ export function deriveKernelParams(settings) {
   const S = k => settingScalar(settings, k)
   const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
   const bool = (k, d) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
+  // Filament retraction overrides: upstream lets a material override the machine's retraction (TPU wants a
+  //  different pull-back than PLA on the same printer). These schema keys are nullable and carry no default of
+  //  their own — "unset" means keep the machine value — so this reads the settings map directly rather than
+  //  through settingScalar, whose schema fallback would not distinguish the two.
+  const override = (filamentKey, machineKey, fallback) => {
+    const raw = settings?.[filamentKey]
+    const value = Number(Array.isArray(raw) ? raw[0] : raw)
+    return Number.isFinite(value) ? value : num(machineKey, fallback)
+  }
 
   let line_width = num('line_width', 0); if (!line_width) line_width = 0.42   // 0=auto -> default 0.42
 
@@ -128,6 +185,69 @@ export function deriveKernelParams(settings) {
   const machine = {}
   for (const [param, [key, fallback]] of Object.entries(MACHINE_LIMITS)) machine[param] = num(key, fallback)
 
+  // Support filament mapping: which extruder prints the support base/raft, and which prints the support interface.
+  //  Upstream's "Default" is the value 0 = keep whatever tool is current, and an absent key means the same thing to
+  //  the kernel (its JSON reader falls back to its own 0 default). Unmapped supports are therefore omitted rather
+  //  than sent as 0, so a settings map that maps neither produces byte-for-byte the parameters it produced before
+  //  these keys existed — same reason the per-feature widths above are omitted when unedited.
+  const supportTools = {}
+  for (const key of ['support_filament', 'support_interface_filament']) {
+    const extruderIndex = num(key, 0)
+    if (extruderIndex > 0) supportTools[key] = extruderIndex
+  }
+
+  // Multi-material: upstream stores every filament option as one entry per extruder (coFloats), and the material
+  //  picker writes each extruder's material at its own index. Only a second entry makes these arrays appear, so a
+  //  single-material slice sends exactly the keys it always did — the kernel then reads its scalars as before.
+  //  A hole (a material that overrides nothing) is filled with the value tool 0 resolved to, because the kernel
+  //  reads the array positionally and cannot tell "absent" from "0".
+  // Prime tower keys, omitted when unset so the kernel/viewer defaults stay in charge (same rule as supportTools).
+  //  wipe_tower_x/y are coFloats upstream — one entry per plate — so the scalar reduction takes the first set one.
+  const towerSettings = {}
+  {
+    const width = num('prime_tower_width', 0)
+    if (width > 0) towerSettings.prime_tower_width = width
+    // Read the map itself, NOT settingRaw: wipe_tower_x/y carry an upstream schema default of (15, 220), which is
+    //  a coordinate off the front of a 200mm bed. Taking it as "the user chose a position" put the tower outside
+    //  the plate and disabled the automatic placement entirely — measured as a tower at z=-127.5 on a 200mm bed.
+    //  Absent from the map means nobody chose one, and the placement beside the model stands.
+    const chosen = (key) => { const v = settings?.[key]; const n = Number(Array.isArray(v) ? v[0] : v)
+      return (v != null && v !== '' && Number.isFinite(n)) ? n : null }
+    const towerX = chosen('wipe_tower_x'), towerY = chosen('wipe_tower_y')
+    if (towerX != null) towerSettings.prime_tower_x = towerX
+    if (towerY != null) towerSettings.prime_tower_y = towerY
+    // The purging volumes table (flat N×N, mm³) and its scalars. Sent verbatim — the kernel indexes it [from*N+to].
+    const matrix = settingRaw(settings, 'flush_volumes_matrix')
+    if (Array.isArray(matrix) && matrix.length >= 4) towerSettings.flush_volumes_matrix = matrix.map(Number)
+    // Upstream defaults enable_prime_tower to false and relies on flushing into the model; the kernel defaults it
+    //  to true because that was the only destination it had. Both are sent only when the map carries them, so an
+    //  untouched project keeps whatever the kernel decides.
+    if ('enable_prime_tower' in (settings ?? {})) towerSettings.enable_prime_tower = !!settings.enable_prime_tower
+    if ('flush_into_infill' in (settings ?? {})) towerSettings.flush_into_infill = !!settings.flush_into_infill
+    const multiplier = num('flush_multiplier', 0)
+    if (multiplier > 0) towerSettings.flush_multiplier = multiplier
+    const prime = num('prime_volume', 0)
+    if (prime > 0) towerSettings.prime_volume = prime
+  }
+
+  const perExtruder = {}
+  for (const [param, key, scalar] of [
+    ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature', 200)],
+    ['extruder_filament_diameter', 'filament_diameter', num('filament_diameter', 1.75)],
+    ['extruder_flow_ratio', 'filament_flow_ratio', num('filament_flow_ratio', 1.0)],
+    ['extruder_retract_length', 'filament_retraction_length', override('filament_retraction_length', 'retraction_length', 0.8)],
+    ['extruder_retract_speed', 'filament_retraction_speed', override('filament_retraction_speed', 'retraction_speed', 30)],
+    ['extruder_z_hop', 'filament_z_hop', override('filament_z_hop', 'z_hop', 0.4)],
+  ]) {
+    const raw = settings?.[key]
+    if (!Array.isArray(raw) || raw.length < 2) continue
+    perExtruder[param] = raw.map(v => {
+      if (v == null || v === '') return scalar        // null survives a JSON round-trip; Number(null) would be 0
+      const n = Number(Array.isArray(v) ? v[0] : v)
+      return Number.isFinite(n) ? n : scalar
+    })
+  }
+
   return {
     ...widths,
     ...machine,
@@ -146,11 +266,17 @@ export function deriveKernelParams(settings) {
     skirt_height: num('skirt_height', 1),                       // stage 33: the kernel used to hardcode the first layer
     brim_width: num('brim_width', 0),
     brim_object_gap: num('brim_object_gap', 0),                 // stage 33: the kernel used to hardcode w*0.5
-    retract_length: num('retraction_length', 0.8),              // vector[0]
-    retraction_minimum_travel: num('retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
+    ...perExtruder,
+    // Prime tower. These were the one part of multi-material the settings map could not reach: the kernel read its
+    //  own prime_tower_* parameters and nothing mapped the upstream keys onto them, so the tower's size and place
+    //  were whatever the viewer decided. Only sent when the user actually set them — an unset width keeps the
+    //  kernel's own default, and an unset position lets the viewer's auto-placement stand.
+    ...towerSettings,
+    retract_length: override('filament_retraction_length', 'retraction_length', 0.8),   // vector[0]
+    retraction_minimum_travel: override('filament_retraction_minimum_travel', 'retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
     gcode_resolution: num('resolution', 0.01),                  // stage 33: tree-support path simplification tolerance
-    retract_speed: num('retraction_speed', 30),
-    z_hop: num('z_hop', 0.4),
+    retract_speed: override('filament_retraction_speed', 'retraction_speed', 30),
+    z_hop: override('filament_z_hop', 'z_hop', 0.4),
     travel_speed: num('travel_speed', 120),
     first_layer_speed: num('initial_layer_speed', 30),
     print_speed: num('outer_wall_speed', 60),
@@ -185,6 +311,7 @@ export function deriveKernelParams(settings) {
       const n = Number(v); return Number.isFinite(n) ? n : 0.5 })(),   // "50%" -> 0.5 (ratio of extrusion width)
     support_on_build_plate_only: bool('support_on_build_plate_only', false),
     support_interface_bottom_layers: num('support_interface_bottom_layers', 0),
+    ...supportTools,                                            // present only when a support extruder is mapped (see above)
     raft_layers: num('raft_layers', 0),
     raft_expansion: num('raft_expansion', 1.5),                 // stage 33: the kernel used to hardcode +3.0
     raft_contact_distance: num('raft_contact_distance', 0.1),   // stage 33: previously ignored by the kernel
