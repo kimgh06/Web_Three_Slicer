@@ -24,6 +24,13 @@ enum : int {
 // Build the selector from a WELDED mesh in kernel coords: verts = flat x,y,z; tris = flat 3 indices/face.
 // Face order must match the kernel's triangle order so a viewer raycast face index == selector facet.
 void construct(const std::vector<float>& verts, const std::vector<int>& tris);
+// Rebuild the selector on a mesh with the SAME topology and keep every mark. Moving, rotating or scaling a model
+// changes its coordinates and nothing else, so the selector has to be rebuilt (the brush and the layer projection
+// both work on real positions) while the paint has no reason to go. Upstream's own persistence does exactly this:
+// the marks live in a TriangleSplittingData keyed by facet index, which a transform does not touch — it is the same
+// data 3MF stores and undo/redo replays. Returns false, and falls back to a plain construct, when the face count
+// differs: a different model's facet 7 is not this one's, and pretending otherwise would move the paint elsewhere.
+bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vector<int>& tris);
 void clear();
 int  facet_count();
 bool has_paint();                    // true when ANY state (1..16) has painted facets

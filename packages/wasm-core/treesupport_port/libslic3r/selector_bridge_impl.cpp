@@ -76,6 +76,16 @@ void construct(const std::vector<float>& verts, const std::vector<int>& tris) {
     invalidate();
 }
 
+bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vector<int>& tris) {
+    const bool same_topology = g_sel && g_mesh && g_mesh->its.indices.size() == tris.size() / 3;
+    if (!same_topology) { construct(verts, tris); return false; }
+    TriangleSelector::TriangleSplittingData marks = g_sel->serialize();
+    construct(verts, tris);
+    g_sel->deserialize(marks);
+    invalidate();
+    return true;
+}
+
 void clear() { if (g_mesh) g_sel = std::make_unique<TriangleSelector>(*g_mesh); invalidate(); }
 
 int  facet_count() { return g_mesh ? int(g_mesh->its.indices.size()) : 0; }

@@ -26,10 +26,10 @@ static std::string config_option_default(const std::string& key) { return config
 // ---- Stage 20: kernel wiring for manual support painting (TriangleSelector) ----
 // The selector is built from a welded mesh under the same transform as slice() (XY bbox centered, minZ=0) -> facet indices and
 // coordinates match the slices. The viewer calls selector_prepare(stl) once on load -> selector_paint per drag -> slice().
-static void selector_prepare(em::val stl) {
+static bool selector_prepare_impl(em::val stl, bool keep_paint) {
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl);
   std::vector<Tri> tris = parse_stl(bytes);
-  if (tris.empty()) { selector_bridge::construct({}, {}); return; }
+  if (tris.empty()) { selector_bridge::construct({}, {}); return false; }
   double minx=1e18,miny=1e18,minz=1e18,maxx=-1e18,maxy=-1e18,maxz=-1e18;
   for (auto& t:tris) for (int k=0;k<3;++k){
     minx=std::min(minx,(double)t.v[k].x);maxx=std::max(maxx,(double)t.v[k].x);
@@ -45,8 +45,13 @@ static void selector_prepare(em::val stl) {
     int id=(int)(verts.size()/3); verts.push_back((float)x);verts.push_back((float)y);verts.push_back((float)z); vmap[k]=id; return id; };
   for (auto& t:tris) for (int k=0;k<3;++k)
     idx.push_back(add(t.v[k].x, t.v[k].y, t.v[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
+  if (keep_paint) return selector_bridge::reconstruct_keeping_paint(verts, idx);
   selector_bridge::construct(verts, idx);
+  return false;
 }
+static void selector_prepare(em::val stl) { selector_prepare_impl(stl, false); }
+// The same registration, except the marks survive it — for the case where the model did not change, only where it is.
+static bool selector_reprepare(em::val stl) { return selector_prepare_impl(stl, true); }
 // The bridge is addressed by EnforcerBlockerType state (1..16) now that MMU extruders can be painted too, but the
 // existing JS API is boolean (enforcer=true / blocker=false). embind coerces a JS boolean to an int as 1/0, so
 // keeping the bool wrappers is what makes the old calls mean the same thing — false must stay BLOCKER (2), not
@@ -121,6 +126,7 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("config_option_default", &config_option_default);
   em::function("cgal_planar_check_count", &arachne_bridge::cgal_planar_check_count); // stage 14: number of real CGAL planarity check calls
   em::function("selector_prepare", &selector_prepare);       // stage 20: register the mesh on load
+  em::function("selector_reprepare", &selector_reprepare);   // re-register after a transform, keeping the paint
   em::function("selector_paint", &selector_paint);           //  paint with the sphere cursor on every drag
   em::function("selector_clear", &selector_clear);
   em::function("selector_facet_count", &selector_facet_count);
