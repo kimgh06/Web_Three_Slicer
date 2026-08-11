@@ -6,7 +6,16 @@ import { schema, printers, loadProcesses, loadFilaments } from './data.js'
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
 // Normalize to a scalar ([0] for vectors)
-export function settingScalar(settings, key) { const v = settingRaw(settings, key); return Array.isArray(v) ? v[0] : v }
+// A per-extruder column reduced to the single value the kernel's scalar reader wants. The FIRST SET entry, not
+//  literally index 0: the filament card writes one column per extruder and leaves a null wherever that extruder has
+//  no preset, so an assignment that starts at T2 puts a null at index 0. Taking that null made filament_diameter 0,
+//  which divides into the extrusion maths and turned the whole slice into NaN — measured as
+//  "; filament used [mm] = nan, nan" from a print whose T1 had no material picked.
+export function settingScalar(settings, key) {
+  const v = settingRaw(settings, key)
+  if (!Array.isArray(v)) return v
+  return v.find(entry => entry != null && entry !== '') ?? v[0]
+}
 
 // Stage 8: real ported Fill patterns (gyroid TPMS/honeycomb/3dhoneycomb/crosshatch/concentric) + the older approximations
 const KERNEL_PATTERNS = ['rectilinear', 'grid', 'triangles', 'zigzag', 'gyroid', 'gyroid_approx',
@@ -176,6 +185,17 @@ export function deriveKernelParams(settings) {
   const machine = {}
   for (const [param, [key, fallback]] of Object.entries(MACHINE_LIMITS)) machine[param] = num(key, fallback)
 
+  // Support filament mapping: which extruder prints the support base/raft, and which prints the support interface.
+  //  Upstream's "Default" is the value 0 = keep whatever tool is current, and an absent key means the same thing to
+  //  the kernel (its JSON reader falls back to its own 0 default). Unmapped supports are therefore omitted rather
+  //  than sent as 0, so a settings map that maps neither produces byte-for-byte the parameters it produced before
+  //  these keys existed — same reason the per-feature widths above are omitted when unedited.
+  const supportTools = {}
+  for (const key of ['support_filament', 'support_interface_filament']) {
+    const extruderIndex = num(key, 0)
+    if (extruderIndex > 0) supportTools[key] = extruderIndex
+  }
+
   // Multi-material: upstream stores every filament option as one entry per extruder (coFloats), and the material
   //  picker writes each extruder's material at its own index. Only a second entry makes these arrays appear, so a
   //  single-material slice sends exactly the keys it always did — the kernel then reads its scalars as before.
@@ -257,6 +277,7 @@ export function deriveKernelParams(settings) {
       const n = Number(v); return Number.isFinite(n) ? n : 0.5 })(),   // "50%" -> 0.5 (ratio of extrusion width)
     support_on_build_plate_only: bool('support_on_build_plate_only', false),
     support_interface_bottom_layers: num('support_interface_bottom_layers', 0),
+    ...supportTools,                                            // present only when a support extruder is mapped (see above)
     raft_layers: num('raft_layers', 0),
     raft_expansion: num('raft_expansion', 1.5),                 // stage 33: the kernel used to hardcode +3.0
     raft_contact_distance: num('raft_contact_distance', 0.1),   // stage 33: previously ignored by the kernel
