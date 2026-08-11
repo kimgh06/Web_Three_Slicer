@@ -35,6 +35,25 @@ static std::vector<double> jarr(const std::string& s, const char* key) {
   }
   return out;
 }
+// `"key": ["PLA", "ABS"]` -> {"PLA","ABS"}. Same contract as jarr: absent or non-array yields empty, which every
+//  reader treats as "the host sent no per-filament strings". No escape handling — these are option values
+//  (material names, preset ids), not the custom G-code jstr below has to unescape.
+static std::vector<std::string> jstrarr(const std::string& s, const char* key) {
+  std::vector<std::string> out;
+  size_t p = jfind_val(s, key);
+  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
+  for (++p; p < s.size() && s[p] != ']'; ) {
+    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
+    if (p >= s.size() || s[p] == ']') break;
+    if (s[p] == 'n') { out.push_back(std::string()); p += 4; continue; }   // JSON null -> "no value for this slot"
+    if (s[p] != '"') break;
+    size_t end = s.find('"', p + 1);
+    if (end == std::string::npos) break;
+    out.push_back(s.substr(p + 1, end - p - 1));
+    p = end + 1;
+  }
+  return out;
+}
 static bool jbool(const std::string& s, const char* key, bool d) {
   size_t p = jfind_val(s, key);
   if (p == std::string::npos) return d;
@@ -129,6 +148,8 @@ Params parse_params(const std::string& j) {
   p.support_on_build_plate_only   = jbool(j,"support_on_build_plate_only",p.support_on_build_plate_only);
   p.support_interface_bottom_layers = (int)jget(j,"support_interface_bottom_layers",p.support_interface_bottom_layers);
   p.support_grid_snap             = jbool(j,"support_grid_snap",p.support_grid_snap);
+  p.support_filament              = (int)jget(j,"support_filament",p.support_filament);
+  p.support_interface_filament    = (int)jget(j,"support_interface_filament",p.support_interface_filament);
   p.tree_lite_shrink              = jget(j,"tree_lite_shrink",p.tree_lite_shrink);
   p.tree_lite_min_radius          = jget(j,"tree_lite_min_radius",p.tree_lite_min_radius);
   // WP1: parsing the real tree support shape keys — the upstream UI keys (with the organic suffix) win, falling back to the suffix-less keys
@@ -190,6 +211,20 @@ Params parse_params(const std::string& j) {
   p.mm_group_split                = (int)jget(j,"mm_group_split",p.mm_group_split);
   p.mm_group_splits               = jarr(j,"mm_group_splits");
   p.mm_group_tools                = jarr(j,"mm_group_tools");
+  p.outer_wall_filament_id        = (int)jget(j,"outer_wall_filament_id",p.outer_wall_filament_id);
+  p.inner_wall_filament_id        = (int)jget(j,"inner_wall_filament_id",p.inner_wall_filament_id);
+  p.sparse_infill_filament_id     = (int)jget(j,"sparse_infill_filament_id",p.sparse_infill_filament_id);
+  p.top_surface_filament_id       = (int)jget(j,"top_surface_filament_id",p.top_surface_filament_id);
+  p.bottom_surface_filament_id    = (int)jget(j,"bottom_surface_filament_id",p.bottom_surface_filament_id);
+  p.internal_solid_filament_id    = (int)jget(j,"internal_solid_filament_id",p.internal_solid_filament_id);
+  p.filament_map                  = jarr(j,"filament_map");
+  p.filament_type                 = jstrarr(j,"filament_type");
+  p.filament_settings_id          = jstrarr(j,"filament_settings_id");
+  p.filament_density              = jarr(j,"filament_density");
+  p.filament_cost                 = jarr(j,"filament_cost");
+  p.gcode_stats_block             = jbool(j,"gcode_stats_block",p.gcode_stats_block);
+  p.gcode_config_block            = jbool(j,"gcode_config_block",p.gcode_config_block);
+  p.params_json                   = j;
   p.auto_center                   = jbool(j,"auto_center",p.auto_center);   // stage 28
   p.wipe_tower_real               = jbool(j,"wipe_tower_real",p.wipe_tower_real);
   p.prime_tower_width             = jget(j,"prime_tower_width",p.prime_tower_width);

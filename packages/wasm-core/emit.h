@@ -18,8 +18,17 @@ namespace em = emscripten;
 extern bool g_keep_island;
 extern thread_local std::vector<float>* g_seg_w;
 extern thread_local float g_seg_w_cur;
+// Printing extruder of the segments being emitted right now. push_seg folds it into the stride-8 role field
+//  (value = role + tool*16) so the viewer can colour by filament — see the encoding note in emit.cpp.
+//  Whoever changes the tool sets this; 0 is the untooled default, which leaves the field equal to the bare role.
+extern thread_local int g_seg_tool;
 
 em::val to_f32(const std::vector<float>& v);
+// Upstream's G-code footer blocks (GCode.cpp:2646-2680 and :3987-4003), shared by both slice paths so a
+// single-material and a multi-material export describe themselves the same way. Both are opt-in through Params —
+// see gcode_stats_block / gcode_config_block for why. `filamentByTool` is millimetres of filament per tool and may
+// be empty, in which case the whole print is charged to tool 0.
+void emit_gcode_footer_blocks(GW& gw, const Params& p, const std::vector<double>& filamentByTool, int toolChanges);
 void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float type, int fPrint, int fTravel,
                 int seamMode, SeamCtx& sc, bool updateSeam=false);
 void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, float type, int fPrint, int fTravel);

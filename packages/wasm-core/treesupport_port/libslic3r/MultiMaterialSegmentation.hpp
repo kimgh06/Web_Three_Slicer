@@ -1,18 +1,21 @@
 #ifndef slic3r_MultiMaterialSegmentation_hpp_
 #define slic3r_MultiMaterialSegmentation_hpp_
 
+// Ported from slicer/src/libslic3r/MultiMaterialSegmentation.hpp. The algorithm in the .cpp is upstream's, unchanged;
+// what differs is the entry point. Upstream's takes a PrintObject and walks its layers and ModelVolumes, neither of
+// which exists in this kernel, so the driver at the bottom of the .cpp was rewritten to take the two things the
+// kernel actually has: the sliced contour of every layer, and the painted facets of every selector state.
+
+#include <functional>
 #include <utility>
 #include <vector>
+
+#include "Point.hpp"
+#include "TriangleMesh.hpp"   // indexed_triangle_set
 
 namespace Slic3r {
 
 class ExPolygon;
-class ModelVolume;
-class PrintObject;
-class PrintConfig;
-class PrintObjectConfig;
-class PrintRegionConfig;
-class FacetsAnnotation;
 
 using ExPolygons = std::vector<ExPolygon>;
 
@@ -31,32 +34,30 @@ enum class IncludeTopAndBottomLayers {
     No
 };
 
-struct ModelVolumeFacetsInfo {
-    const FacetsAnnotation &facets_annotation;
-    // Indicate if model volume is painted.
-    const bool              is_painted;
-    // Indicate if the default extruder (TriangleStateType::NONE) should be replaced with the volume extruder.
-    const bool              replace_default_extruder;
+// The painted facets of one selector state, in the same coordinates the layer contours are in.
+//  `strict` mirrors upstream's get_facets/get_facets_strict split: the projection onto the layer contour wants every
+//  facet carrying the state, while the top/bottom shell projection wants only the ones entirely of that state (a
+//  partially painted facet would otherwise cast a whole-triangle shadow over the shell).
+using PaintedFacetsOfState = std::function<indexed_triangle_set(size_t /* state */, bool /* strict */)>;
+
+// What upstream reads off the PrintRegions of a layer. One region and one nozzle here, so each is a single value.
+struct SegmentationShellParams {
+    int    top_shell_layers       = 0;
+    int    bottom_shell_layers    = 0;
+    float  layer_height           = 0.2f;
+    double outer_wall_line_width  = 0.42;
 };
 
-// Returns segmentation based on painting in segmentation gizmos.
-std::vector<std::vector<ExPolygons>> segmentation_by_painting(const PrintObject                                               &print_object,
-                                                              const std::function<ModelVolumeFacetsInfo(const ModelVolume &)> &extract_facets_info,
-                                                              size_t                                                           num_facets_states,
-                                                              float                                                            segmentation_max_width,
-                                                              float                                                            segmentation_interlocking_depth,
-                                                              bool                                                             segmentation_interlocking_beam,
-                                                              IncludeTopAndBottomLayers                                        include_top_and_bottom_layers,
-                                                              const std::function<void()>                                     &throw_on_cancel_callback);
-
-// Returns multi-material segmentation based on painting in multi-material segmentation gizmo
-std::vector<std::vector<ExPolygons>> multi_material_segmentation_by_painting(const PrintObject &print_object, const std::function<void()> &throw_on_cancel_callback);
-
-// Returns fuzzy skin segmentation based on painting in fuzzy skin segmentation gizmo
-std::vector<std::vector<ExPolygons>> fuzzy_skin_segmentation_by_painting(const PrintObject &print_object, const std::function<void()> &throw_on_cancel_callback);
-
-// Effective outer-wall line width for a region, resolved against its own nozzle with PrintRegion::flow's fallback.
-double resolve_outer_wall_line_width(const PrintRegionConfig &region_config, const PrintObjectConfig &object_config, const PrintConfig &print_config);
+// Per-layer, per-extruder regions: out[layer][extruder]. Extruder 0 is the default one, i.e. everything the paint
+// did not claim, which is exactly the shape slice_mm.cpp already partitions its layer polygons into.
+std::vector<std::vector<ExPolygons>> mm_segmentation_by_painting(const std::vector<ExPolygons>  &layer_slices,
+                                                                 const std::vector<float>       &zs,
+                                                                 const PaintedFacetsOfState     &painted_facets_of_state,
+                                                                 size_t                          num_facets_states,
+                                                                 const SegmentationShellParams  &shell,
+                                                                 float                           segmentation_max_width,
+                                                                 IncludeTopAndBottomLayers       include_top_and_bottom_layers,
+                                                                 const std::function<void()>    &throw_on_cancel_callback);
 
 } // namespace Slic3r
 

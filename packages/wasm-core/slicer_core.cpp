@@ -61,6 +61,7 @@
 #include "geom_helpers.h"
 #include "layer_data.h"
 #include "params.h"
+#include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
 #include "slice_ctx.h"
 #include "stage_cache.h"
@@ -90,6 +91,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   auto report = [&](int done, int total){ if (!onProgress.isUndefined() && !onProgress.isNull()) onProgress(done, total); };
   Params p = parse_params(params_json);
   if (p.spiral_mode) p.wall_loops = 1;                 // vase: a single outer wall
+  g_seg_tool = 0;                                      // the toolpath tool channel is thread_local and outlives a slice
   // G002: cancel flag — the UI writes 1 via SAB. Reset to 0 on entry; the loops poll it per iteration.
   auto* cxp = (std::atomic<unsigned>*)(uintptr_t)treesupport_bridge::cancel_addr();
   cxp->store(0);
@@ -123,7 +125,27 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   auto usable = [&](int b){ return b > 0 && b < (int)tris.size(); };
   bool hasGroups = usable(p.mm_group_split);
   for (double b : p.mm_group_splits) if (usable((int)b)) hasGroups = true;
-  if (p.extruder_count >= 2 && hasGroups)
+  // Painting is the other way a model becomes multi-tool, and the only way a SINGLE object can be: there is no
+  //  triangle boundary to split on, only painted facets saying "this area is Extruder2". States are scanned from 2
+  //  because state 1 is Extruder1 == T0 — painting the tool the object already prints with adds no second tool.
+  //  This used to be gated on !enable_support, because slice_multimaterial emitted no support and routing a
+  //  support-enabled slice there dropped it silently. It now runs the same support_run pass the single-material
+  //  path does, so the gate is gone and painting a material no longer costs the support.
+  //  What remains is the AMBIGUITY the gate also papered over: one selector serves both brushes, and upstream's
+  //  EnforcerBlockerType makes BLOCKER and Extruder2 the same integer 2 (selector_bridge.h). The material brush
+  //  therefore reads state 2 as "print with T1"; a support blocker painted on the same model is indistinguishable.
+  //  Upstream avoids this by keeping supported_facets and mmu_segmentation_facets as SEPARATE annotations per
+  //  volume (Model.hpp:869-879) — splitting the selector the same way is what makes both brushes usable at once.
+  bool hasPaintedTools = false;
+  for (int state = 2; state <= selector_bridge::STATE_EXTRUDER_MAX && state-1 < p.extruder_count; ++state)
+    if (p.extruder_count >= 2 && selector_bridge::painted_count(state) > 0) { hasPaintedTools = true; break; }
+  // A per-feature filament id is the third way a single object needs two tools (after triangle groups and paint):
+  //  "print the outer wall with filament 2". Ids of 0 (Default) and 1 (the default extruder, T0) add no second tool,
+  //  so only 2 and above route here — which is what keeps every existing single-material slice off this path.
+  const bool hasFeatureTools = p.outer_wall_filament_id >= 2 || p.inner_wall_filament_id >= 2 ||
+                               p.sparse_infill_filament_id >= 2 || p.top_surface_filament_id >= 2 ||
+                               p.bottom_surface_filament_id >= 2 || p.internal_solid_filament_id >= 2;
+  if (p.extruder_count >= 2 && (hasGroups || hasPaintedTools || hasFeatureTools))
     return slice_multimaterial(tris, p, onProgress, height, over_bed);
 
   // Count the z levels (the progress total)
@@ -435,6 +457,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     }
   }
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }
+  emit_gcode_footer_blocks(gw, p, {}, 0);
 
   gcode_time::Result te; std::string engine_used;
   auto absorb = [&](const gcodeproc_bridge::Result& fr){

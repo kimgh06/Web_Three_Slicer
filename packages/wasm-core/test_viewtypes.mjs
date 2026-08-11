@@ -10,12 +10,17 @@ const d=buildSegmentData(r.layers,0.42)
 const ctx={ speedByType:{1:60,2:40,3:45,4:30,5:35,7:30,8:40,9:25,10:20,11:30}, firstLayerSpeed:20, closeFanLayers:1, fanNormal:100, tempNormal:210, tempFirst:215 }
 let fail=0; const ok=(c,m)=>{console.log((c?'  ok: ':'  FAIL: ')+m);if(!c)fail++}
 
-ok(VIEW_TYPES.length===6, `6 view types: ${VIEW_TYPES.map(v=>v.key).join(',')}`)
+// The viewer gained `filament` (colour by printing extruder) alongside the original six, so the expected set is
+//  named in full rather than counted — a count alone would pass on any 7 keys, including a renamed one.
+const EXPECTED_VIEW_TYPES = ['feature','speed','height','width','fan','temp','filament']
+ok(VIEW_TYPES.length===EXPECTED_VIEW_TYPES.length &&
+   VIEW_TYPES.every((v,i)=>v.key===EXPECTED_VIEW_TYPES[i]),
+   `${EXPECTED_VIEW_TYPES.length} view types in order: ${VIEW_TYPES.map(v=>v.key).join(',')}`)
 ok(DEFAULT_RANGES_COLORS.length===11 && DEFAULT_RANGES_COLORS[0][2]>0.4 && DEFAULT_RANGES_COLORS[10][0]>0.5,
    'desktop 11-color range palette (blue-ish→red-ish)')
 ok(!!d.meta && d.meta.vType.length===d.nV, 'buildSegmentData exposes per-vertex meta')
 
-for(const vt of ['feature','speed','height','width','fan','temp']){
+for(const vt of EXPECTED_VIEW_TYPES){
   const c=computeColors(d,vt,ctx)
   let nan=false; for(let i=0;i<c.color.length;i++) if(!Number.isFinite(c.color[i])){nan=true;break}
   ok(!nan && c.color.length===d.nV*4, `${vt}: color array valid (no NaN), min=${c.min.toFixed(2)} max=${c.max.toFixed(2)}`)
@@ -26,6 +31,11 @@ const cw=computeColors(d,'width',ctx)
 ok(Math.abs(cw.min-0.42)<0.05 && Math.abs(cw.max-0.6)<0.06, `width range covers 0.42..0.6 (got ${cw.min.toFixed(2)}..${cw.max.toFixed(2)})`)
 const cf=computeColors(d,'feature',ctx)
 ok(!cf.cont, 'feature type is discrete (fixed colors, not heatmap)')
+// An extruder index is a label, not a magnitude — the filament view must stay discrete, and this single-extruder
+//  slice must decode to tool 0 everywhere (the kernel only folds a tool into the role field when one is loaded).
+const cfil=computeColors(d,'filament',ctx)
+ok(!cfil.cont, 'filament view is discrete (fixed per-extruder colors, not heatmap)')
+ok(d.meta.vTool.length===d.nV && d.meta.vTool.every(t=>t===0), 'single-extruder slice decodes to tool 0 on every vertex')
 // speed heatmap: wall vs infill get different packed colors
 const wallV=d.meta.vType, packOf=(c,i)=>c.color[i*4]
 let wallCol=null, infCol=null

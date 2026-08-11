@@ -61,6 +61,15 @@ struct GW {
   //  Set next to filament_area at preamble time and re-set on every tool change; the defaults match the Params
   //  defaults so a caller that never touches them is unchanged.
   double tool_filament_diameter=1.75, tool_flow_ratio=1.0;
+  // Currently loaded tool, so support_filament can print support with a different extruder. tool<0 means "keep the
+  //  current one" (the upstream 0 = Default), and a T is written only on an actual change — with the defaults
+  //  nothing is ever emitted and the single-material G-code is byte-identical to before.
+  int    cur_tool=0;
+  void set_tool(int tool){
+    if (tool < 0 || tool == cur_tool) return;
+    cur_tool = tool;
+    char t[16]; std::snprintf(t, sizeof t, "T%d", tool); raw(t);
+  }
   double last_vol_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
   // Stage 6: wall-avoiding travel
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.

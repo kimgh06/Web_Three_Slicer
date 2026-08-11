@@ -14,9 +14,16 @@
 bool g_keep_island = false;   // G003: when the cache is kept, emit copies island instead of moving it (so the cache can be reused repeatedly)
 thread_local std::vector<float>* g_seg_w = nullptr;
 thread_local float g_seg_w_cur = 0.42f;
+// Printing extruder folded into the role field: value = role + tool*16 (the viewer decodes role = value & 15,
+//  tool = value >>> 4 in viewer/src/toolpath_segments.js). Roles only ever run 0..11, so the spare high bits carry
+//  the tool instead of widening the stride to 9 — the segment stream is the largest array the viewer holds and a
+//  9th float would cost +12.5% of it for one small integer. With the untooled default (0) the field IS the bare
+//  role, which is what keeps every single-material stream byte-for-byte what it was.
+thread_local int g_seg_tool = 0;
 static inline void push_seg(std::vector<float>& v,double x0,double y0,double x1,double y1,double z,float type){
-  v.push_back((float)x0);v.push_back((float)y0);v.push_back((float)z);v.push_back(type);
-  v.push_back((float)x1);v.push_back((float)y1);v.push_back((float)z);v.push_back(type);
+  const float enc = type + (float)(g_seg_tool * 16);
+  v.push_back((float)x0);v.push_back((float)y0);v.push_back((float)z);v.push_back(enc);
+  v.push_back((float)x1);v.push_back((float)y1);v.push_back((float)z);v.push_back(enc);
   if (g_seg_w) g_seg_w->push_back(g_seg_w_cur);
 }
 em::val to_f32(const std::vector<float>& v){
@@ -210,4 +217,94 @@ void emit_scarf_loop(GW& gw, std::vector<float>& tp, Path wp, double z, double h
     s2+=seg; if (s2>=slen) break;
   }
   sc.lastX=pts[0].x; sc.lastY=pts[0].y; sc.has=true;
+}
+
+// ---- G-code footer blocks (upstream GCode.cpp) --------------------------------------------------------------
+//  Two things upstream always writes and this kernel used to sum into a single "; filament used: N mm":
+//   · the per-filament totals, in millimetres, cm3, grams and cost — the last two only when the host supplied a
+//     density / price, because inventing one would be worse than omitting the line;
+//   · the parameters the slice ran with, delimited so a tool can find them (upstream re-imports its own exports
+//     from exactly this block).
+void emit_gcode_footer_blocks(GW& gw, const Params& p, const std::vector<double>& filamentByTool, int toolChanges) {
+  if (p.gcode_stats_block) {
+    // One entry per filament, comma separated, in filament order — upstream's own layout, so the same parsers read it.
+    std::vector<double> used = filamentByTool;
+    if (used.empty()) used.push_back(gw.filament);          // single-material: the whole print is filament 1
+    const double area = PI * p.filament_diameter * p.filament_diameter / 4.0;   // mm2
+    std::string mm = "; filament used [mm] = ", cm3 = "; filament used [cm3] = ";
+    std::string grams = "; filament used [g] = ", cost = "; filament cost = ";
+    bool anyWeight = false, anyCost = false;
+    double totalWeight = 0, totalCost = 0;
+    char buf[64];
+    for (size_t t = 0; t < used.size(); ++t) {
+      if (t) { mm += ", "; cm3 += ", "; grams += ", "; cost += ", "; }
+      const double volume_mm3 = used[t] * area;
+      std::snprintf(buf, sizeof buf, "%.2f", used[t]);            mm  += buf;
+      std::snprintf(buf, sizeof buf, "%.2f", volume_mm3 * 0.001); cm3 += buf;
+      // density is g/cm3 and cost is per kg, the units the filament profiles use.
+      const double density = Params::forTool(p.filament_density, (int)t, 0.0);
+      const double weight  = volume_mm3 * 0.001 * density;
+      const double price   = Params::forTool(p.filament_cost, (int)t, 0.0) * weight * 0.001;
+      std::snprintf(buf, sizeof buf, "%.2f", weight); grams += buf;
+      std::snprintf(buf, sizeof buf, "%.2f", price);  cost  += buf;
+      if (weight > 0) { anyWeight = true; totalWeight += weight; }
+      if (price  > 0) { anyCost   = true; totalCost   += price; }
+    }
+    gw.raw(mm.c_str());
+    gw.raw(cm3.c_str());
+    if (anyWeight) gw.raw(grams.c_str());
+    if (anyCost)   gw.raw(cost.c_str());
+    if (anyWeight) { std::snprintf(buf, sizeof buf, "; total filament used [g] = %.2f", totalWeight); gw.raw(buf); }
+    if (anyCost)   { std::snprintf(buf, sizeof buf, "; total filament cost = %.2f", totalCost);       gw.raw(buf); }
+    if (toolChanges > 0) { std::snprintf(buf, sizeof buf, "; total filament change = %d", toolChanges); gw.raw(buf); }
+    // The material each filament is, so the export says what it is made of and not only how much it used.
+    for (size_t t = 0; t < used.size(); ++t) {
+      const std::string type = t < p.filament_type.size() ? p.filament_type[t] : std::string();
+      const std::string id   = t < p.filament_settings_id.size() ? p.filament_settings_id[t] : std::string();
+      if (type.empty() && id.empty()) continue;
+      std::string line = "; filament " + std::to_string(t + 1) + " =";
+      if (!type.empty()) line += " " + type;
+      if (!id.empty())   line += " (" + id + ")";
+      gw.raw(line.c_str());
+    }
+  }
+  if (p.gcode_config_block) {
+    // Upstream dumps its whole config here; the kernel's config IS the params object it was handed, so that is what
+    //  goes in — one `; key = value` per entry, which is the form upstream's own block uses.
+    gw.raw("; CONFIG_BLOCK_START");
+    const std::string& j = p.params_json;
+    size_t i = j.find('{');
+    if (i != std::string::npos) {
+      ++i;
+      while (i < j.size()) {
+        while (i < j.size() && (j[i]==' '||j[i]=='\t'||j[i]=='\n'||j[i]==',')) ++i;
+        if (i >= j.size() || j[i] == '}') break;
+        if (j[i] != '"') break;                       // not a key — stop rather than emit garbage
+        size_t keyEnd = j.find('"', i + 1);
+        if (keyEnd == std::string::npos) break;
+        const std::string key = j.substr(i + 1, keyEnd - i - 1);
+        size_t colon = j.find(':', keyEnd);
+        if (colon == std::string::npos) break;
+        size_t v = colon + 1;
+        while (v < j.size() && (j[v]==' '||j[v]=='\t'||j[v]=='\n')) ++v;
+        // Copy the value verbatim, tracking nesting and strings so a nested array or an escaped quote cannot end it early.
+        size_t start = v; int depth = 0; bool inString = false;
+        for (; v < j.size(); ++v) {
+          const char c = j[v];
+          if (inString) { if (c == '\\') ++v; else if (c == '"') inString = false; continue; }
+          if (c == '"') { inString = true; continue; }
+          if (c == '[' || c == '{') ++depth;
+          else if (c == ']' || c == '}') { if (depth == 0) break; --depth; }
+          else if (c == ',' && depth == 0) break;
+        }
+        std::string value = j.substr(start, v - start);
+        while (!value.empty() && (value.back()==' '||value.back()=='\n'||value.back()=='\t')) value.pop_back();
+        // Newlines would break the one-comment-per-line form (custom G-code arrives as one multi-line string).
+        for (char& c : value) if (c == '\n' || c == '\r') c = ' ';
+        gw.raw(("; " + key + " = " + value).c_str());
+        i = v;
+      }
+    }
+    gw.raw("; CONFIG_BLOCK_END");
+  }
 }

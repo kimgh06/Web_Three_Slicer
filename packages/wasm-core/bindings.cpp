@@ -47,19 +47,63 @@ static void selector_prepare(em::val stl) {
     idx.push_back(add(t.v[k].x, t.v[k].y, t.v[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
   selector_bridge::construct(verts, idx);
 }
+// The bridge is addressed by EnforcerBlockerType state (1..16) now that MMU extruders can be painted too, but the
+// existing JS API is boolean (enforcer=true / blocker=false). embind coerces a JS boolean to an int as 1/0, so
+// keeping the bool wrappers is what makes the old calls mean the same thing — false must stay BLOCKER (2), not
+// NONE (0). The *_state twins below are the way to reach Extruder3..16.
+static int selector_state_of(bool enforcer) {
+  return enforcer ? selector_bridge::STATE_ENFORCER : selector_bridge::STATE_BLOCKER;
+}
+static void selector_paint_shape(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int state, int cursor) {
+  // The bridge accepts STATE_NONE (it is the eraser), but this entry point deliberately does not pass it through:
+  // a JS `false` arrives here as the int 0, so a boolean that leaked into the state argument would ERASE the brushed
+  // facets instead of doing nothing. Erasing goes through selector_erase below, whose signature has no state at all.
+  if (state == selector_bridge::STATE_NONE) return;
+  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, state, cursor);
+}
+static void selector_paint_state(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int state) {
+  selector_paint_shape(facet, hx,hy,hz, cx,cy,cz, radius, state, selector_bridge::CURSOR_SPHERE);
+}
+// Erase = paint STATE_NONE, returning the brushed facets to the default extruder (upstream's shift+drag eraser).
+// It is a separate function rather than "paint with state 0" precisely because of the coercion above: with no state
+// parameter there is nothing for a stray boolean to turn into NONE, so the erase can only be reached on purpose.
+static void selector_erase(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius) {
+  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, selector_bridge::STATE_NONE, selector_bridge::CURSOR_SPHERE);
+}
 static void selector_paint(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, bool enforcer) {
-  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, enforcer);
+  selector_paint_state(facet, hx,hy,hz, cx,cy,cz, radius, selector_state_of(enforcer));
+}
+// The fill tools. Same NONE rule as the brush: the painting entry point refuses state 0 and each has its own erase
+// twin with no state argument, so the eraser keeps working with every tool instead of silently doing nothing.
+static void selector_seed_fill(int facet, float hx,float hy,float hz, float angle_deg, int state) {
+  if (state == selector_bridge::STATE_NONE) return;
+  selector_bridge::seed_fill(facet, hx,hy,hz, angle_deg, state);
+}
+static void selector_seed_fill_erase(int facet, float hx,float hy,float hz, float angle_deg) {
+  selector_bridge::seed_fill(facet, hx,hy,hz, angle_deg, selector_bridge::STATE_NONE);
+}
+static void selector_bucket_fill(int facet, float hx,float hy,float hz, float angle_deg, bool propagate, int state) {
+  if (state == selector_bridge::STATE_NONE) return;
+  selector_bridge::bucket_fill(facet, hx,hy,hz, angle_deg, propagate, state);
+}
+static void selector_bucket_fill_erase(int facet, float hx,float hy,float hz, float angle_deg, bool propagate) {
+  selector_bridge::bucket_fill(facet, hx,hy,hz, angle_deg, propagate, selector_bridge::STATE_NONE);
 }
 static void selector_clear() { selector_bridge::clear(); }
 static int  selector_facet_count() { return selector_bridge::facet_count(); }
-static int  selector_painted_count(bool enforcer) { return selector_bridge::painted_count(enforcer); }
-static em::val selector_overlay(bool enforcer) { return to_f32(selector_bridge::overlay(enforcer)); }
-static em::val selector_project_counts(em::val zsVal, bool enforcer) {   // debug: #polys per z
+static int  selector_painted_count_state(int state) { return selector_bridge::painted_count(state); }
+static int  selector_painted_count(bool enforcer) { return selector_painted_count_state(selector_state_of(enforcer)); }
+static em::val selector_overlay_state(int state) { return to_f32(selector_bridge::overlay(state)); }
+static em::val selector_overlay(bool enforcer) { return selector_overlay_state(selector_state_of(enforcer)); }
+static em::val selector_project_counts_state(em::val zsVal, int state) {   // debug: #polys per z
   std::vector<double> zs = em::convertJSArrayToNumberVector<double>(zsVal);
-  auto pl = selector_bridge::project_layers(zs, enforcer);
+  auto pl = selector_bridge::project_layers(zs, state);
   std::vector<float> counts; counts.reserve(pl.size());
   for (auto& layer : pl) counts.push_back((float)layer.size());
   return to_f32(counts);
+}
+static em::val selector_project_counts(em::val zsVal, bool enforcer) {
+  return selector_project_counts_state(zsVal, selector_state_of(enforcer));
 }
 
 EMSCRIPTEN_BINDINGS(slicer) {
@@ -83,4 +127,16 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("selector_painted_count", &selector_painted_count);
   em::function("selector_overlay", &selector_overlay);       //  overlay triangles (enforcer=blue / blocker=red)
   em::function("selector_project_counts", &selector_project_counts); // debug: number of projected polygons per z
+  // State-addressed twins: 1=ENFORCER(Extruder1), 2=BLOCKER(Extruder2), 3..16=Extruder3..16 — MMU painting.
+  em::function("selector_paint_state", &selector_paint_state);
+  em::function("selector_erase", &selector_erase);            //  the eraser: writes NONE, no state argument to coerce
+  em::function("selector_painted_count_state", &selector_painted_count_state);
+  em::function("selector_overlay_state", &selector_overlay_state);
+  em::function("selector_project_counts_state", &selector_project_counts_state);
+  // The other painting tools upstream offers next to the radius brush (GLGizmoMmuSegmentation's tool_type).
+  em::function("selector_paint_shape", &selector_paint_shape);         //  brush with a chosen cursor (0=sphere, 1=circle)
+  em::function("selector_seed_fill", &selector_seed_fill);             //  "smart fill": flood the smooth feature under the click
+  em::function("selector_seed_fill_erase", &selector_seed_fill_erase);
+  em::function("selector_bucket_fill", &selector_bucket_fill);         //  "bucket fill" / with propagate=false, "triangles"
+  em::function("selector_bucket_fill_erase", &selector_bucket_fill_erase);
 }
