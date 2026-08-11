@@ -11,10 +11,41 @@ OrcaSlicer configuration metadata extracted from the original C++ sources, as pl
 | `invalidation-map.json` | Option-change → re-slice step mapping (Print/PrintObject invalidation branches) |
 | `printers.json` | 1,035 vendor machine profiles across 64 vendors: motion limits, bed and nozzle |
 | `processes.js` | 2,243 print presets (speeds, accelerations), joined to printers by `compatible_printers` |
-| `filaments.js` | 5,999 material presets over 82 filament types, plus each printer model's recommended list |
+| `filaments.js` | 5,999 material presets over 81 filament types, plus each printer model's recommended list |
 
 The last two are column-oriented and deduplicated, and load on demand. Read them through `processPresets()` /
 `filamentPresets()` in `three-slicer/settings` rather than decoding the layout by hand.
+
+## Material presets
+
+`filaments.js` carries only the keys the kernel actually reads (14 today: temperatures, flow, diameter, cooling,
+and the retraction/z-hop overrides a material is allowed to apply on top of the machine's). That column set is
+disjoint from `processes.js`' 59, which is what lets a material pick and a process pick be applied independently —
+neither clears the other's values.
+
+`filamentPresets()` is the facade:
+
+```js
+import { filamentPresets } from 'three-slicer/settings'
+
+const filaments = await filamentPresets()
+filaments.listFor('Bambu Lab X1 Carbon 0.4 nozzle')   // [{name, type, vendor}, …] compatible materials
+filaments.recommendedFor('Bambu Lab X1 Carbon 0.4 nozzle')  // the vendor's shortlist, filtered to the above
+filaments.settingsFor('Bambu PLA Basic @BBL X1C')     // {schemaKey: value} ready to merge
+filaments.keys                                        // clear these before applying a different material
+```
+
+`recommendedFor()` intersects with the compatible list rather than returning the raw recommendation, and the
+filtering is not cosmetic: the recommendation is declared on the machine **model** and so is nozzle-agnostic,
+while its entries name nozzle-specific presets. Across all 1,035 printer profiles, 1,749 of 4,259 raw
+recommendation entries (41%) name a material whose own compatible list excludes that profile.
+
+`type` and `vendor` are empty strings when the profile chain declares neither — 265 of the 5,999 presets. That is
+why the type count above is 81 and not 82: the empty bucket is "no type declared", not a type.
+
+Filament options are per-extruder vectors upstream (one entry per extruder), so a preset — which describes a single
+material — always contributes the single first entry. Building a multi-material settings map means writing each
+extruder's material at its own index in those vectors; see `deriveKernelParams` in `three-slicer/settings`.
 
 ```js
 import schema from 'three-slicer/data/config-schema.json'

@@ -17,7 +17,9 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 - Browser worker entry for off-main-thread slicing.
 - React `<Viewport/>` for model import, plate layout, transform controls, slicing, G-code export, and GPU toolpath preview.
 - React `<SettingsPanel/>` generated from extracted OrcaSlicer metadata.
-- Extracted data files for custom UIs: config schema, UI tree, toggle rules, and invalidation map.
+- Vendor printer, print-process and filament preset catalogs, with one material assignable per extruder.
+- Support painting and material painting, plus per-tool filament and purge statistics.
+- Extracted data files for custom UIs: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament catalogs.
 - Automatic multithreaded WASM selection on cross-origin-isolated browser pages.
 
 ## Installation
@@ -229,7 +231,52 @@ const params = deriveKernelParams(settings)
 const result = slicer.slice(stlArrayBuffer, params)
 ```
 
-`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel. Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element.
+`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel (92 today). Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
+
+## Materials and Multi-Material
+
+A material is a filament preset — temperatures, flow, diameter, cooling, and the retraction/z-hop overrides a material may apply on top of the machine's. Read the catalog through the facade rather than decoding the data file:
+
+```js
+import { filamentPresets } from 'three-slicer/settings'
+
+const filaments = await filamentPresets()
+filaments.listFor('Bambu Lab X1 Carbon 0.4 nozzle')          // [{name, type, vendor}, …]
+filaments.recommendedFor('Bambu Lab X1 Carbon 0.4 nozzle')   // the vendor's shortlist for that machine model
+const material = filaments.settingsFor('Bambu PLA Basic @BBL X1C')
+```
+
+The filament key set is disjoint from the process key set, so applying a material never clears a process pick and vice versa.
+
+**One material per extruder.** OrcaSlicer stores every filament option as one entry per extruder, so a multi-material settings map writes each extruder's material at its own index:
+
+```js
+const params = {
+  ...deriveKernelParams({
+    nozzle_temperature: [255, 220],     // T0 ABS, T1 PLA
+    filament_flow_ratio: [0.95, 1.0],
+  }),
+  extruder_count: 2,                    // set on the params directly; not a derived schema key
+}
+```
+
+The kernel reloads the loaded-filament settings at every tool change and reports the split back as `stats.filament_mm_by_tool` (indexed by tool number, sums to `filament_mm`) plus `stats.filament_mm_purge` for the prime/wipe tower share. `support_filament` and `support_interface_filament` are 1-based filament indices — `0` means "keep the loaded tool" — choosing which extruder prints the support base/raft and the support interface.
+
+A single-material slice sends none of these keys and produces exactly the G-code it produced before multi-material existed.
+
+### Painting a region onto another extruder
+
+Painting is the only way a single object can print in two materials. Painting states follow OrcaSlicer's own enum, in which state `1` is both the support enforcer and Extruder 1, state `2` is both the support blocker and Extruder 2, and `3..16` are Extruders 3 to 16. The state-addressed protocol is on the worker; `slicer.paint()` on the direct handle is the original enforcer/blocker boolean pair.
+
+```js
+worker.postMessage({ cmd: 'prepare', stl })
+worker.postMessage({ cmd: 'paint', state: 3, facet, hx, hy, hz, cx, cy, cz, radius, states: [1, 2, 3] })
+worker.postMessage({ cmd: 'erase', facet, hx, hy, hz, cx, cy, cz, radius })
+```
+
+`erase` is a separate command rather than `state: 0`, because a JS `false` coerces to `0` at the WASM boundary and the legacy blocker brush sends exactly that — so the state path refuses `0` outright.
+
+Because a single enum serves both jobs, a support blocker paint and an Extruder 2 paint are the same mark on a facet, and painted materials only take effect with support turned off (the painted multi-material path emits no support). Support painting is unaffected: a support-enabled slice stays on the single-material path.
 
 ## Worker Usage
 
@@ -315,10 +362,17 @@ The package includes extracted OrcaSlicer metadata for custom interfaces:
 
 | File | Use |
 | --- | --- |
-| `three-slicer/data/config-schema.json` | Setting definitions, defaults, labels, units, and option metadata |
+| `three-slicer/data/config-schema.json` | Setting definitions, defaults, labels, units, and option metadata (923 options) |
 | `three-slicer/data/ui-tree.json` | Tab, page, group, and option layout |
 | `three-slicer/data/toggle-rules.json` | Original enable/disable rule metadata |
 | `three-slicer/data/invalidation-map.json` | Setting invalidation/dependency metadata |
+| `three-slicer/data/printers.json` | 1,035 vendor machine profiles across 64 vendors: motion limits, bed, nozzle |
+| `three-slicer/data/processes.js` | 2,243 print presets (speeds, accelerations) |
+| `three-slicer/data/filaments.js` | 5,999 material presets over 81 filament types, plus each printer model's recommended list |
+
+The last three are large, column-oriented and deduplicated, and they load on demand. Read them through
+`printerSettings()`, `processPresets()` and `filamentPresets()` from `three-slicer/settings` rather than decoding
+the layout by hand.
 
 ## API Reference
 
@@ -326,14 +380,17 @@ The package includes extracted OrcaSlicer metadata for custom interfaces:
 | --- | --- |
 | `createSlicer()` | Loads the WASM kernel and returns a slicer handle |
 | `slicer.slice(stl, params, callbacks?)` | Slices binary STL input to G-code or streamed layers |
-| `slicer.paintPrepare(stl)` | Prepares support painting against a model |
-| `slicer.paint(args)` | Paints support enforcer/blocker data |
-| `slicer.paintClear()` | Clears support painting data |
-| `slicer.overlay(enforcer)` | Returns support painting overlay data |
+| `slicer.paintPrepare(stl)` | Prepares painting against a model |
+| `slicer.paint(args)` | Paints enforcer/blocker data (boolean pair; the state-addressed form is worker-only) |
+| `slicer.paintClear()` | Clears painting data for every state |
+| `slicer.overlay(enforcer)` | Returns painting overlay data |
 | `slicer.heapSize()` | Returns current WASM heap size |
 | `slicer.dispose()` | Releases the slicer handle for garbage collection |
 | `engineWorkerURL()` | Returns a browser worker URL |
 | `deriveKernelParams(settings)` | Converts sparse OrcaSlicer settings to kernel params |
+| `printerSettings(name)` | Settings a vendor machine profile applies |
+| `processPresets()` | Lazy facade over the print (process) preset catalog |
+| `filamentPresets()` | Lazy facade over the material preset catalog |
 | `<Viewport/>` | React slicer viewport |
 | `<SettingsPanel/>` | React settings form |
 
@@ -354,6 +411,8 @@ The package includes extracted OrcaSlicer metadata for custom interfaces:
 - `registerLoader(exts, fn)` from `three-slicer/viewer/loaders` adds any other format. Formats needing a heavy dependency are kept out of the package so it stays runtime-dependency-free — see `web/viewer/src/step_loader.js` for a STEP loader built on `occt-import-js` (OCCT WASM).
 - Not every OrcaSlicer schema key is wired into the WASM kernel yet.
 - Some vector settings are simplified to their first element.
+- Material painting and support cannot currently produce two materials on the same slice: the painted multi-material path emits no support, and one triangle selector serves both brushes.
+- The multi-material prime tower is a real ported wipe tower, but the fallback square ring used when it fails is not.
 - Multithreaded WASM requires cross-origin isolation.
 - `three` is pinned as a peer dependency because viewer internals depend on the `TransformControls` API shape.
 
