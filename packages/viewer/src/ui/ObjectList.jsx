@@ -4,7 +4,7 @@ import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../icons.js'
 // Object list card: print toggle, name, extruder selector, split and delete, plus the two slice toggles.
 export default function ObjectList({
   objects, extruderColors, onToggleVisible, onExtruder, onSplit, onRemove,
-  supportOn, onToggleSupport, wipeTowerReal, onToggleWipeTower,
+  supportOn, onToggleSupport,
   overhangOn, onToggleOverhang, overhangAngle, paintMode, onTogglePaint,
   supportStyle, supportStyles, onSupportStyle,
   supportFilament, onSupportFilament, supportInterfaceFilament, onSupportInterfaceFilament,
@@ -104,7 +104,6 @@ export default function ObjectList({
           </button>
         </div>
       )}
-      <label className="slice-support"><input type="checkbox" checked={wipeTowerReal} onChange={onToggleWipeTower} title="Use the upstream WipeTower to compute purge volumes on multi-material tool changes (off = a simple square ring)" data-testid="wipe-tower-real-toggle" /> Real wipe tower <span className="muted">(MM)</span></label>
     </section>
   )
 }
