@@ -201,6 +201,35 @@ export function deriveKernelParams(settings) {
   //  single-material slice sends exactly the keys it always did — the kernel then reads its scalars as before.
   //  A hole (a material that overrides nothing) is filled with the value tool 0 resolved to, because the kernel
   //  reads the array positionally and cannot tell "absent" from "0".
+  // Prime tower keys, omitted when unset so the kernel/viewer defaults stay in charge (same rule as supportTools).
+  //  wipe_tower_x/y are coFloats upstream — one entry per plate — so the scalar reduction takes the first set one.
+  const towerSettings = {}
+  {
+    const width = num('prime_tower_width', 0)
+    if (width > 0) towerSettings.prime_tower_width = width
+    // Read the map itself, NOT settingRaw: wipe_tower_x/y carry an upstream schema default of (15, 220), which is
+    //  a coordinate off the front of a 200mm bed. Taking it as "the user chose a position" put the tower outside
+    //  the plate and disabled the automatic placement entirely — measured as a tower at z=-127.5 on a 200mm bed.
+    //  Absent from the map means nobody chose one, and the placement beside the model stands.
+    const chosen = (key) => { const v = settings?.[key]; const n = Number(Array.isArray(v) ? v[0] : v)
+      return (v != null && v !== '' && Number.isFinite(n)) ? n : null }
+    const towerX = chosen('wipe_tower_x'), towerY = chosen('wipe_tower_y')
+    if (towerX != null) towerSettings.prime_tower_x = towerX
+    if (towerY != null) towerSettings.prime_tower_y = towerY
+    // The purging volumes table (flat N×N, mm³) and its scalars. Sent verbatim — the kernel indexes it [from*N+to].
+    const matrix = settingRaw(settings, 'flush_volumes_matrix')
+    if (Array.isArray(matrix) && matrix.length >= 4) towerSettings.flush_volumes_matrix = matrix.map(Number)
+    // Upstream defaults enable_prime_tower to false and relies on flushing into the model; the kernel defaults it
+    //  to true because that was the only destination it had. Both are sent only when the map carries them, so an
+    //  untouched project keeps whatever the kernel decides.
+    if ('enable_prime_tower' in (settings ?? {})) towerSettings.enable_prime_tower = !!settings.enable_prime_tower
+    if ('flush_into_infill' in (settings ?? {})) towerSettings.flush_into_infill = !!settings.flush_into_infill
+    const multiplier = num('flush_multiplier', 0)
+    if (multiplier > 0) towerSettings.flush_multiplier = multiplier
+    const prime = num('prime_volume', 0)
+    if (prime > 0) towerSettings.prime_volume = prime
+  }
+
   const perExtruder = {}
   for (const [param, key, scalar] of [
     ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature', 200)],
@@ -238,6 +267,11 @@ export function deriveKernelParams(settings) {
     brim_width: num('brim_width', 0),
     brim_object_gap: num('brim_object_gap', 0),                 // stage 33: the kernel used to hardcode w*0.5
     ...perExtruder,
+    // Prime tower. These were the one part of multi-material the settings map could not reach: the kernel read its
+    //  own prime_tower_* parameters and nothing mapped the upstream keys onto them, so the tower's size and place
+    //  were whatever the viewer decided. Only sent when the user actually set them — an unset width keeps the
+    //  kernel's own default, and an unset position lets the viewer's auto-placement stand.
+    ...towerSettings,
     retract_length: override('filament_retraction_length', 'retraction_length', 0.8),   // vector[0]
     retraction_minimum_travel: override('filament_retraction_minimum_travel', 'retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
     gcode_resolution: num('resolution', 0.01),                  // stage 33: tree-support path simplification tolerance
