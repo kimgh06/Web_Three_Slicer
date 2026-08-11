@@ -30,6 +30,53 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   upstream's own `TriangleSelector::serialize`/`deserialize`. It reports false and starts clean when the face count
   differs, because a different model's facet 7 is not this one's. The viewer decides which case it is from a
   TOPOLOGY key (`objectId:extruder:faces` per object), not from the vertex bytes: bytes change on every move.
+- **A `.3mf` is a project, not a mesh format.** Anything off MakerWorld, and every OrcaSlicer/BambuStudio "save
+  project", is a zip whose `3D/3dmodel.model` is only one member; `Metadata/project_settings.config` holds the
+  flattened preset the author sliced with, `Metadata/model_settings.config` the per-object state and plate layout.
+  `parse3MFProject` reads all of it (`parse3MF` stays the geometry-only shape). Two traps that do not look like
+  traps: **(1)** every value in `project_settings.config` is a STRING — a bool is `"0"`/`"1"` — and `deriveKernelParams`
+  reads bools with `!!v`, so importing raw turns every disabled option ON (`!!"0" === true`). Everything must go
+  through `normalizeProjectSettings`, which coerces by config-schema type and drops non-schema keys. **(2)** The
+  same trap again in a shape that does not look like one: a POINT is the string `"XxY"`, while every consumer
+  indexes it as an `[x, y]` pair — so a raw `printable_area[1][0]` is the CHARACTER `'2'` of `"256x0"` and the bed
+  comes out **2mm x NaN** (measured on a real MakerWorld project). `coPointsGroups` is a comma-separated LIST of
+  such points in one string, and a few options (`best_object_pos`) use `,` where the rest use `x`. A `test_3mf_project.mjs`
+  guard asserts every schema option type has a decided coercion, because points were missed exactly by nothing
+  forcing that decision. **(3)** Painting is NOT in `model_settings.config` with the rest of the per-object state —
+  it rides on the `<triangle>` tag itself as `paint_color` / `paint_supports` / `paint_seam` / `paint_fuzzy_skin`.
+  Upstream's `inherits` / `different_settings_to_system` reconciliation (`Preset.cpp:2577`) is deliberately NOT
+  reproduced: it exists to rebase a stored preset onto a LOCAL vendor preset database of a possibly different
+  version, and this package has no such database — the flattened values are taken as written.
+- A painted facet's 3mf value is its split TREE, not a state: upstream writes the same bitstream
+  `TriangleSelector::serialize` produces, as hex, most-significant nibble first (so Extruder3 reads `"0C"`). The
+  selector already had both halves of that codec; the only piece that had to be ported is the hex↔bitstream
+  conversion, `FacetsAnnotation::get_triangle_as_string`/`set_triangle_from_string` (`Model.cpp:3542`), now
+  `selector_bridge::apply_paint_hex`. Three things it forces on callers: `triangles_to_split` must be strictly
+  ascending (the bridge sorts and de-duplicates, since a 3mf lists facets in its own order); the import REPLACES
+  every mark because upstream's `deserialize` resets first, so it may only run on a freshly prepared selector; and
+  a malformed hex string drops its whole facet rather than leaving a truncated bitstream, which the tree walker
+  would read straight into the next facet's share.
+- **An imported project's object positions are absolute, under UPSTREAM's plate grid — not this one's.** A
+  slicer-written 3mf lays its plates out in world space, so an object's coordinates already say which plate it is
+  on and where: upstream's origin is `(col*W*1.2, -row*D*1.2)` at the plate's **corner** with rows growing along
+  **-y** (`PartPlate.cpp` `compute_shape_position` / `plate_stride_x`, `LOGICAL_PART_PLATE_GAP = 1/5`), while this
+  viewer uses a constant 40mm gap and a plate origin at the **centre** (`plate_layout.js`). The two coincide at a
+  200mm bed (`200*1.2 == 200+40`) and diverge everywhere else — 307.2 vs 296 on the 256mm bed a Bambu project
+  uses. `platePlacements` (`model_load.js`) therefore decodes with upstream's rule and re-emits offsets for ours,
+  falling back to per-plate group re-centring if any object fails to decode onto the plate it claims.
+  Two things make this easy to get wrong and hard to see: `bakeLocal` centres every object's geometry and the
+  placement cursor then puts it wherever it likes, so the file's position survives ONLY in the bbox the parser
+  records; and the bed used to lay the plates out at import time must come from the project's own settings, not
+  from the component's `kp` — `setSettings` has not landed yet, so `kp` still holds the 200mm default and the
+  effect that re-lays the plates afterwards then slides the grid out from under everything just placed (measured:
+  56mm per column, so plate 2 ended up 112mm off).
+- 3mf facet indices are per OBJECT, the selector's are per MERGED MESH. The rebasing happens in `buildMergedSTL`
+  (`use_three_scene.js`) and nowhere else — that function is what decides which objects are merged and in what
+  order (visibility, plate, the extruder sort), so any other place would be guessing. It survives `bakeLocal` and
+  the STL weld because both preserve triangle ORDER.
+- One facet holds one integer (see the EnforcerBlockerType note above), but a 3mf keeps material and support paint
+  in two independent annotations that can both mark the same facet. On import **material paint wins** and the
+  support paint is reported as dropped — half-applying it would be worse than not applying it.
 - The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0.
 - `web/extract_all.py` derives the kernel key list by regex-scanning `packages/engine/src/settings.js` for single-quoted lowercase strings and keeping the ones that are schema keys — **it does not strip comments**. Measured: appending only the comment `// note: the 'interface_shells' option is not wired up yet` takes the list from 92 keys to 93 and adds that column to every extracted preset. Never write a schema key name in quotes in a comment in that file.
 - UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS.
@@ -46,6 +93,10 @@ cd web/viewer && npm run dev
 
 # Kernel tests (120+ invariants)
 node packages/wasm-core/test.mjs
+
+# 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
+node packages/wasm-core/test_paint_import.mjs
+node packages/viewer/test_3mf_project.mjs
 
 # Rebuild the kernel (needs emscripten + brew boost/eigen)
 bash packages/wasm-core/build.sh

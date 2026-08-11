@@ -138,7 +138,12 @@ export function makeSupportPaint(deps) {
   //  filament palette, because an overlay in a colour the filament is not is exactly the thing it must not be.
   const SUPPORT_OVERLAY_COLOR = { 1: '#2b6cff', 2: '#e23b3b' }   // enforcer=blue, blocker=red
   function overlayColorFor(state) {
-    if (paintModeRef.current === 'material') return extruderColorsRef?.current?.[state - 1] ?? '#9aa4b2'
+    const mode = paintModeRef.current
+    // Importing a 3mf draws an overlay while the mode is still 'off' — nobody has entered a brush yet — so the mode
+    //  cannot say which kind of paint is on screen. The import records what it loaded for exactly this reason:
+    //  material paint drawn in the support blue/red is the one thing the overlay must never be.
+    const material = mode === 'material' || (mode !== 'enforcer' && mode !== 'blocker' && getWorker()?.__paintImportKind === 'color')
+    if (material) return extruderColorsRef?.current?.[state - 1] ?? '#9aa4b2'
     return SUPPORT_OVERLAY_COLOR[state] ?? '#9aa4b2'
   }
   function disposeOverlayMesh(state) {
@@ -226,8 +231,34 @@ export function makeSupportPaint(deps) {
         //  must not be silent — that is indistinguishable from the bug this replaced.
         if (hadPaint) setSliceNotice?.('The model changed, so the painted regions were reset — the paint is tied to '
                                      + 'the facets it was brushed onto.')
+        importProjectPaint(worker, merged)
       }
     }
+  }
+
+  // Hand a freshly loaded 3mf's painting to the kernel. Only ever on a FRESH selector: the kernel's import calls
+  //  upstream's deserialize, which resets before loading, so running it over a selector the user has painted on
+  //  would silently discard their work. The one-shot is enforced by clearing the pending paint right after.
+  //
+  // One facet carries one state (see paintStateFor), and a 3mf keeps material paint and support paint in two
+  //  independent annotations — `paint_color` and `paint_supports` — that CAN both mark the same facet. There is no
+  //  representation here that holds both, so material paint wins and the support paint is reported as dropped
+  //  rather than half-applied.
+  function importProjectPaint(worker, merged) {
+    const pending = merged?.paint
+    if (!pending) return
+    const chosen = pending.color ?? pending.supports
+    if (!chosen) { apiRef.current?.clearPaintImport?.(); return }
+    // Which kind was loaded, for the overlay colour — see overlayColorFor. It hangs off the WORKER for the same
+    //  reason lastCounts does: this factory is rebuilt on every render, so a plain local would not survive.
+    worker.__paintImportKind = pending.color ? 'color' : 'supports'
+    // No overlay request follows: the reply carries `counts`, and the message listener above already asks for the
+    //  overlay of every state whose count moved — which after an import is every state it loaded.
+    worker.postMessage({ cmd: 'importPaint', facets: chosen.facets, hex: chosen.hex, states: reportedPaintStates() })
+    apiRef.current?.clearPaintImport?.()
+    if (pending.color && pending.supports)
+      setSliceNotice?.('This project paints both material and support. One facet holds one paint state, so the '
+                     + 'material painting was imported and the support painting was dropped.')
   }
   // mode: 'off' | 'enforcer' | 'blocker' | 'material'. Entering either brush leaves the other, because one facet
   //  carries one selector state (see paintStateFor above).

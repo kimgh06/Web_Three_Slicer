@@ -136,6 +136,87 @@ export function printerSettings(profileName) {
 /** The vendor's recommended process preset for a printer, or '' when the profile names none. */
 export function printerDefaultPreset(profileName) { return printerEntry(profileName)?.[3] ?? '' }
 
+// ---- Imported project settings (a slicer-written 3mf's Metadata/project_settings.config) --------------------
+// Upstream serializes every option as a STRING (or an array of them, one per extruder) — a bool is "0"/"1" and a
+//  float is "0.2". This settings map holds real JS types, and the difference is not cosmetic: `bool()` below reads
+//  a value with `!!v`, and `!!"0"` is TRUE — importing raw would turn every disabled option on. So each value is
+//  coerced by its schema type, and anything the schema does not know (inherits_group, *_settings_id, version, the
+//  whole preset-bookkeeping half of that file) is dropped rather than carried into a map keyed by schema keys.
+// The `inherits` / `different_settings_to_system` machinery upstream applies on top of this (Preset.cpp:2577) is
+//  deliberately NOT reproduced: it exists to reconcile a stored preset against a LOCAL vendor preset database of a
+//  possibly different version. project_settings.config is already flattened, so taking its values as written is
+//  both simpler and closer to what the project author actually sliced.
+const FALSE_STRINGS = new Set(['0', 'false', 'no', 'off', ''])
+
+function coerceScalar(type, value) {
+  if (typeof value !== 'string') return value
+  switch (type) {
+    case 'coBool': case 'coBools':
+      return !FALSE_STRINGS.has(value.trim().toLowerCase())
+    case 'coFloat': case 'coFloats': case 'coInt': case 'coInts':
+      return asNumber(value)
+    case 'coPercent': case 'coPercents':
+      // A percent option's value is the bare number (the schema default of sparse_infill_density is 20, not "20%")
+      //  and upstream serializes it that way — but the '%' does show up in hand-edited configs, so strip it.
+      return asNumber(value.trim().replace(/%$/, ''))
+    case 'coFloatOrPercent': case 'coFloatsOrPercents':
+      // "50%" must stay a string — the percent IS the value, and Number('50%') is NaN anyway.
+      return value.trim().endsWith('%') ? value : asNumber(value)
+    case 'coPoint': case 'coPoints':
+      return parsePoint(value) ?? value
+    case 'coPointsGroups':
+      return parsePointGroup(value) ?? value
+    default:
+      return value   // strings and enums — the kernel and the panel both read these as written
+  }
+}
+
+// Points are the other shape trap, and a quiet one: upstream writes a point as the STRING "XxY", while every
+//  consumer here indexes it as a [x, y] pair — so `printable_area[1][0]` on a raw import is the CHARACTER '2' of
+//  "256x0", and the bed comes out 2mm wide (measured on a real MakerWorld project: 2 x NaN).
+// Two separators exist in the wild: ConfigOptionPoint::serialize writes 'x', while some Orca options
+//  (best_object_pos) write "X,Y". A points GROUP is one string holding a comma-separated LIST of "XxY" points,
+//  so there the comma cannot also separate a point's own coordinates — hence two parsers rather than one regex.
+function parsePoint(text) {
+  const split = String(text).split('x')
+  const pair = split.length === 2 ? split : String(text).split(',')
+  if (pair.length !== 2) return null
+  const x = Number(pair[0]), y = Number(pair[1])
+  return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null
+}
+function parsePointGroup(text) {
+  const points = String(text).split(',').map(entry => {
+    const [a, b] = entry.split('x')
+    const x = Number(a), y = Number(b)
+    return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null
+  })
+  return points.length && points.every(Boolean) ? points : null
+}
+// Number('') is 0 and Number('  ') is 0, neither of which means "the option was set to zero" — an unparsable
+//  value is handed back untouched so the schema default keeps applying instead of a fabricated 0.
+function asNumber(value) {
+  if (value.trim() === '') return value
+  const n = Number(value)
+  return Number.isFinite(n) ? n : value
+}
+
+/**
+ * A 3mf project's raw `project_settings.config` object -> a settings map this package's own API accepts.
+ * Keys the config schema does not define are dropped. Returns `{settings, applied, skipped}`.
+ */
+export function normalizeProjectSettings(raw) {
+  const settings = {}
+  let applied = 0
+  const skipped = []
+  for (const [key, value] of Object.entries(raw || {})) {
+    const type = schema[key]?.type
+    if (!type) { skipped.push(key); continue }
+    settings[key] = Array.isArray(value) ? value.map(entry => coerceScalar(type, entry)) : coerceScalar(type, value)
+    applied++
+  }
+  return { settings, applied, skipped }
+}
+
 
 // Right-panel settings values -> kernel parameters (derived from schema keys)
 export function deriveKernelParams(settings) {

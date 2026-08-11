@@ -332,10 +332,40 @@ export default function Viewport({
   })
   selectPlateRef.current = selectPlate
 
+  // Adopt an imported project's filament list. This has to run BEFORE the per-object extruder assignment: a real
+  //  MakerWorld project routinely uses six or eight of them, and setObjectExtruder colours an object by looking its
+  //  extruder up in this array — with the default two cards, every object above T2 would stay T1-coloured and the
+  //  filament panel would not show the materials the project actually names.
+  const applyProjectFilaments = (colors) => {
+    const next = colors.slice(0, MAX_PAINT_EXTRUDERS)
+    if (!next.length) return
+    extruderColorsRef.current = next
+    setExtruderColors(next)
+    apiRef.current?.recolorObjects()
+    applyViewColors()
+  }
+
+  // Grow the bed to the plate count an imported 3mf project needs, then let it place its objects. setPlates is
+  //  called directly as well as through setPlateCount because it writes plateCountRef and plateBWRef/plateBDRef
+  //  SYNCHRONOUSLY, and those are what the plate origins are computed from — going through React state alone would
+  //  place every object against the OLD grid and let the effect below re-lay the plates underneath them.
+  // The bed must come from the PROJECT, not from `kp`: kp is derived from the settings of the render this callback
+  //  was created in, and setSettings has not landed yet. Getting that wrong is not a rounding error — the default
+  //  bed is 200mm and a Bambu project is 256mm, so the grid step moved 240 -> 296 right after placement and every
+  //  plate past the first drifted by 56mm per column (plate 2 by 112mm), which is exactly what it looked like.
+  const applyProjectPlates = (needed, bedWidth, bedDepth, place) => {
+    const n = Math.min(MAX_PLATES, Math.max(plateCountRef.current, needed))
+    const width = bedWidth > 0 ? bedWidth : kp.bed_width
+    const depth = bedDepth > 0 ? bedDepth : kp.bed_depth
+    apiRef.current?.setPlates(n, width, depth, selectedPlateRef.current)
+    setPlateCount(n)
+    place(n)
+  }
+
   // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop ----
   const { onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   })

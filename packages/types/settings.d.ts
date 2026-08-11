@@ -18,6 +18,18 @@ export function settingScalar(settings: SlicerSettings | null | undefined, key: 
  */
 export function deriveKernelParams(settings: SlicerSettings | null | undefined): Record<string, unknown>
 
+/**
+ * A 3mf project's raw `Metadata/project_settings.config` -> a settings map this API accepts.
+ * Upstream writes every option as a string ("0"/"1" for a bool, "0.2" for a float, one entry per extruder for a
+ * vector); each value is coerced by its config-schema type, and keys the schema does not define are dropped into
+ * `skipped` rather than carried into the map. `applied` is how many keys survived.
+ */
+export function normalizeProjectSettings(raw: Record<string, unknown> | null | undefined): {
+  settings: SlicerSettings
+  applied: number
+  skipped: string[]
+}
+
 // ---- Lazily loaded presets --------------------------------------------------
 // Both facades hide the column layout of the artifact they wrap; the promise is created once and reused.
 

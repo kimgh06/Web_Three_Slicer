@@ -5,7 +5,25 @@
 // We only need triangles (materials/textures/colors are irrelevant), so we go straight from zip -> .model XML -> triangle stream.
 // The XML is read with regexes: vertex/triangle/component/item in 3mf are all attribute-only self-closing tags and
 //  objects do not nest, so no scanner is needed. With no DOMParser dependency it is testable under node as-is.
-import { unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
+import { unzipSync, unzip } from 'three/examples/jsm/libs/fflate.module.js'
+
+// Decompression is the single largest fixed cost of reading a project (measured on a 52MB / 315MB-inflated
+//  MakerWorld file: ~600ms of a 2.0s parse), and it is embarrassingly parallel — 18 independent .model parts.
+//  fflate's async entry point spreads them over a Web Worker pool; unzipSync does them one after another.
+// The fallback is not defensive padding: `unzip` needs the `Worker` global and throws SYNCHRONOUSLY without it,
+//  which is every non-browser caller (this package's own node tests) and any environment that refuses nested
+//  workers — this parser itself runs inside a worker. Both failure shapes land on the same synchronous path.
+function unzipAll(bytes) {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (files) => { if (!settled) { settled = true; resolve(files) } }
+    try {
+      unzip(bytes, (err, files) => done(err ? unzipSync(bytes) : files))
+    } catch {
+      done(unzipSync(bytes))
+    }
+  })
+}
 
 const IDENT = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
 
@@ -34,7 +52,32 @@ function attr(tag, name) {
 }
 
 const VERT_FAST = /<vertex\s+x="([^"]*)"\s+y="([^"]*)"\s+z="([^"]*)"/g
-const TRI_FAST = /<triangle\s+v1="([^"]*)"\s+v2="([^"]*)"\s+v3="([^"]*)"/g
+// The trailing group captures whatever follows v3 on the same tag — that is where the painted-facet attributes live.
+const TRI_FAST = /<triangle\s+v1="([^"]*)"\s+v2="([^"]*)"\s+v3="([^"]*)"([^>]*)/g
+
+// Painting is stored ON the <triangle> tag, not in Metadata/model_settings.config as the rest of the per-object
+//  state is (slicer/src/libslic3r/Format/bbs_3mf.cpp:329-332). Each value is upstream's split-tree bitstream
+//  rendered as hex by FacetsAnnotation::get_triangle_as_string — opaque here, decoded by the kernel's selector.
+// paint_seam / paint_fuzzy_skin are read too so a project that carries them can be REPORTED as dropped rather
+//  than silently losing them; the kernel has no seam or fuzzy-skin painting to apply them to.
+const PAINT_ATTRS = [
+  ['paint_color', 'color'],        // multi-material: state 1..16 == Extruder1..16
+  ['paint_supports', 'supports'],  // support enforcer/blocker: states 1 and 2
+  ['paint_seam', 'seam'],          // unsupported by the kernel — collected for the warning only
+  ['paint_fuzzy_skin', 'fuzzy'],   // ditto
+]
+export function emptyPaint() { return { color: new Map(), supports: new Map(), seam: new Map(), fuzzy: new Map() } }
+export function paintIsEmpty(paint) { return !paint || PAINT_ATTRS.every(([, slot]) => paint[slot].size === 0) }
+
+function readPaint(tag, triIndex, paint) {
+  for (const [attrName, slot] of PAINT_ATTRS) {
+    // includes() first: the overwhelmingly common tag has no paint at all, and a substring scan is far cheaper
+    //  than building/running four attribute regexes per triangle on a mesh with hundreds of thousands of them.
+    if (!tag.includes(attrName)) continue
+    const value = attr(tag, attrName)
+    if (value) paint[slot].set(triIndex, value)
+  }
+}
 
 function parseMesh(body) {
   const verts = []
@@ -48,13 +91,23 @@ function parseMesh(body) {
   if (verts.length < 9) return null
 
   const tris = []
+  const paint = emptyPaint()
   TRI_FAST.lastIndex = 0
-  while ((m = TRI_FAST.exec(body))) tris.push(+m[1], +m[2], +m[3])
+  while ((m = TRI_FAST.exec(body))) {
+    const triIndex = tris.length / 3
+    tris.push(+m[1], +m[2], +m[3])
+    // A self-closing tag with nothing painted leaves "/" here, so anything shorter than an attribute cannot carry one.
+    if (m[4].length > 2) readPaint(m[4], triIndex, paint)
+  }
   if (!tris.length) {
-    for (const t of body.match(/<triangle\b[^>]*>/g) || []) tris.push(+attr(t, 'v1'), +attr(t, 'v2'), +attr(t, 'v3'))
+    for (const t of body.match(/<triangle\b[^>]*>/g) || []) {
+      const triIndex = tris.length / 3
+      tris.push(+attr(t, 'v1'), +attr(t, 'v2'), +attr(t, 'v3'))
+      readPaint(t, triIndex, paint)
+    }
   }
   if (!tris.length) return null
-  return { verts, tris }
+  return { verts, tris, paint }
 }
 
 // One .model XML -> { objects: Map(id -> {mesh|components}), items: [{objectid, path, transform}] }
@@ -90,16 +143,84 @@ function normPath(p) {
   return s.includes('%') ? decodeURIComponent(s) : s
 }
 
+// ---- Metadata/*.config -------------------------------------------------------------------------------------
+// A slicer-written 3mf is a whole project, not just geometry: alongside the meshes it carries the preset the
+//  creator sliced with, the per-object state, and the plate layout. Everything here is optional — a 3mf exported
+//  by a CAD tool has none of it, and the geometry path must not care.
+
+// <config><object id="1"><metadata key="extruder" value="2"/>…</object><plate>…</plate></config>
+// Attribute-only tags again (same reasoning as the .model parsing above), so regexes are enough.
+function metadataPairs(fragment) {
+  const out = {}
+  for (const tag of fragment.match(/<metadata\b[^>]*>/g) || []) {
+    const key = attr(tag, 'key')
+    if (key) out[key] = attr(tag, 'value') ?? ''
+  }
+  return out
+}
+
+function parseModelSettings(xml) {
+  const objects = new Map()   // 3mf object id -> {name, extruder, …} (the <metadata> of that object)
+  const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
+  let m
+  while ((m = OBJ_RE.exec(xml))) {
+    const id = attr(m[1], 'id')
+    // Only the object's OWN metadata: <part> children carry their own and would otherwise overwrite it.
+    if (id) objects.set(id, metadataPairs(m[2].replace(/<part\b[\s\S]*?<\/part>/g, '')))
+  }
+  const plates = []
+  const PLATE_RE = /<plate\b[^>]*>([\s\S]*?)<\/plate>/g
+  while ((m = PLATE_RE.exec(xml))) {
+    const body = m[1]
+    const meta = metadataPairs(body.replace(/<model_instance\b[\s\S]*?<\/model_instance>/g, ''))
+    const objectIds = []
+    for (const inst of body.match(/<model_instance\b[\s\S]*?<\/model_instance>/g) || []) {
+      const objectId = metadataPairs(inst).object_id
+      if (objectId) objectIds.push(objectId)
+    }
+    // plater_id is 1-based upstream; the viewer's plates are 0-based.
+    plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds })
+  }
+  return { objects, plates }
+}
+
+function readProject(files, dec) {
+  const text = (path) => { const raw = files.get(path); return raw ? dec.decode(raw) : null }
+  const project = {
+    settings: null,        // Metadata/project_settings.config — the flattened preset (raw upstream strings)
+    objectMeta: new Map(), // 3mf object id -> per-object metadata (name, extruder, per-object overrides)
+    plates: [],            // [{index, objectIds}]
+    hasLayerHeightProfile: false,
+    hasCustomGcodePerLayer: false,
+  }
+  const settingsText = text('Metadata/project_settings.config')
+  if (settingsText) {
+    // Malformed metadata must not cost the geometry — a 3mf whose config we cannot read still has a mesh worth loading.
+    try { project.settings = JSON.parse(settingsText) } catch { project.settings = null }
+  }
+  const modelSettings = text('Metadata/model_settings.config')
+  if (modelSettings) {
+    const parsed = parseModelSettings(modelSettings)
+    project.objectMeta = parsed.objects
+    project.plates = parsed.plates
+  }
+  project.hasLayerHeightProfile = !!text('Metadata/layer_heights_profile.txt')?.trim()
+  project.hasCustomGcodePerLayer = !!text('Metadata/custom_gcode_per_layer.xml')?.trim()
+  return project
+}
+
 /**
- * 3MF (ArrayBuffer|Uint8Array) -> [{name, tris: Float32Array(N*9)}]  (z-up mm, build transform baked in)
- * One build item = one object. When there are no items, every top-level object with a mesh is used.
+ * 3MF (ArrayBuffer|Uint8Array) -> {objects, project}
+ *   objects: [{name, tris: Float32Array(N*9), objectid, paint}]  (z-up mm, build transform baked in)
+ *            One build item = one object. When there are no items, every top-level object with a mesh is used.
+ *   project: the Metadata/*.config side — preset, per-object state, plate layout (all nullable).
  */
-export function parse3MF(buffer, baseName = 'model') {
+export async function parse3MFProject(buffer, baseName = 'model') {
   // TypedArray/Buffer may sit on a pooled ArrayBuffer, so offset/length must be preserved.
   const bytes = ArrayBuffer.isView(buffer)
     ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
     : new Uint8Array(buffer)
-  const zip = unzipSync(bytes)
+  const zip = await unzipAll(bytes)
   const files = new Map()
   for (const k of Object.keys(zip)) files.set(normPath(k), zip[k])
 
@@ -127,17 +248,21 @@ export function parse3MF(buffer, baseName = 'model') {
 
   const out = []
   // Expand objects recursively -> push triangles into the tris array. depth guards against circular references.
-  const emit = (objectid, path, xf, sink, depth) => {
+  // `paintSink` collects the painted facets of every mesh reached, rebased onto the OUTPUT triangle numbering:
+  //  one build item may pull in several component meshes, each with its own local facet indices, and the kernel's
+  //  selector only ever sees the flattened result.
+  const emit = (objectid, path, xf, sink, paintSink, depth) => {
     if (depth > 16) return
     const model = getModel(path)
     const obj = model?.objects.get(objectid)
     if (!obj) return
     if (obj.components) {
-      for (const c of obj.components) emit(c.objectid, c.path || path, mul(c.transform, xf), sink, depth + 1)
+      for (const c of obj.components) emit(c.objectid, c.path || path, mul(c.transform, xf), sink, paintSink, depth + 1)
       return
     }
     if (!obj.mesh) return
-    const { verts, tris } = obj.mesh
+    const { verts, tris, paint } = obj.mesh
+    const triBase = sink.length / 9   // output index of this mesh's first triangle (9 values pushed per triangle)
     for (let i = 0; i < tris.length; i++) {
       const o = tris[i] * 3
       const x = verts[o], y = verts[o + 1], z = verts[o + 2]
@@ -147,6 +272,8 @@ export function parse3MF(buffer, baseName = 'model') {
         x * xf[2] + y * xf[5] + z * xf[8] + xf[11],
       )
     }
+    if (paint) for (const [, slot] of PAINT_ATTRS)
+      for (const [localTri, hex] of paint[slot]) paintSink[slot].set(triBase + localTri, hex)
   }
 
   const items = root.items.length
@@ -155,8 +282,32 @@ export function parse3MF(buffer, baseName = 'model') {
 
   items.forEach((it, i) => {
     const sink = []
-    emit(it.objectid, it.path || rootPath, it.transform, sink, 0)
-    if (sink.length >= 9) out.push({ name: items.length > 1 ? `${baseName}#${i + 1}` : baseName, tris: new Float32Array(sink) })
+    const paintSink = emptyPaint()
+    emit(it.objectid, it.path || rootPath, it.transform, sink, paintSink, 0)
+    if (sink.length < 9) return
+    const tris = new Float32Array(sink)
+    // The XY box in the file's own coordinates. A slicer-written 3mf lays its PLATES OUT IN WORLD SPACE — plate 2's
+    //  objects simply sit a few hundred mm along x from plate 1's — so this box is the only record of the
+    //  arrangement the author made. The scene's bakeLocal centres every object and drops it, which is why the
+    //  importer has to capture it here and re-apply it per plate.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (let v = 0; v < tris.length; v += 3) {
+      const x = tris[v], y = tris[v + 1]
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    out.push({
+      name: items.length > 1 ? `${baseName}#${i + 1}` : baseName,
+      tris,
+      objectid: it.objectid,
+      paint: paintIsEmpty(paintSink) ? null : paintSink,
+      bbox: { minX, minY, maxX, maxY },
+    })
   })
-  return out
+  return { objects: out, project: readProject(files, dec) }
 }
+
+/** Geometry only — the shape every caller before the project import used. */
+export async function parse3MF(buffer, baseName = 'model') { return (await parse3MFProject(buffer, baseName)).objects }

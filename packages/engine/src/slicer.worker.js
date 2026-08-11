@@ -148,6 +148,18 @@ self.onmessage = async (e) => {
       else Module.selector_erase(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius)
       self.postMessage(paintedReply(Module, d, null)); return
     }
+    // importPaint: load painting out of a 3mf. `facets` is an Int32Array of facet indices in the CURRENT selector's
+    //  numbering and `hex` the newline-joined per-facet split-tree strings the 3mf carried, in the same order.
+    //  It REPLACES every mark (the kernel's deserialize resets first), so it belongs immediately after a 'prepare'
+    //  and nowhere else — an import in the middle of a session would silently discard what the user had painted.
+    //  A kernel built before this binding existed simply has no selector_import_paint; the reply says applied:0
+    //  rather than throwing, because losing a 3mf's paint must not also lose its geometry.
+    if (d.cmd === 'importPaint') {
+      const applied = Module.selector_import_paint ? Module.selector_import_paint(d.facets, d.hex ?? '') : 0
+      const reply = paintedReply(Module, d, null)
+      reply.applied = applied
+      self.postMessage(reply); return
+    }
     // clear wipes every state at once, so each requested count is 0 by construction — no need to ask the kernel back.
     if (d.cmd === 'clear')   {
       Module.selector_clear()
