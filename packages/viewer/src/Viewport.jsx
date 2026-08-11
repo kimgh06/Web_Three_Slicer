@@ -4,7 +4,8 @@ import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import { SUPPORTED_EXT } from './model_loaders.js'
-import { MAX_PLATES } from './plate_layout.js'
+import { MAX_PLATES, plateCols, plateStep } from './plate_layout.js'
+import { parseGcode } from './gcode_parse.js'
 import { objectTools } from './toolbar_items.js'
 import { makeKeyHandler } from './shortcut_keymap.js'
 import { useThreeScene } from './use_three_scene.js'
@@ -12,7 +13,7 @@ import { useSlicer } from './use_slicer.js'
 import { makeToolpathView } from './toolpath_view.js'
 import { makePlateActions } from './plate_actions.js'
 import { makeModelLoad } from './model_load.js'
-import { makeSupportPaint } from './support_paint.js'
+import { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
 import { makeObjectActions } from './object_actions.js'
 // Stage 27: the desktop-style shell, split into presentational components (one file per panel).
 import TopBar from './ui/TopBar.jsx'
@@ -21,6 +22,7 @@ import ObjectToolbar from './ui/ObjectToolbar.jsx'
 import ContextMenu from './ui/ContextMenu.jsx'
 import HelpOverlay from './ui/HelpOverlay.jsx'
 import PaintPanel from './ui/PaintPanel.jsx'
+import MaterialPaintPanel from './ui/MaterialPaintPanel.jsx'
 import PlateBar from './ui/PlateBar.jsx'
 import PreviewControls from './ui/PreviewControls.jsx'
 import StatsCard from './ui/StatsCard.jsx'
@@ -35,7 +37,34 @@ import SliceBar from './ui/SliceBar.jsx'
 //  - Toolpaths: stage 24 — the upstream libvgcode approach (GPU instancing, toolpath_gpu.js). The CPU geometry builder is gone.
 //    Coordinates: kernel z-up -> toolpathGroup rotation.x=-90° (the shader computes in local z-up, view_matrix compensates).
 
-export default function Viewport({ settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null }) {
+// Default colour per extruder slot, up to the selector's own ceiling of 16 (support_paint.js). A literal table
+//  rather than a generated hue ramp because <input type="color"> only accepts hex, so a generated colour would
+//  need an hsl->hex conversion written for a value the user immediately overrides anyway. The first two entries
+//  are the long-standing T1/T2 defaults — an existing project must not change colour because the list grew.
+const DEFAULT_FILAMENT_COLORS = [
+  '#6aa0dc', '#e08a2b', '#e0473b', '#3bb0e0', '#7ad14a', '#b06ad1', '#d1c34a', '#4ad1a8',
+  '#d16a9a', '#6a7ad1', '#8fd16a', '#d18f6a', '#6ad1d1', '#c74ad1', '#a8a8a8', '#4a6ad1',
+]
+
+// Embedding surface (all optional — omitting every one of them is the standalone app this component has always been):
+//  · panels    — per-panel visibility, {name: false} hides. Everything defaults to visible, so a host opts OUT only.
+//  · gcode     — G-code text rendered instead of a slice result (no kernel run). See the injection effect below.
+//  · default*  — initial value for state this component owns; the host reads changes back through onEvent.
+//  · onEvent   — one channel for every value change ({type, value}), rather than a prop per value.
+//  · onSliced  — the finished slice ({plate, stats, gcode}), the one payload too big to belong on onEvent.
+export default function Viewport({
+  settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null,
+  panels = null, gcode = null, defaultExtruderColors = null, defaultAutoSlice = false,
+  onEvent = null, onSliced = null,
+}) {
+  // A panel is shown unless the host explicitly said false — an unknown key is therefore visible, so a panel added
+  //  later does not silently disappear for hosts that listed the ones they wanted.
+  const showPanel = (name) => panels?.[name] !== false
+  // Read through refs: both are called from effects and from callbacks built in other modules, which capture the
+  //  props of the render they were created in. The ref is always the latest one the host passed.
+  const onEventRef = useRef(onEvent); onEventRef.current = onEvent
+  const onSlicedRef = useRef(onSliced); onSlicedRef.current = onSliced
+
   const apiRef = useRef(null)
   const workerRef = useRef(null)
   const objectsRef = useRef([])        // [{id,name,mesh,localPos}]
@@ -51,11 +80,14 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const layerHiRef = useRef(0)
   const canvasModeRef = useRef('prepare')  // S2: interaction gating (gizmo/painting disabled in preview)
   const lineWidthRef = useRef(0.42)    // line_width of the last slice (default width; layer height is derived from the z increment by buildSegmentData)
-  // Stage 20: manual support painting (enforcer/blocker)
-  const paintModeRef = useRef('off')   // 'off' | 'enforcer' | 'blocker'
+  // Stage 20: manual support painting (enforcer/blocker), extended to material painting (paint a region onto
+  //  another extruder). One mode variable, because one facet carries one selector state — see support_paint.js.
+  const paintModeRef = useRef('off')   // 'off' | 'enforcer' | 'blocker' | 'material'
+  const materialExtruderRef = useRef(0)  // 0-based extruder the material brush writes (null = eraser)
   const brushRadiusRef = useRef(5)
   const paintXformRef = useRef(null)    // {cx,cy,minz} kernel transform (object STL bbox)
-  const paintOverlayRef = useRef(null)  // {enf: Mesh, blk: Mesh}
+  const paintOverlayRef = useRef(null)  // Mesh[] — one per painted selector state (1..16)
+  const selectorGeomRef = useRef(null)  // identity of the mesh the kernel's selector holds (null = none registered)
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
   const plateResultsRef = useRef({})    // {plateIdx: sliceResult} cache
   const plateOffsetsRef = useRef({})    // {plateIdx: {offX, offZ}} toolpath display offset (compensates the centered slice)
@@ -69,7 +101,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const [objects, setObjects] = useState([])
   const [triWarn, setTriWarn] = useState('')
   const [slicing, setSlicing] = useState(false)
-  const [autoSlice, setAutoSlice] = useState(false)     // G004: debounced auto re-slice on settings change (after the first manual slice)
+  const [autoSlice, setAutoSlice] = useState(!!defaultAutoSlice)   // G004: debounced auto re-slice on settings change
   const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
@@ -94,22 +126,74 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const [dragOver, setDragOver] = useState(false)           // stage 26 R4: drag-and-drop highlight
   const fileInputRef = useRef(null)
   // Stage 27 S4: filament (extruder) colors — applied to object meshes and the prime tower. Defaults to T1/T2.
-  const [extruderColors, setExtruderColors] = useState(['#6aa0dc', '#e08a2b'])
-  const extruderColorsRef = useRef(['#6aa0dc', '#e08a2b'])
+  const initialColors = (Array.isArray(defaultExtruderColors) && defaultExtruderColors.length)
+    ? defaultExtruderColors.slice(0, MAX_PAINT_EXTRUDERS) : DEFAULT_FILAMENT_COLORS.slice(0, 2)
+  const [extruderColors, setExtruderColors] = useState(initialColors)
+  const extruderColorsRef = useRef(initialColors)
   const [gcodeUrl, setGcodeUrl] = useState('')
   const [showTravel, setShowTravel] = useState(false)
+  // Off until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the
+  //  fallback ring purges nothing — true, but the real tower emits F0 feedrates and produces a different file on
+  //  every run of the same input (see params.h), and shipping unreproducible G-code by default is the worse of the
+  //  two. The checkbox still offers it.
   const [wipeTowerReal, setWipeTowerReal] = useState(false)   // stage 12: real WipeTower.generate() (MM only)
-  const [paintMode, setPaintModeState] = useState('off')      // stage 20: support painting mode
+  const [paintMode, setPaintModeState] = useState('off')      // stage 20: painting mode (support brush or material brush)
+  const [materialExtruder, setMaterialExtruder] = useState(0) // 0-based extruder the material brush writes (null = eraser)
   const [brushRadius, setBrushRadius] = useState(5)
+  // Painting tool selection, shared by both brushes (they drive one selector — see support_paint.js). The pointer
+  //  handler reads it through a ref because it lives in an effect that must not be rebuilt on every slider move.
+  const [paintTool, setPaintTool] = useState('brush')      // 'brush' | 'smart' | 'bucket' | 'triangle'
+  const [brushCursor, setBrushCursor] = useState('sphere') // 'sphere' | 'circle' — brush only
+  const [fillAngle, setFillAngle] = useState(30)           // smart/bucket fill angle limit, degrees
+  const paintToolRef = useRef({ tool: 'brush', cursor: 'sphere', angle: 30 })
+  useEffect(() => { paintToolRef.current = { tool: paintTool, cursor: brushCursor, angle: fillAngle } }, [paintTool, brushCursor, fillAngle])
   const [paintCounts, setPaintCounts] = useState({ enf: 0, blk: 0 })
+  // Painted facets per selector state (1..16) as the worker reports them, kept apart from the enf/blk pair above
+  //  because the two arrive through different worker listeners — see support_paint.js. Empty until a stroke lands.
+  const [paintStateCounts, setPaintStateCounts] = useState({})
+  // buildParams reads the painted states at slice time, which is a user action and so always follows a render —
+  //  but it runs inside useSlicer's closure, so it needs a ref rather than the value captured when that hook ran.
+  const paintStateCountsRef = useRef({})
+  useEffect(() => { paintStateCountsRef.current = paintStateCounts }, [paintStateCounts])
   // Stage 30 OOM ladder UI: economy-mode completion notice + downgrade offer (simplified retry)
   const [sliceNotice, setSliceNotice] = useState('')       // e.g. "Memory pressure — finished in economy mode (no preview)"
   const [downgradeOffer, setDowngradeOffer] = useState(null) // {scope} — even economy mode failed -> offer a simplified retry
 
+  // ---- Host change notifications (onEvent) ----
+  // Effects rather than wrapped setters: these values are written from five different modules (model_load,
+  //  plate_actions, use_slicer, support_paint, object_actions), and one effect per value covers every writer at
+  //  once. The mount pass is skipped — the host already knows the initial values, it passed them.
+  const useEmit = (type, value) => {
+    const isMount = useRef(true)
+    useEffect(() => {
+      if (isMount.current) { isMount.current = false; return }
+      onEventRef.current?.({ type, value })
+    }, [value])
+  }
+  useEmit('canvasMode', canvasMode)
+  useEmit('objects', objects)
+  useEmit('selectedPlate', selectedPlate)
+  useEmit('plateCount', plateCount)
+  useEmit('extruderColors', extruderColors)
+  useEmit('autoSlice', autoSlice)
+  useEmit('slicing', slicing)
+  useEmit('progress', progress)          // fires several times a second while slicing — throttle on the host side if that matters
+  useEmit('viewType', viewType)
+  useEmit('paintMode', paintMode)
+  useEmit('layerCount', layerCount)
+  useEmit('error', error)
+  useEmit('notice', sliceNotice)
+  // The dual slider is two values, so it emits as one object built from primitive deps (an object dep would fire every render).
+  const isRangeMount = useRef(true)
+  useEffect(() => {
+    if (isRangeMount.current) { isRangeMount.current = false; return }
+    onEventRef.current?.({ type: 'layerRange', value: { lo: layerLo, hi: layerHi } })
+  }, [layerLo, layerHi])
+
   // ---- three.js scene (renderer/camera/controls/pointer handlers + the imperative apiRef surface) ----
   const { mountRef, three } = useThreeScene({
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
-    canvasModeRef, paintModeRef, brushRadiusRef, paintXformRef, extruderColorsRef,
+    canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
   })
 
@@ -136,29 +220,30 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     applyViewColors, rebuildToolpaths, applyLayerRange,
   } = makeToolpathView({
     three, plateTpRef, toolpathRef, segDataRef, layersDataRef, plateResultsRef, plateOffsetsRef,
-    lineWidthRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef, selectedPlateRef,
+    lineWidthRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef, selectedPlateRef, extruderColorsRef,
     settings, setSegCount, setColorRange, setRoleLegend,
   })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
   const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef } = useSlicer({
     settings, wipeTowerReal, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
-    rebuildToolpaths, rebuildPaintOverlay: (enf, blk) => rebuildPaintOverlay(enf, blk),
+    paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount,
-    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts,
+    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
   })
 
-  // ---- Stage 20: manual support painting (enforcer/blocker) ----
+  // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
   const { rebuildPaintOverlay, setPaintMode, clearPaint } = makeSupportPaint({
-    three, objectsRef, apiRef, getWorker, selectedPlateRef,
-    paintXformRef, paintOverlayRef, paintModeRef,
-    setError, setPaintModeState, setPaintCounts,
+    three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
+    paintXformRef, paintOverlayRef, paintModeRef, materialExtruderRef, extruderColorsRef,
+    setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice,
   })
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    refreshSlicedCount, exportAllGcode, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
+    onSlicedRef,
     apiRef, selectedPlateRef, plateCountRef, placeXRef, plateResultsRef, plateOffsetsRef, plateTpRef,
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
     settings, canvasMode, downgradeOffer,
@@ -176,11 +261,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   })
 
-  // G004: auto re-slice — 0.8s debounce after a settings change. Only for the current plate when it has been sliced before;
-  //  if a slice is running it is canceled (G002) and the re-slice waits for it to finish. Thanks to incremental slicing (G003) it usually just re-runs emit (~1s).
+  // G004: auto re-slice — 0.8s debounce after a settings or model change, for the current plate.
+  //  If a slice is running it is canceled (G002) and the re-slice waits for it to finish. Thanks to incremental slicing (G003) it usually just re-runs emit (~1s).
+  //  The first slice used to stay manual (it required a cached plate result). That gate is gone because it made
+  //  autoSlice unusable without the slice bar: a host that hides the panels has no other way to start one, so
+  //  "auto" that cannot perform the first slice is just off. Turning it on with a model loaded now slices.
   useEffect(() => {
-    if (!autoSlice || !objects.length) return
-    if (!plateResultsRef.current[selectedPlateRef.current]) return   // the first slice stays manual
+    if (!autoSlice || !objects.length || gcode != null) return   // an injected G-code plate is not ours to overwrite
     clearTimeout(autoTimerRef.current)
     const fire = () => {
       if (pendingSliceRef.current) { cancelSlice(); autoTimerRef.current = setTimeout(fire, 300); return }
@@ -188,7 +275,33 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     }
     autoTimerRef.current = setTimeout(fire, 800)
     return () => clearTimeout(autoTimerRef.current)
-  }, [settings, autoSlice])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settings, autoSlice, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- G-code injection (the `gcode` prop) ----
+  // Renders G-code without slicing: the parser produces the very layer stream the kernel produces, so the result
+  //  goes into the plate cache and showPlateResult draws it exactly like a slice. The kernel is never started.
+  // Coordinates: a slice is centred on the origin and offset back by its own centre (use_three_scene buildMergedSTL),
+  //  but G-code is already in absolute bed millimetres — so the offset is the bed's own corner, per the plate grid
+  //  laid out by setPlates (plate i sits at (i%cols)*step, floor(i/cols)*step; model y maps to three -z).
+  useEffect(() => {
+    if (gcode == null) return
+    const idx = selectedPlateRef.current
+    try {
+      const parsed = parseGcode(String(gcode), { filamentDiameter: Number(kp.filament_diameter) || 1.75 })
+      if (!parsed.layers.length) { setError('No printable moves found in the G-code'); return }
+      const cols = plateCols(plateCountRef.current)
+      const bw = kp.bed_width, bd = kp.bed_depth
+      plateOffsetsRef.current[idx] = {
+        offX: (idx % cols) * plateStep(bw) - bw / 2,
+        offZ: Math.floor(idx / cols) * plateStep(bd) + bd / 2,
+      }
+      lineWidthRef.current = kp.line_width || 0.42
+      plateResultsRef.current[idx] = { stats: parsed.stats, layers: parsed.layers, gcode: String(gcode) }
+      refreshSlicedCount()
+      setError(''); setSliceNotice('')
+      showPlateResult(idx)
+    } catch (e) { setError('G-code parse failed: ' + (e?.message || e)) }
+  }, [gcode])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.
   function setBedSize(w, d) {
@@ -214,6 +327,17 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     if (next) setRange(layerHiRef.current, layerHiRef.current)   // single layer = the upper-bound layer only
   }
   function onViewType(e) { const v = e.target.value; setViewType(v); viewTypeRef.current = v; applyViewColors() }
+  // A multi-tool slice landing on the Feature type view paints walls orange and infill blue — which reads as "my
+  //  filaments are gone", when the data has them (measured complaint: painted model, by-tool split present, screen
+  //  all orange). Land on the Filament view instead. Only from the untouched default: a view the user picked stays.
+  useEffect(() => {
+    if (!stats) return
+    const perTool = plateResultsRef.current[selectedPlateRef.current]?.stats?.filament_mm_by_tool
+    const usedTools = Array.isArray(perTool) ? perTool.filter(mm => mm > 0).length : 0
+    if (usedTools > 1 && viewTypeRef.current === 'feature') {
+      setViewType('filament'); viewTypeRef.current = 'filament'; applyViewColors()
+    }
+  }, [stats])   // eslint-disable-line react-hooks/exhaustive-deps
   function onToggleTravel(e) { const v = e.target.checked; setShowTravel(v); showTravelRef.current = v; for (const p of Object.values(plateTpRef.current)) p.ctl.setTravelVisible(v) }
   function onToggleSupport(e) { const v = e.target.checked; setSettings(s => ({ ...s, enable_support: v })) }
   const supportOn = !!settingRaw(settings, 'enable_support')
@@ -223,6 +347,11 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   const supportStyles = (schema.support_style?.enum_values ?? [])
     .map((value, i) => ({ value, label: schema.support_style?.enum_labels?.[i] ?? value }))
   const supportStyle = String(settingRaw(settings, 'support_style') ?? 'default')
+  // Which extruder prints the support body and the support interface. Both are upstream coInt keys where 0 means
+  //  "Default — keep whatever tool is loaded"; deriveKernelParams (engine/src/settings.js) omits them entirely at 0,
+  //  so leaving the selects alone produces the very same kernel params as before these keys existed.
+  const supportFilament = Number(settingRaw(settings, 'support_filament')) || 0
+  const supportInterfaceFilament = Number(settingRaw(settings, 'support_interface_filament')) || 0
   const [overhangOn, setOverhangOn] = useState(false)
   const overhangAngle = Number(settingRaw(settings, 'support_threshold_angle')) || 30
   useEffect(() => {
@@ -230,8 +359,8 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
   }, [overhangOn, overhangAngle, canvasMode, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
   // Stage 27 S4: filament colors/count + per-object print toggle + painting gizmo mode
   function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
-  function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); return n }) }
-  function addFilament() { setExtruderColors(cs => { if (cs.length >= 4) return cs; const pal = ['#e0473b', '#3bb0e0', '#7ad14a']; const n = [...cs, pal[cs.length - 1] || '#888888']; extruderColorsRef.current = n; return n }) }
+  function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); applyViewColors(); return n }) }
+  function addFilament() { setExtruderColors(cs => { if (cs.length >= MAX_PAINT_EXTRUDERS) return cs; const n = [...cs, DEFAULT_FILAMENT_COLORS[cs.length] || '#888888']; extruderColorsRef.current = n; return n }) }
   function removeFilament(index) {
     setExtruderColors(cs => {
       if (cs.length <= 1) return cs
@@ -247,7 +376,33 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
     })
   }
   function toggleObjVisible(id) { const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
-  function togglePaintGizmo() { setPaintMode(paintMode === 'off' ? 'enforcer' : 'off') }
+  // Both brushes take the pointer away from the gizmos, so the rail/object-card toggle reads "a brush is active"
+  //  rather than "the support brush is active": while material painting, the move gizmo must not look selected.
+  //  Which brush is active is what the two floating panels below say.
+  const supportPainting = paintMode === 'enforcer' || paintMode === 'blocker'
+  // The rail button and the object card's button are the SUPPORT brush's entry point, so pressing them always ends
+  //  up in support painting — from material painting that means switching, which is what "entering one leaves the
+  //  other" has to look like from the user's side. Only pressing it while already support painting turns it off.
+  function togglePaintGizmo() { setPaintMode(supportPainting ? 'off' : 'enforcer') }
+  // Entering material painting from a filament chip: pick the extruder first, then switch the brush, so the first
+  //  stroke after the click already carries the right selector state (support_paint stamps it from these refs).
+  function startMaterialPaint(extruderIndex) {
+    const index = Number.isInteger(extruderIndex) ? extruderIndex : null
+    materialExtruderRef.current = index; setMaterialExtruder(index)
+    if (paintModeRef.current !== 'material') setPaintMode('material')
+  }
+  // Painted facets per extruder chip (0-based) — the panel and the filament rows both read this by index.
+  //  The worker's per-state `counts` is the real source: measured, a T3 stroke replies {enf:0, blk:0, counts:{3:3762}},
+  //  so reading enf/blk alone (which ARE states 1 and 2, and nothing else) pinned every tool above T2 at zero.
+  //  enf/blk stay as the fallback for the slot they do describe, so a worker predating `counts` shows T1/T2 exactly
+  //  as it does today instead of collapsing to nothing.
+  const materialPaintCounts = extruderColors.map((_color, extruderIndex) => {
+    const perStateCount = paintStateCounts[extruderIndex + 1]
+    if (Number.isFinite(perStateCount)) return perStateCount
+    if (extruderIndex === 0) return paintCounts.enf
+    if (extruderIndex === 1) return paintCounts.blk
+    return 0
+  })
 
   // Object actions (duplicate/copy/paste/delete/split + gizmo mode) — the bodies live in object_actions.js.
   const {
@@ -296,9 +451,25 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       layerLo={layerLo} layerHi={layerHi} segCount={segCount} singleLayer={singleLayer}
       onLayerLo={onLo} onLayerHi={onHi} onToggleSingle={toggleSingle}
       showTravel={showTravel} onToggleTravel={onToggleTravel}
-      colorRange={colorRange} roleLegend={roleLegend} />
+      colorRange={colorRange} roleLegend={roleLegend} extruderColors={extruderColors} />
   )
-  const statsBlock = <StatsCard stats={stats} overBed={overBed} />
+  // The per-tool filament split and the purge total are kernel stats of the focused plate's cached result
+  //  (`filament_mm_by_tool` / `filament_mm_purge` — the names wasm-core/test.mjs asserts). The `stats` state was
+  //  reduced in use_slicer/plate_actions before those fields existed, so they are picked up from the raw result here
+  //  instead of reshaping that reduction. A kernel that reports neither leaves both undefined, and StatsCard then
+  //  renders exactly the single Filament line it always has.
+  const kernelStats = plateResultsRef.current[selectedPlateRef.current]?.stats
+  const statsWithTools = stats && {
+    ...stats,
+    filamentPerTool: Array.isArray(kernelStats?.filament_mm_by_tool) ? kernelStats.filament_mm_by_tool : undefined,
+    filamentPurge: Number.isFinite(kernelStats?.filament_mm_purge) ? kernelStats.filament_mm_purge : undefined,
+    filamentPurgePerTool: Array.isArray(kernelStats?.filament_mm_purge_by_tool) ? kernelStats.filament_mm_purge_by_tool : undefined,
+  }
+  // The material each filament is, read from the same settings map the filament card writes — so the legend says
+  //  "T2 ABS 203.6 mm" rather than leaving the colour swatch to carry the whole identity.
+  const asList = (key) => { const raw = settingRaw(settings, key); return Array.isArray(raw) ? raw : (raw ? [raw] : []) }
+  const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} extruderColors={extruderColors}
+    filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.
   const EXT_LABEL = SUPPORTED_EXT.map(e => e.toUpperCase()).join(' · ')
@@ -309,11 +480,13 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
       {/* Shared hidden file input */}
       <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={onFiles} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
 
-      <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
-        previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()} />
+      {showPanel('topBar') && (
+        <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
+          previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()} />
+      )}
 
       <div className="app-body">
-        {ok && canvasMode === 'prepare' && (
+        {ok && canvasMode === 'prepare' && showPanel('gizmoRail') && (
           <GizmoRail gizmoMode={gmode} paintMode={paintMode}
             onGizmo={m => { setPaintMode('off'); apiRef.current?.setMode(m) }}
             onTogglePaint={togglePaintGizmo} />
@@ -324,7 +497,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
           <div className={(ok ? 'vp-canvas' : 'vp-canvas fail') + (dragOver ? ' drag-over' : '')} ref={mountRef}
             onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave} data-testid="drop-zone">
             {!ok && <div className="vp-fallback">⚠ {status}</div>}
-            {ok && objects.length === 0 && canvasMode !== 'preview' && (
+            {ok && objects.length === 0 && canvasMode !== 'preview' && showPanel('emptyHint') && (
               <div className="empty-hint" data-testid="empty-hint">
                 <div className="eh-icon">📦</div>
                 <div className="eh-title">Drag in a file or pick one</div>
@@ -345,38 +518,55 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
           </div>
 
-          {ok && canvasMode === 'prepare' && <ObjectToolbar tools={OBJECT_TOOLS} />}
+          {ok && canvasMode === 'prepare' && showPanel('objectToolbar') && <ObjectToolbar tools={OBJECT_TOOLS} />}
 
-          {ok && canvasMode === 'prepare' && paintMode !== 'off' && (
+          {/* One brush, two targets — the panels are exclusive because the mode is. */}
+          {ok && canvasMode === 'prepare' && supportPainting && showPanel('paintPanel') && (
             <PaintPanel paintMode={paintMode} onPaintMode={setPaintMode} onClear={clearPaint}
               brushRadius={brushRadius} paintCounts={paintCounts}
+              paintTool={paintTool} onPaintTool={setPaintTool} brushCursor={brushCursor} onBrushCursor={setBrushCursor}
+              fillAngle={fillAngle} onFillAngle={setFillAngle}
+              onBrushRadius={v => { setBrushRadius(v); brushRadiusRef.current = v }} />
+          )}
+
+          {ok && canvasMode === 'prepare' && paintMode === 'material' && showPanel('paintPanel') && (
+            <MaterialPaintPanel colors={extruderColors} activeExtruder={materialExtruder}
+              onSelectExtruder={startMaterialPaint} onClear={clearPaint} onClose={() => setPaintMode('off')}
+              brushRadius={brushRadius} paintCounts={materialPaintCounts}
+              paintTool={paintTool} onPaintTool={setPaintTool} brushCursor={brushCursor} onBrushCursor={setBrushCursor}
+              fillAngle={fillAngle} onFillAngle={setFillAngle}
               onBrushRadius={v => { setBrushRadius(v); brushRadiusRef.current = v }} />
           )}
 
           {/* Preview stats card, bottom left */}
-          {ok && canvasMode === 'preview' && stats && (
+          {ok && canvasMode === 'preview' && stats && showPanel('statsCard') && (
             <div className="stats-card" data-testid="slice-stats">{statsBlock}</div>
           )}
 
-          {ok && (
+          {ok && showPanel('plateBar') && (
             <PlateBar plateCount={plateCount} selectedPlate={selectedPlate} maxPlates={MAX_PLATES}
               onSelect={selectPlate} onAdd={addPlate} onDelete={deletePlate} />
           )}
 
-          {ok && <div className="vp-status" data-testid="vp-status">{status}</div>}
+          {ok && showPanel('status') && <div className="vp-status" data-testid="vp-status">{status}</div>}
         </div>
 
         {/* S4 right sidebar */}
-        {ok && (
+        {ok && showPanel('sidebar') && (
           <aside className="sidebar">
             <div className="sidebar-scroll">
-              <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
-                settings={settings} setSettings={setSettings} motionPanel={motionPanel} />
+              {showPanel('printerCard') && (
+                <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
+                  settings={settings} setSettings={setSettings} motionPanel={motionPanel} />
+              )}
 
-              <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
-                settings={settings} setSettings={setSettings} filamentPanel={filamentPanel} />
+              {showPanel('filamentCard') && (
+                <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
+                  settings={settings} setSettings={setSettings} filamentPanel={filamentPanel}
+                  paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
+              )}
 
-              {objects.length > 0 && (
+              {objects.length > 0 && showPanel('objectList') && (
                 <ObjectList objects={objects} extruderColors={extruderColors}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }} onRemove={removeObject}
@@ -385,6 +575,10 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
                   overhangAngle={overhangAngle} paintMode={paintMode} onTogglePaint={togglePaintGizmo}
                   supportStyle={supportStyle} supportStyles={supportStyles}
                   onSupportStyle={v => setSettings(s => ({ ...s, support_style: v }))}
+                  supportFilament={supportFilament}
+                  onSupportFilament={v => setSettings(s => ({ ...s, support_filament: v }))}
+                  supportInterfaceFilament={supportInterfaceFilament}
+                  onSupportInterfaceFilament={v => setSettings(s => ({ ...s, support_interface_filament: v }))}
                   wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)} />
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
@@ -393,7 +587,7 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               {downgradeOffer && <button className="slice-btn" data-testid="downgrade-retry" onClick={retryDowngrade} title="Simplify the infill and lower its density to reduce memory pressure, then retry">Simplified retry (simple infill, economy mode)</button>}
 
               {/* Preview controls (view type / slider / legend) */}
-              {canvasMode === 'preview' && previewControls && (
+              {canvasMode === 'preview' && previewControls && showPanel('previewControls') && (
                 <section className="side-card">
                   <div className="sc-head">🎚 Preview</div>
                   {previewControls}
@@ -401,17 +595,21 @@ export default function Viewport({ settings = {}, setSettings = () => {}, proces
               )}
 
               {/* (3) Process (settings panel) */}
-              <section className="side-card process-card" data-testid="process-section">
-                <div className="sc-head">⚙ Process</div>
-                {processPanel}
-              </section>
+              {showPanel('processCard') && (
+                <section className="side-card process-card" data-testid="process-section">
+                  <div className="sc-head">⚙ Process</div>
+                  {processPanel}
+                </section>
+              )}
             </div>
 
-            <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
-              plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
-              onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
-              canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
-              onExportAll={exportAllGcode} gcodeUrl={gcodeUrl} />
+            {showPanel('sliceBar') && (
+              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
+                plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
+                onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
+                canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
+                onExportAll={exportAllGcode} gcodeUrl={gcodeUrl} />
+            )}
           </aside>
         )}
       </div>
