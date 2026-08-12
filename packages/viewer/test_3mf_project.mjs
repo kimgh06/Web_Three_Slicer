@@ -227,5 +227,20 @@ const broken = await parse3MFProject(zipSync({
 eq('unparsable project_settings still loads the mesh', broken.objects.length, 1)
 check('unparsable project_settings yields null settings', broken.project.settings === null)
 
+// ---- per-plate wipe tower position -----------------------------------------------------------------------
+// wipe_tower_x/y are upstream's per-plate arrays (coFloats). deriveKernelParams must index them by opts.plate,
+// a hole (null) must mean "auto for that plate" (NO fallback to a neighbour's entry), and a legacy scalar must
+// keep applying to every plate. The array itself must survive normalizeProjectSettings un-collapsed.
+{
+  const { settings: towers } = normalizeProjectSettings({ wipe_tower_x: ['15', '130', '245'], wipe_tower_y: ['220', '221', '222'] })
+  eq('wipe_tower_x survives import as a full per-plate array', JSON.stringify(towers.wipe_tower_x), '[15,130,245]')
+  eq('plate 1 slices with its own tower x', deriveKernelParams(towers, { plate: 1 }).prime_tower_x, 130)
+  eq('plate 1 slices with its own tower y', deriveKernelParams(towers, { plate: 1 }).prime_tower_y, 221)
+  eq('no plate given reads plate 0 (every pre-array caller)', deriveKernelParams(towers).prime_tower_x, 15)
+  check('a hole is auto for that plate, not a neighbour\'s entry',
+    deriveKernelParams({ wipe_tower_x: [15, null, 245], wipe_tower_y: [220, null, 222] }, { plate: 1 }).prime_tower_x === undefined)
+  eq('a legacy scalar applies to every plate', deriveKernelParams({ wipe_tower_x: 40, wipe_tower_y: 50 }, { plate: 2 }).prime_tower_x, 40)
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\n3MF project import passed')
 process.exit(failures ? 1 : 0)

@@ -27,10 +27,10 @@
 ## 0. Getting started (handoff checklist)
 
 What whoever receives this document should do on day 1. The document alone is not enough without the repository —
-**this repository plus the [reverse_engineering/](reverse_engineering/) artifacts** are the set.
+**this repository plus the [`packages/data/`](../packages/data/) artifacts** are the set.
 
 1. Read §1 (architecture) and §2 (runtime) — 30 minutes. The rest is a reference to consult as needed.
-2. Open the 4 JSON files in `reverse_engineering/` and study their structure — they are the input data for the web implementation.
+2. Open the 4 JSON files in `packages/data/` and study their structure — they are the input data for the web implementation.
 3. Create the monorepo and lay out the package skeleton from §10.2. The first sprint = roadmap items 1-4 in §12:
    - `@orca/config-schema`: config-schema.json + a d.ts generator (the data already exists; one day)
    - `@orca/ui-map`: translating ui-tree.json + toggle-rules.json (the §4.3 widget mapping rules)
@@ -163,7 +163,7 @@ entering the slicer (volumes sharing the same setting combination are grouped to
 
 ### 3.3 undo/redo
 
-- [src/slic3r/Utils/UndoRedo.cpp](../slicer/src/slic3r/Utils/UndoRedo.cpp) — based on cereal serialization
+- [src/slic3r/Utils/UndoRedo.cpp](../slicers/slicer/src/slic3r/Utils/UndoRedo.cpp) — based on cereal serialization
 - Snapshots the whole Model, but heavy objects such as TriangleMesh are shared by ObjectID (never stored twice)
 - `Snapshot{name, timestamp, model_id, SnapshotData}` (UndoRedo.hpp:74)
 
@@ -177,7 +177,7 @@ Web equivalent: immer/Immutable.js-style structural sharing gives exactly the sa
 
 ### 4.1 Scale
 
-- Option definitions: **907** (measured, including CLI, SLA and loop-generated ones) — all registered in [PrintConfig.cpp](../slicer/src/libslic3r/PrintConfig.cpp) (12,688 lines)
+- Option definitions: **907** (measured, including CLI, SLA and loop-generated ones) — all registered in [PrintConfig.cpp](../slicers/slicer/src/libslic3r/PrintConfig.cpp) (12,688 lines)
   through `this->add("key", type)` calls in the `PrintConfigDef` constructor
 - Category distribution: Quality 96 · Support 59 · Strength 56 · Speed 44 · Advanced 21 ·
   Others 12 · Machine limits 10 · Extruders 8 · Flush options 3 · uncategorized 34
@@ -213,7 +213,7 @@ Two types to watch out for:
 
 ### 4.3 GUI widget mapping (the reproduction rules)
 
-[OptionsGroup.cpp:41-79](../slicer/src/slic3r/GUI/OptionsGroup.cpp#L41-L79) `build_field` is the single branch point:
+[OptionsGroup.cpp:41-79](../slicers/slicer/src/slic3r/GUI/OptionsGroup.cpp#L41-L79) `build_field` is the single branch point:
 
 ```
 gui_type == select_open | i_enum_open  → Choice (a combo box)
@@ -231,7 +231,7 @@ coPoints                               → PointCtrl (a coordinate list; printab
 
 ### 4.4 Option dependency/toggle logic — ConfigManipulation
 
-[ConfigManipulation.cpp](../slicer/src/slic3r/GUI/ConfigManipulation.cpp) — **198 `toggle_field` call sites**.
+[ConfigManipulation.cpp](../slicers/slicer/src/slic3r/GUI/ConfigManipulation.cpp) — **198 `toggle_field` call sites**.
 Rules such as "disable every support sub-option when support is off" or "force wall_loops when spiral_mode is on" —
 enable/disable/auto-correct — all live here as procedural C++.
 
@@ -332,7 +332,7 @@ Plater
 
 ### 6.3 Settings editing UI — the Tab tree
 
-Implementation: [Tab.cpp](../slicer/src/slic3r/GUI/Tab.cpp) (8,943 lines). The structure is a 3-level tree:
+Implementation: [Tab.cpp](../slicers/slicer/src/slic3r/GUI/Tab.cpp) (8,943 lines). The structure is a 3-level tree:
 `Tab → add_options_page(page) → new_optgroup(group) → append_single_option_line(option key)`.
 **The whole tree was extracted in this session** (summarized below; regenerate the details with the §11.2 script):
 
@@ -343,12 +343,12 @@ Implementation: [Tab.cpp](../slicer/src/slic3r/GUI/Tab.cpp) (8,943 lines). The s
 - **Plate Settings** (Tab.cpp:3672): bed type, print_sequence, spiral_mode and 3 more (6 items)
 - **Setting Overrides** (object/filament overrides, Tab.cpp:3995)
 
-The "frequently used settings" bundle in the object right-click menu: [GUI_Factories.cpp:56-97](../slicer/src/slic3r/GUI/GUI_Factories.cpp#L56-L97)
+The "frequently used settings" bundle in the object right-click menu: [GUI_Factories.cpp:56-97](../slicers/slicer/src/slic3r/GUI/GUI_Factories.cpp#L56-L97)
 (`FREQ_SETTINGS_BUNDLE_FFF`: Quality/Shell/Infill/Support/Flush options).
 
 ### 6.4 Custom widget library
 
-[src/slic3r/GUI/Widgets/](../slicer/src/slic3r/GUI/Widgets/) — instead of stock wx widgets, custom skinned widgets
+[src/slic3r/GUI/Widgets/](../slicers/slicer/src/slic3r/GUI/Widgets/) — instead of stock wx widgets, custom skinned widgets
 (Button, CheckBox, ComboBox, DropDown, SpinInput, Slider, SwitchButton, TabCtrl,
 (ProgressBar, RadioGroup, TextInput, … around 30). **On the web they are all replaced by off-the-shelf components** —
 use this directory only as a style reference (colors, rounding, states) and drop the code.
@@ -399,7 +399,7 @@ Model change → GLCanvas3D::reload_scene
 Web mapping: ModelVolume → create one `THREE.BufferGeometry`, place instances with `Object3D.matrix`
 (or InstancedMesh). Filament color and selection state are material uniforms.
 
-**Camera contract** ([Camera.hpp](../slicer/src/slic3r/GUI/Camera.hpp)):
+**Camera contract** ([Camera.hpp](../slicers/slicer/src/slic3r/GUI/Camera.hpp)):
 - Type: `Perspective` (default) / `Ortho`, switchable (EType, :27-33)
 - Manipulation: spherical rotation around the target `rotate_on_sphere(azimuth, zenith, limits)` (:151-157,
   with a zenith limit), pan = moving the target, zoom = `zoom_to_box` (:140) / `zoom_to_bed`
@@ -411,7 +411,7 @@ Web mapping: ModelVolume → create one `THREE.BufferGeometry`, place instances 
 on the web the equivalent is to let the gizmo (TransformControls) consume events first and have the rest fall through
 to Raycaster selection.
 
-**Selection model** ([Selection.hpp:34](../slicer/src/slic3r/GUI/Selection.hpp#L34)):
+**Selection model** ([Selection.hpp:34](../slicers/slicer/src/slic3r/GUI/Selection.hpp#L34)):
 - Two modes, `EMode { Volume, Instance }` — normally Instance (the whole object), switching to Volume when editing parts
 - Ctrl multi-select, rubber-band rectangle selection, and the combined bounding box of the selection anchors the gizmo
 - Commit flow: gizmo drag → Selection updates the instance/volume transform → on mouse up it is
@@ -420,7 +420,7 @@ to Raycaster selection.
 **Minimum web MVP set:** OrbitControls + Raycaster click/rectangle selection + TransformControls
 (Move/Rotate/Scale) + an invalidation trigger on transform commit. Those four cover half the interaction in the §6.5 required table.
 
-**Implementation-level detail is in [reverse_engineering/SPECS.md §5](reverse_engineering/SPECS.md)** —
+**Implementation-level detail is in [SPECS.md §5](SPECS.md)** —
 the geometry pipeline (the P3N3 vertex format, GLVolume's two-stage transform), the gouraud shader uniform contract
 (off-bed testing, clipping and overhang slope are all computed in the fragment shader), CPU raycast picking
 (the AABB tree -> three-mesh-bvh mapping), and the **8-step painting brush interaction flow**
@@ -428,7 +428,7 @@ the geometry pipeline (the P3N3 vertex format, GLVolume's two-stage transform), 
 
 ### 6.5.2 Full desktop UI survey → the web reproduction roadmap
 
-**[reverse_engineering/SPECS.md §8](reverse_engineering/SPECS.md)** — the title bar (BBLTopbar), every sidebar
+**[SPECS.md §8](SPECS.md)** — the title bar (BBLTopbar), every sidebar
 member (the printer/filament/process sections, the 6 ObjectList columns, ObjectSettings/ObjectLayers, the slice
 plate/all split), the Global|Objects switch in ParamsPanel and the Preview dual slider (IMSlider), all measured to
 the file:line level, plus the viewer implementation order (S1~S9).
@@ -438,7 +438,7 @@ the file:line level, plus the viewer implementation order (S1~S9).
 12 CalibModes: PA Line/Pattern/Tower, Auto PA, Flow Rate, Temp Tower, Vol Speed,
 VFA, Retraction, Input Shaping freq/damp, Cornering.
 Each is a combination of "generate a test model + override specific settings + inject G-code post-processing", and
-the core lives in [calib.cpp](../slicer/src/libslic3r/calib.cpp) (UI-independent -> it can be included in WASM).
+the core lives in [calib.cpp](../slicers/slicer/src/libslic3r/calib.cpp) (UI-independent -> it can be included in WASM).
 
 ---
 
@@ -474,7 +474,7 @@ Metadata/plate_N.gcode(.md5)            <- the embedded slice result (when prese
 ```
 
 **Painting data** (support/seam/MMU color) is stored as custom triangle attribute strings inside 3dmodel.model —
-the encoding lives in `serialize`/`deserialize` in [TriangleSelector.cpp](../slicer/src/libslic3r/TriangleSelector.cpp)
+the encoding lives in `serialize`/`deserialize` in [TriangleSelector.cpp](../slicers/slicer/src/libslic3r/TriangleSelector.cpp)
 (compressing the triangle split tree into a bitstream).
 Supporting painting on the web requires porting that codec to JS (one file, self-contained).
 
@@ -484,7 +484,7 @@ must preserve and copy unknown entries so the file can round-trip with the deskt
 ### 7.3 App settings (AppConfig)
 
 Window state, recent files, vendor activation, user login, unit system, … Web equivalent: localStorage/IndexedDB.
-For the schema, see `set_defaults()` in [AppConfig.cpp](../slicer/src/libslic3r/AppConfig.cpp).
+For the schema, see `set_defaults()` in [AppConfig.cpp](../slicers/slicer/src/libslic3r/AppConfig.cpp).
 
 ---
 
@@ -515,14 +515,14 @@ Path ordering (ShortestPath), seam placement (SeamPlacer — including the scarf
 CoolingBuffer (fan/speed based on layer time), PressureEqualizer, AdaptivePA (pressure advance interpolation),
 SpiralVase, FanMover, WipeTower, custom G-code substitution via PlaceholderParser, and ConflictChecker.
 
-**Implementation-level detail on path calculation is in [reverse_engineering/SPECS.md §6](reverse_engineering/SPECS.md)** —
+**Implementation-level detail on path calculation is in [SPECS.md §6](SPECS.md)** —
 the ExtrusionEntity data model, the Flow cross-section -> E value math, classic/Arachne wall generation, nearest-neighbor chaining and
 seam splitting, travel/retraction decisions, the speed priority at emission time, and the definitive order of the TBB post-processing pipeline.
 (spiral→pressure_equalizer→cooling→fan_mover→PA).
 
 ### 8.3 PlaceholderParser (the custom G-code template language)
 
-[PlaceholderParser.cpp](../slicer/src/libslic3r/PlaceholderParser.cpp) — a boost::spirit grammar.
+[PlaceholderParser.cpp](../slicers/slicer/src/libslic3r/PlaceholderParser.cpp) — a boost::spirit grammar.
 `{...}` expressions, `{if cond}...{elsif}...{else}...{endif}` (measured: lines 2177-2206),
 vector indexing `nozzle_diameter[0]`, arithmetic/comparison/regex matching.
 **It is used in two places**: (1) the custom G-code slots (2) the preset `compatible_printers_condition`.
@@ -593,8 +593,8 @@ Node-only (@orca/slicer cli mode) and browser-shared code are separated with `ex
 > `LLVM_ROOT='/opt/homebrew/opt/emscripten/libexec/llvm/bin'`,
 > set `BINARYEN_ROOT='/opt/homebrew/opt/emscripten/libexec/binaryen'` manually.
 > Confirm the smoke test (emcc -> run under node) passes before proceeding.
-> Clipper1 lives in [deps_src/clipper/](../slicer/deps_src/clipper/) and compiles standalone after patching just 2 Eigen/TBB include lines
-> — it is the key dependency of stage 1 of the WASM kernel (progress: reverse_engineering/README.md).
+> Clipper1 lives in [deps_src/clipper/](../slicers/slicer/deps_src/clipper/) and compiles standalone after patching just 2 Eigen/TBB include lines
+> — it is the key dependency of stage 1 of the WASM kernel (progress: README.md).
 
 - **TBB**: replace it with emscripten pthreads, or force the `Execution` abstraction layer (src/libslic3r/Execution/) to run sequentially. The latter is realistic for a first build.
 - **Boost**: the header-only parts are fine, and spirit (PlaceholderParser) compiles too.
@@ -606,21 +606,21 @@ Node-only (@orca/slicer cli mode) and browser-shared code are separated with `ex
 
 ## 11. Extraction recipes
 
-> **★ Already executed — the artifacts physically exist in [reverse_engineering/](reverse_engineering/).**
-> Regenerate: `python3 reverse_engineering/extract_all.py`. For coverage and limitations see
-> [reverse_engineering/README.md](reverse_engineering/README.md).
+> **★ Already executed — the artifacts physically exist in [`packages/data/`](../packages/data/).**
+> Regenerate: `python3 web/extract_all.py`. For coverage and limitations see
+> [README.md](README.md).
 >
 > | Artifact | Content | Recipe |
 > |---|---|---|
-> | [config-schema.json](reverse_engineering/config-schema.json) | metadata for 907 options (enums 100%, including 27 ratio_over entries) | §11.1 |
-> | [ui-tree.json](reverse_engineering/ui-tree.json) | the page -> group -> option tree (11 builders / 34 pages / 587 references) | §11.2 |
-> | [toggle-rules.json](reverse_engineering/toggle-rules.json) | 231 enable/disable rules (95% coverage, with the original C++ conditions) | §11.3 |
-> | [invalidation-map.json](reverse_engineering/invalidation-map.json) | option -> re-slice step mapping (Print 6 + PrintObject 19 branches) | §2.2 |
-> | [SPECS.md](reverse_engineering/SPECS.md) | the 3MF XML spec · painting codec · PlaceholderParser EBNF · shortcut table | §7.2, §8.3 |
+> | [config-schema.json](../packages/data/config-schema.json) | metadata for 907 options (enums 100%, including 27 ratio_over entries) | §11.1 |
+> | [ui-tree.json](../packages/data/ui-tree.json) | the page -> group -> option tree (11 builders / 34 pages / 587 references) | §11.2 |
+> | [toggle-rules.json](../packages/data/toggle-rules.json) | 231 enable/disable rules (95% coverage, with the original C++ conditions) | §11.3 |
+> | [invalidation-map.json](../packages/data/invalidation-map.json) | option -> re-slice step mapping (Print 6 + PrintObject 19 branches) | §2.2 |
+> | [SPECS.md](SPECS.md) | the 3MF XML spec · painting codec · PlaceholderParser EBNF · shortcut table | §7.2, §8.3 |
 >
-> **(1) A build-based schema dump — achieved**: [config-schema-builddump.json](reverse_engineering/config-schema-builddump.json)
+> **(1) A build-based schema dump — achieved**: [config-schema-builddump.json](../packages/data/config-schema-builddump.json)
 > (817 options — compiled the real PrintConfig.cpp to WASM and dumped print_config_def directly,
-> cross-checked against the regex extraction with [compare_schema.mjs](reverse_engineering/compare_schema.mjs): 0 type mismatches;
+> cross-checked against the regex extraction with [compare_schema.mjs](compare_schema.mjs): 0 type mismatches;
 > the arithmetic lines up as 907 = 800 shared + 107 CLI-only definitions and 817 = 800 + 17 loop-generated, and the 75-value `filament_type` enum is only obtainable from the build dump).
 > What still does not exist (stated honestly): (2) the automatic value-correction rules in `update_print_fff_config`
 > (3) the visual spec (colors/screenshots — which requires observing the running app).
@@ -664,7 +664,7 @@ Custom widget lines (the G-code editor, the compatible_printers widget, …) nee
 
 ### 11.3 The toggle rule table (manual, 1-2 days)
 
-Translate the 198 `toggle_field` sites in [ConfigManipulation.cpp](../slicer/src/slic3r/GUI/ConfigManipulation.cpp)
+Translate the 198 `toggle_field` sites in [ConfigManipulation.cpp](../slicers/slicer/src/slic3r/GUI/ConfigManipulation.cpp)
 into `{condition → list of disabled fields}` JSON. print/filament/printer are already split by function,
 so it is mechanical work.
 
@@ -721,7 +721,7 @@ The "done" criteria per package. All defined in an automatable form.
 | 7 | gcode + viewer in WASM | ★★★ | web preview |
 | 8 | The toggle rule table + reproducing ConfigManipulation | ★★☆ | UI consistency |
 | 9 | 3mf writing + the painting codec | ★★★ | round-trip compatibility |
-| 10 | libslic3r in WASM (cutting TBB/CGAL) | ★★★★★ | browser-only slicing — **through stage 13 done** ([reverse_engineering/wasm-core/](reverse_engineering/wasm-core/), with 120 invariants checked continuously). **Ported from upstream verbatim**: all of Arachne variable width (the Voronoi skeleton), 5 Fill patterns (the real TPMS gyroid), PressureEqualizer (working effectively with tag integration), Config+PrintConfig (12,688 lines — 817 options generated at runtime), WipeTower (upstream tool change markers), and **the 7,561-line GCodeProcessor itself** (the default time engine). Implemented by the kernel itself: slicing, solid shells, support (grid/tree-lite), raft, gap fill, thin walls, ironing, bridges, the scarf seam, arcs, cooling, multiple objects and multi-material basics. **Permanent exceptions (documented gates, measured)**: full TreeSupport (requires rebuilding the PrintObject object graph — 121 references to m_object) and the CGAL planarity check (native GMP linkage) |
+| 10 | libslic3r in WASM (cutting TBB/CGAL) | ★★★★★ | browser-only slicing — **through stage 13 done** ([../packages/wasm-core/](../packages/wasm-core/), with 120 invariants checked continuously). **Ported from upstream verbatim**: all of Arachne variable width (the Voronoi skeleton), 5 Fill patterns (the real TPMS gyroid), PressureEqualizer (working effectively with tag integration), Config+PrintConfig (12,688 lines — 817 options generated at runtime), WipeTower (upstream tool change markers), and **the 7,561-line GCodeProcessor itself** (the default time engine). Implemented by the kernel itself: slicing, solid shells, support (grid/tree-lite), raft, gap fill, thin walls, ironing, bridges, the scarf seam, arcs, cooling, multiple objects and multi-material basics. **Permanent exceptions (documented gates, measured)**: full TreeSupport (requires rebuilding the PrintObject object graph — 121 references to m_object) and the CGAL planarity check (native GMP linkage) |
 
 Among the gizmos, painting, mesh booleans and STEP import are deferred until after item 10. Items 1-6 are the MVP —
 "open it, configure it and slice it on the web" — and all of them are low risk.
@@ -732,26 +732,26 @@ Among the gizmos, painting, mesh booleans and STEP import are deferred until aft
 
 | Area | File |
 |---|---|
-| Entry point / CLI | [src/OrcaSlicer.cpp](../slicer/src/OrcaSlicer.cpp) (`--slice`: line 5651) |
-| App initialization | [src/slic3r/GUI/GUI_App.cpp](../slicer/src/slic3r/GUI/GUI_App.cpp) (OnInit: 2672) |
-| Main window | [src/slic3r/GUI/MainFrame.cpp](../slicer/src/slic3r/GUI/MainFrame.cpp) |
-| Work screen | [src/slic3r/GUI/Plater.cpp](../slicer/src/slic3r/GUI/Plater.cpp) (sidebar: 655, slice loop: 8884) |
-| Settings UI tree | [src/slic3r/GUI/Tab.cpp](../slicer/src/slic3r/GUI/Tab.cpp) |
-| Widget mapping | [src/slic3r/GUI/OptionsGroup.cpp](../slicer/src/slic3r/GUI/OptionsGroup.cpp):41, [Field.cpp](../slicer/src/slic3r/GUI/Field.cpp) |
-| Option toggle rules | [src/slic3r/GUI/ConfigManipulation.cpp](../slicer/src/slic3r/GUI/ConfigManipulation.cpp) |
-| Option definitions | [src/libslic3r/PrintConfig.cpp](../slicer/src/libslic3r/PrintConfig.cpp), schema: [Config.hpp](../slicer/src/libslic3r/Config.hpp) |
-| Model tree | [src/libslic3r/Model.hpp](../slicer/src/libslic3r/Model.hpp) |
-| Presets | [src/libslic3r/Preset.cpp](../slicer/src/libslic3r/Preset.cpp), [PresetBundle.cpp](../slicer/src/libslic3r/PresetBundle.cpp) |
-| Pipeline | [src/libslic3r/Print.cpp](../slicer/src/libslic3r/Print.cpp), [PrintObject.cpp](../slicer/src/libslic3r/PrintObject.cpp) |
-| Background slicing | [src/slic3r/GUI/BackgroundSlicingProcess.cpp](../slicer/src/slic3r/GUI/BackgroundSlicingProcess.cpp) |
-| G-code generation | [src/libslic3r/GCode.cpp](../slicer/src/libslic3r/GCode.cpp), [src/libslic3r/GCode/](../slicer/src/libslic3r/GCode/) |
-| G-code analysis | [src/libslic3r/GCode/GCodeProcessor.cpp](../slicer/src/libslic3r/GCode/GCodeProcessor.cpp) |
-| Preview renderer | [src/libvgcode/](../slicer/src/libvgcode/), [src/slic3r/GUI/GCodeViewer.cpp](../slicer/src/slic3r/GUI/GCodeViewer.cpp) |
-| 3MF | [src/libslic3r/Format/bbs_3mf.cpp](../slicer/src/libslic3r/Format/bbs_3mf.cpp) |
-| Painting codec | [src/libslic3r/TriangleSelector.cpp](../slicer/src/libslic3r/TriangleSelector.cpp) |
-| Template language | [src/libslic3r/PlaceholderParser.cpp](../slicer/src/libslic3r/PlaceholderParser.cpp) |
-| undo/redo | [src/slic3r/Utils/UndoRedo.cpp](../slicer/src/slic3r/Utils/UndoRedo.cpp) |
-| Calibration | [src/libslic3r/calib.cpp](../slicer/src/libslic3r/calib.cpp) |
-| Vendor profiles | [resources/profiles/](../slicer/resources/profiles/) (66 vendors) |
-| Shaders | [resources/shaders/110/](../slicer/resources/shaders/110/) |
+| Entry point / CLI | [src/OrcaSlicer.cpp](../slicers/slicer/src/OrcaSlicer.cpp) (`--slice`: line 5651) |
+| App initialization | [src/slic3r/GUI/GUI_App.cpp](../slicers/slicer/src/slic3r/GUI/GUI_App.cpp) (OnInit: 2672) |
+| Main window | [src/slic3r/GUI/MainFrame.cpp](../slicers/slicer/src/slic3r/GUI/MainFrame.cpp) |
+| Work screen | [src/slic3r/GUI/Plater.cpp](../slicers/slicer/src/slic3r/GUI/Plater.cpp) (sidebar: 655, slice loop: 8884) |
+| Settings UI tree | [src/slic3r/GUI/Tab.cpp](../slicers/slicer/src/slic3r/GUI/Tab.cpp) |
+| Widget mapping | [src/slic3r/GUI/OptionsGroup.cpp](../slicers/slicer/src/slic3r/GUI/OptionsGroup.cpp):41, [Field.cpp](../slicers/slicer/src/slic3r/GUI/Field.cpp) |
+| Option toggle rules | [src/slic3r/GUI/ConfigManipulation.cpp](../slicers/slicer/src/slic3r/GUI/ConfigManipulation.cpp) |
+| Option definitions | [src/libslic3r/PrintConfig.cpp](../slicers/slicer/src/libslic3r/PrintConfig.cpp), schema: [Config.hpp](../slicers/slicer/src/libslic3r/Config.hpp) |
+| Model tree | [src/libslic3r/Model.hpp](../slicers/slicer/src/libslic3r/Model.hpp) |
+| Presets | [src/libslic3r/Preset.cpp](../slicers/slicer/src/libslic3r/Preset.cpp), [PresetBundle.cpp](../slicers/slicer/src/libslic3r/PresetBundle.cpp) |
+| Pipeline | [src/libslic3r/Print.cpp](../slicers/slicer/src/libslic3r/Print.cpp), [PrintObject.cpp](../slicers/slicer/src/libslic3r/PrintObject.cpp) |
+| Background slicing | [src/slic3r/GUI/BackgroundSlicingProcess.cpp](../slicers/slicer/src/slic3r/GUI/BackgroundSlicingProcess.cpp) |
+| G-code generation | [src/libslic3r/GCode.cpp](../slicers/slicer/src/libslic3r/GCode.cpp), [src/libslic3r/GCode/](../slicers/slicer/src/libslic3r/GCode/) |
+| G-code analysis | [src/libslic3r/GCode/GCodeProcessor.cpp](../slicers/slicer/src/libslic3r/GCode/GCodeProcessor.cpp) |
+| Preview renderer | [src/libvgcode/](../slicers/slicer/src/libvgcode/), [src/slic3r/GUI/GCodeViewer.cpp](../slicers/slicer/src/slic3r/GUI/GCodeViewer.cpp) |
+| 3MF | [src/libslic3r/Format/bbs_3mf.cpp](../slicers/slicer/src/libslic3r/Format/bbs_3mf.cpp) |
+| Painting codec | [src/libslic3r/TriangleSelector.cpp](../slicers/slicer/src/libslic3r/TriangleSelector.cpp) |
+| Template language | [src/libslic3r/PlaceholderParser.cpp](../slicers/slicer/src/libslic3r/PlaceholderParser.cpp) |
+| undo/redo | [src/slic3r/Utils/UndoRedo.cpp](../slicers/slicer/src/slic3r/Utils/UndoRedo.cpp) |
+| Calibration | [src/libslic3r/calib.cpp](../slicers/slicer/src/libslic3r/calib.cpp) |
+| Vendor profiles | [resources/profiles/](../slicers/slicer/resources/profiles/) (66 vendors) |
+| Shaders | [resources/shaders/110/](../slicers/slicer/resources/shaders/110/) |
 | Tests | [tests/](tests/) (Catch2; fff_print, libslic3r) |

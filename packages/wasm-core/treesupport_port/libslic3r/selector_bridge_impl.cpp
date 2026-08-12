@@ -39,6 +39,14 @@ namespace {
     // rather than next to the functions that use it so invalidate() can drop it — it is derived from the same marks,
     // so a stroke that changes the paint must not leave last run's regions readable.
     std::vector<std::vector<ExPolygons>> g_segmented;
+
+    // "Has anything ever been marked on this selector?", maintained by the paint entry points instead of asked of
+    // the mesh. Asking is not cheap: TriangleSelector::has_facets(state) SCANS every triangle (TriangleSelector.cpp
+    // :1461) and returns false only after visiting all of them, so the has_paint() loop over 16 states costs 16 full
+    // passes exactly when the answer is "nothing is painted" — 400ms of a 980k-facet export, measured in the app.
+    // Conservative on purpose: erasing every mark leaves this true, which costs one wasted serialize() and never a
+    // wrong answer. Cleared only where the marks genuinely cease to exist (a fresh selector).
+    bool g_maybe_painted = false;
     void invalidate() { g_cached.fill(false); g_segmented.clear(); }
 
     const indexed_triangle_set& facets_of(int state) {
@@ -55,8 +63,11 @@ namespace {
 namespace Slic3r {
 const indexed_triangle_set& selector_enforcer_its() { return facets_of(selector_bridge::STATE_ENFORCER); }
 const indexed_triangle_set& selector_blocker_its()  { return facets_of(selector_bridge::STATE_BLOCKER); }
-// has_facets() is a flag lookup on the selector's used_states, so asking all 16 states is far cheaper than
-// materializing their triangle sets — this stays a cheap query even now that any extruder can be painted.
+// Cheaper than materializing 16 triangle sets, but NOT cheap: the member has_facets(state) scans m_triangles and
+// only returns early on a hit, so "nothing painted" costs 16 full passes over the mesh. That is affordable here
+// because this is asked once per slice, next to work that is orders of magnitude larger. Do not reuse it on a hot
+// path — the export takes g_maybe_painted instead. (It cannot: this must stay exact, and the flag is conservative,
+// so an erased-clean selector would route a slice down the painted path it no longer belongs on.)
 bool selector_has_paint() {
     if (!g_sel) return false;
     for (int state = selector_bridge::STATE_ENFORCER; state <= selector_bridge::STATE_EXTRUDER_MAX; ++state)
@@ -75,6 +86,7 @@ void construct(const std::vector<float>& verts, const std::vector<int>& tris) {
     for (size_t i = 0; i + 2 < tris.size(); i += 3) its.indices.emplace_back(tris[i], tris[i+1], tris[i+2]);
     g_mesh = std::make_unique<TriangleMesh>(its);
     g_sel  = std::make_unique<TriangleSelector>(*g_mesh);
+    g_maybe_painted = false;
     invalidate();
 }
 
@@ -82,13 +94,18 @@ bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vecto
     const bool same_topology = g_sel && g_mesh && g_mesh->its.indices.size() == tris.size() / 3;
     if (!same_topology) { construct(verts, tris); return false; }
     TriangleSelector::TriangleSplittingData marks = g_sel->serialize();
+    // `used_states` is the exact answer to "does this bitstream carry any mark", and serialize() just filled it in
+    // — so a move restores the flag rather than guessing, at no extra cost. construct() below clears it first.
+    bool marked = false;
+    for (size_t state = 1; state < marks.used_states.size(); ++state) if (marks.used_states[state]) { marked = true; break; }
     construct(verts, tris);
     g_sel->deserialize(marks);
+    g_maybe_painted = marked;
     invalidate();
     return true;
 }
 
-void clear() { if (g_mesh) g_sel = std::make_unique<TriangleSelector>(*g_mesh); invalidate(); }
+void clear() { if (g_mesh) g_sel = std::make_unique<TriangleSelector>(*g_mesh); g_maybe_painted = false; invalidate(); }
 
 int  facet_count() { return g_mesh ? int(g_mesh->its.indices.size()) : 0; }
 bool has_paint()   { return Slic3r::selector_has_paint(); }
@@ -105,6 +122,7 @@ void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz
     auto cursor_shape = TriangleSelector::SinglePointCursor::cursor_factory(
         center, camera, radius, shape, trafo, TriangleSelector::ClippingPlane());
     g_sel->select_patch(facet, std::move(cursor_shape), (EnforcerBlockerType)state, trafo, /*triangle_splitting*/true);
+    if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;   // NONE is the eraser — it never creates a mark
     invalidate();
 }
 
@@ -120,6 +138,7 @@ void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int sta
                                       angle_deg, /*highlight_by_angle_deg*/0.f, /*force_reselection*/true);
     g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
     g_sel->seed_fill_unselect_all_triangles();
+    if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
     invalidate();
 }
 
@@ -130,6 +149,7 @@ void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool 
                                         angle_deg, propagate, /*force_reselection*/true);
     g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
     g_sel->seed_fill_unselect_all_triangles();
+    if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
     invalidate();
 }
 
@@ -186,8 +206,40 @@ int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::strin
     }
     if (applied == 0) return 0;
     g_sel->deserialize(data);
+    g_maybe_painted = true;
     invalidate();
     return applied;
+}
+
+// ---- 3mf export ----------------------------------------------------------------------------------------------
+// Port of upstream FacetsAnnotation::get_triangle_as_string (slicer/src/libslic3r/Model.cpp:3542): each facet's
+// share of the serialized bitstream, four bits per hex digit, most-significant nibble written FIRST (each digit is
+// inserted at the front — the same order apply_paint_hex reads back in reverse). One serialize() up front and a
+// linear walk, because upstream's per-facet variant binary-searches the same data once per triangle.
+std::vector<std::pair<int, std::string>> export_paint_hex() {
+    std::vector<std::pair<int, std::string>> out;
+    // The flag, NOT has_paint(): serialize() walks every original triangle's split tree whether or not anything
+    // was painted, and has_paint() is no cheaper — it scans the whole mesh once per state. Both cost ~400ms on a
+    // 980k-facet model that carries no marks at all. g_maybe_painted answers the same question in one load.
+    if (!g_sel || !g_maybe_painted) return out;
+    const TriangleSelector::TriangleSplittingData data = g_sel->serialize();
+    out.reserve(data.triangles_to_split.size());
+    for (size_t entry = 0; entry < data.triangles_to_split.size(); ++entry) {
+        const TriangleSelector::TriangleBitStreamMapping& mapping = data.triangles_to_split[entry];
+        size_t offset = size_t(mapping.bitstream_start_idx);
+        const size_t end = (entry + 1 < data.triangles_to_split.size())
+            ? size_t(data.triangles_to_split[entry + 1].bitstream_start_idx)
+            : data.bitstream.size();
+        std::string hex;
+        while (offset + 4 <= end) {
+            int nibble = 0;
+            for (int bit = 3; bit >= 0; --bit) nibble = (nibble << 1) | int(data.bitstream[offset + bit]);
+            offset += 4;
+            hex.insert(hex.begin(), char(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10)));
+        }
+        if (!hex.empty()) out.emplace_back(mapping.triangle_idx, std::move(hex));
+    }
+    return out;
 }
 
 std::vector<float> overlay(int state) {

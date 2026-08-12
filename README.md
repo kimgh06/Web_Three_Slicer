@@ -1,6 +1,8 @@
 # Web Three Slicer
 
-A 3D-printing slicer that runs entirely in the browser — reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) into a WASM kernel + npm packages. STL/OBJ/3MF/AMF/PLY in (STEP via a pluggable loader), G-code out; no server, no install.
+A 3D-printing slicer that runs entirely in the browser — reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) into a WASM kernel + npm packages. STL/OBJ/3MF/AMF/PLY in (STEP via a pluggable loader), G-code out; no server, no install. A slicer-written `.3mf` project restores its plate layout, settings and support/material painting, and multi-material printing works through per-extruder filament presets and facet painting with a real ported prime tower.
+
+![A sliced Benchy in the Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](web/viewer/public/usage.png)
 
 ## Links
 
@@ -37,9 +39,9 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see
 
 ## Repository layout
 
-- **`packages/`** — published npm package `three-slicer`, extracted data, React components/viewer, and WASM kernel sources. Self-contained: builds, tests, and runs without `slicer/`.
+- **`packages/`** — published npm package `three-slicer`, extracted data, React components/viewer, and WASM kernel sources. Self-contained: builds, tests, and runs without `slicers/`.
 - **`web/`** — demo viewer app that consumes `three-slicer` through the workspace package name.
-- **`slicer/`** — upstream OrcaSlicer, kept as an untracked reference clone (its own git remote). Used only as the extraction/porting source.
+- **`slicers/`** — untracked reference clones (each its own git remote): upstream OrcaSlicer at `slicers/slicer` (the extraction/porting source) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 
 ```bash
 # demo viewer (committed WASM — no emscripten needed)
@@ -52,7 +54,7 @@ node packages/wasm-core/test.mjs
 bash packages/pack_check.sh
 ```
 
-Korean development docs: [`web/README.md`](web/README.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
+Development docs (stage-by-stage log, reverse-engineering guide, format specs): [`web/README.md`](web/README.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
 
 ## License
 

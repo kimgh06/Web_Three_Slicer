@@ -2,14 +2,15 @@
 
 3D slicer viewer as a React component: three.js viewport (orbit/transform gizmos), model import (STL/OBJ/3MF/AMF/PLY + pluggable formats such as STEP, multi-object, drag & drop), Web Worker slicing via `three-slicer`, support and material painting, per-extruder filament presets, multi-plate, and a GPU-instanced volumetric toolpath preview ported from OrcaSlicer's libvgcode (millions of segments in a single draw path, per-feature colors, layer range slider, G-code export).
 
+![The Prepare tab — drag-and-drop viewport with the printer, filament and process cards in the right sidebar](../../slice-sidebar.png)
+
 ```bash
-npm i three-slicer/viewer react react-dom three@^0.160.0
+npm i three-slicer     # react, react-dom and three are peer dependencies — npm installs them for you
 ```
 
 ```jsx
 import { useState } from 'react'
 import Viewport from 'three-slicer/viewer'
-import 'three-slicer/viewer/styles.css'
 
 function App() {
   const [settings, setSettings] = useState({})   // OrcaSlicer schema keys; sparse — defaults fill the rest
@@ -17,7 +18,11 @@ function App() {
 }
 ```
 
+Styles are injected into the component's Shadow DOM root — nothing to import, and host CSS cannot collide.
+
 Slice parameters are derived from `settings` via `three-slicer`'s schema mapping — pair it with `three-slicer/components`' `<SettingsPanel/>` sharing the same state for a full slicer UI.
+
+A `.3mf` written by a slicer (OrcaSlicer/BambuStudio save, MakerWorld download) imports as a **project**: plate layout, project settings, and support/material painting are restored, not just the meshes. Where a facet carries both paint kinds, material paint wins and the dropped support paint is reported.
 
 Props: `settings`, `setSettings`, and three optional React-node slots rendered in the right sidebar —
 `processPanel` (the process card), `motionPanel` (folded into the printer card) and `filamentPanel`

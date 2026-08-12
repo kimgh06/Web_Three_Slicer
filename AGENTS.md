@@ -2,16 +2,16 @@
 
 Web_Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The root holds three folders:
 
-- **`slicer/`** — the upstream OrcaSlicer sources (unmodified, for reference and extraction only). Its own guide is `slicer/AGENTS.md`.
-- **`packages/`** — the published npm package `three-slicer` (a single one) plus the kernel sources. Zero build or runtime dependency on `slicer/`.
+- **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
+- **`packages/`** — the published npm package `three-slicer` (a single one) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
 - **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md`, `web/GUIDE.md`, `web/SPECS.md`.
 
 The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`) — a single `npm i` at the root installs everything.
 
 ## Core rules
 
-- **Never modify `slicer/`.** All development happens in `packages/` and `web/`.
-- `packages/` and `web/` must run, build and publish without `slicer/` (demonstrated in stage 34). Do not make changes that break this independence.
+- **Never modify `slicers/`.** All development happens in `packages/` and `web/`.
+- `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (89 keys from an empty settings map, 93 with two extruders and a support filament), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
 - One material per extruder. Upstream stores every filament option as one entry per extruder, so the kernel takes per-extruder vectors and reads them **positionally** — a hole must be filled with the value tool 0 resolved to, because the kernel cannot tell "absent" from 0. On every `T` change `slice_multimaterial` reloads the whole loaded-filament set (diameter, flow, retraction length/speed, z-hop, and `M109` when the temperatures actually disagree).
@@ -55,7 +55,28 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   ascending (the bridge sorts and de-duplicates, since a 3mf lists facets in its own order); the import REPLACES
   every mark because upstream's `deserialize` resets first, so it may only run on a freshly prepared selector; and
   a malformed hex string drops its whole facet rather than leaving a truncated bitstream, which the tree walker
-  would read straight into the next facet's share.
+  would read straight into the next facet's share. The reverse, `selector_bridge::export_paint_hex`, is the port of
+  `get_triangle_as_string`, batched over one `serialize()` instead of upstream's per-facet binary search. It is what
+  a "save project" needs and JS cannot substitute for: a brush stroke lives ONLY in the selector, and it is a split
+  tree, not a facet list — one measured stroke on a 12-facet cube exports 2 source facets carrying 1168 painted
+  sub-facets in a 1673-nibble string.
+- **Writing a project is not the mirror image of reading one.** `write_3mf.js` re-encodes what the parser decodes,
+  so each of the import traps has a matching one here: every value goes back out as a STRING through
+  `serializeProjectSettings` (the inverse of `normalizeProjectSettings`, `settings.js`) — a raw JS `false` would be
+  read back by anyone's parser as the string `"false"`, which is truthy; a point goes back to `"XxY"`; and the plate
+  positions are re-encoded under UPSTREAM's grid (the constant is `UPSTREAM_PLATE_GAP_RATIO` in `plate_layout.js`,
+  shared with the importer so the two cannot drift). Two asymmetries that are NOT bugs: the kernel's facet numbering
+  is per merged mesh and a 3mf's is per object, so `write3MFProject` rebases with the same running offset
+  `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order; and
+  the kernel's marks are only taken when the whole project sits on ONE plate, because the selector only ever holds
+  the merge of the selected plate and rebasing across plates would be a guess. Otherwise each object keeps the paint
+  it was imported with, so opening a painted project and saving it again never strips it.
+  `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool, as the parser's `unzip`
+  already does) — a save is dominated by compression, and on the main thread that is a frozen tab. Measured on a
+  980k-facet model: 2.6s all-on-thread when this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came
+  from choices worth not undoing: the weld keys vertices by their float32 BIT PATTERN rather than a decimal string
+  (708ms -> 89ms), and the zip is level **3**, which on this XML is both faster than level 6 and slightly smaller.
+  The `[vp-prof] export` line reports gather/paint/write separately, because the three scale with different things.
 - **An imported project's object positions are absolute, under UPSTREAM's plate grid — not this one's.** A
   slicer-written 3mf lays its plates out in world space, so an object's coordinates already say which plate it is
   on and where: upstream's origin is `(col*W*1.2, -row*D*1.2)` at the plate's **corner** with rows growing along
@@ -79,6 +100,33 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   support paint is reported as dropped — half-applying it would be worse than not applying it.
 - The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0.
 - `web/extract_all.py` derives the kernel key list by regex-scanning `packages/engine/src/settings.js` for single-quoted lowercase strings and keeping the ones that are schema keys — **it does not strip comments**. Measured: appending only the comment `// note: the 'interface_shells' option is not wired up yet` takes the list from 92 keys to 93 and adds that column to every extracted preset. Never write a schema key name in quotes in a comment in that file.
+- **The transform gizmo is deliberately not the stock one.** Three edits to `TransformControls`, each measured, each
+  easy to mistake for superstition and delete: (1) `showY` is false in **translate** mode only — a part prints off
+  the bed, so up/down is not a move (it also takes the XY/YZ plane handles, leaving X/Z/XZ). Set per mode, and
+  `seatMesh` still has to run on commit because rotate and scale move the lowest point. (2) The scale gizmo's `XYZ`
+  handle is **removed from the object graph**, not hidden — the per-frame update rewrites `visible` and `scale` on
+  every handle it owns, so flags do not stick; the bounding-box corners (`scale_box.js`) are the usable version of
+  that grip. (3) A 16px dead zone around the gizmo origin in scale mode: a scale drag's ratio is
+  distance-now/distance-at-press, and every axis picker reaches the origin, so a press there divides by ~0 — measured
+  4e7 on a 20mm cube, and negative past the centre, which mirrors the mesh and inverts the winding the kernel slices.
+  `clampMeshScale` bounds the result (0.2mm..5000mm, positive) for the drags that stay legal.
+- **Corner handles must win the pointer where they overlap a gizmo axis** — they are drawn over everything, so they
+  have to act there too. TransformControls picks its axis on HOVER and its listener is registered first, so it cannot
+  be outrun in `onDown`; it is switched off while the pointer is on a handle instead (`updateHandleHover`).
+- **Letter shortcuts match `e.code`, never `e.key`** (`shortcut_keymap.js`). Under a Korean layout `e.key` for the M
+  key is `'ㅁ'`, so every letter shortcut died while the IME was on while the arrows and Delete kept working — which
+  is what made it look intermittent rather than broken. `e.key` stays as a fallback for remapped Latin layouts.
+- **Undo/redo covers the viewport's own state and stops there** (`history.js`). `settings`/`setSettings` are the
+  HOST's props, so the boundary is drawn by the component's interface — painting, the prime tower and the plate
+  count sit outside it too (paint restore needs a kernel `prepare` per step; the other two write host settings).
+  Three things the design depends on: entries are **snapshots, not inverse operations** (geometry rides along by
+  reference — `localPos` is immutable — so undo and redo become one function with the stacks swapped, and a new
+  scene feature becomes undoable by calling `record()` and nothing else); `record()` runs **before** the mutation,
+  and a drag records at its START (`onTransformStarted`) because the commit only fires once the mesh already holds
+  the new pose; and restoring must redo a move's commit work (`registerSelector` + `checkBed`) or the paint overlay
+  is left where the model used to be. `restoreScene` re-creates a deleted object **under its original id** — the id
+  is half the paint topology key (`${id}:${ext}:${faces}`), so a fresh one silently drops that object's painting.
+  Record at the ACTION layer, never on the buttons: delete alone is reachable from four entry points.
 - UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS.
 - Licensed AGPL-3.0-or-later (`LICENSE.txt`).
 
@@ -98,10 +146,20 @@ node packages/wasm-core/test.mjs
 node packages/wasm-core/test_paint_import.mjs
 node packages/viewer/test_3mf_project.mjs
 
+# 3mf project export — the reverse codec (kernel) and the writer, read back through the importer (JS)
+node packages/wasm-core/test_paint_export.mjs
+node packages/viewer/test_3mf_export.mjs
+
+# Uniform-scale drag ratio, the scale clamp, and layout-independent shortcut matching
+node packages/viewer/test_scale_box.mjs
+
+# Undo/redo stack semantics (branch discard, coalescing, limit)
+node packages/viewer/test_history.mjs
+
 # Rebuild the kernel (needs emscripten + brew boost/eigen)
 bash packages/wasm-core/build.sh
 
-# Regenerate the extracted JSON (slicer/ sources -> packages/data/)
+# Regenerate the extracted JSON (slicers/slicer sources -> packages/data/)
 python3 web/extract_all.py
 
 # Regenerate the settings key types (config-schema.json -> types/settings-keys.d.ts, 923 keys). build runs this automatically

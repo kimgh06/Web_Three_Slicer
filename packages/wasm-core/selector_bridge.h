@@ -77,6 +77,13 @@ std::vector<float> overlay(int state);
 // Returns how many of the given facets were actually loaded; 0 means nothing was applied and the selector is untouched.
 int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::string>& hex);
 
+// The reverse of apply_paint_hex: every marked facet's split tree as the hex text a 3mf stores on its
+// <triangle> tag — a port of upstream FacetsAnnotation::get_triangle_as_string (slicer/src/libslic3r/Model.cpp:3542),
+// batched over serialize() so the bitstream is walked once instead of binary-searched per facet. Facet indices are
+// the selector's own (the merged mesh's); the caller owns rebasing them onto per-object numbering. Facets whose
+// tree decodes entirely to NONE still appear (upstream exports them too); untouched facets do not.
+std::vector<std::pair<int, std::string>> export_paint_hex();
+
 // Project the painted facets of one state to per-layer polygons (mm rings) at the given slice-z's,
 // via slice_mesh_slabs — the grid/tree_lite kernel path consumes these. one entry per z.
 std::vector<std::vector<std::vector<std::pair<double,double>>>>

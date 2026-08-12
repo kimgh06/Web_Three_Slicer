@@ -21,14 +21,35 @@ export function readMatrix(raw, count) {
 // Upstream's own schema default for a pair with nothing configured.
 export const DEFAULT_FLUSH = 140
 
+// Write one plate's tower position into the settings map. wipe_tower_x/y are upstream's per-plate arrays
+// (coFloats, one entry per plate); a scalar left over from the pre-array days means "every plate alike", so it
+// is broadcast across the existing plates before the one index changes — otherwise the first per-plate edit
+// would silently flip every OTHER plate to automatic placement. x === null clears this plate's entry (back to
+// auto) without touching the rest. Shared by the card's inputs and the scene's drag — one setting, two surfaces.
+export function writeTowerPosition(prev, plate, plateCount, x, y) {
+  const promote = (v) => {
+    if (Array.isArray(v)) return [...v]
+    const n = Number(v)
+    return (v != null && v !== '' && Number.isFinite(n)) ? Array(plateCount).fill(n) : []
+  }
+  const xs = promote(prev?.wipe_tower_x), ys = promote(prev?.wipe_tower_y)
+  xs[plate] = x === null ? null : Number(x)
+  ys[plate] = y === null ? null : Number(y)
+  return { ...prev, wipe_tower_x: xs, wipe_tower_y: ys }
+}
+
 export default function TowerCard({
   settings, setSettings, extruderColors, wipeTowerReal, onToggleWipeTower, towerStats,
+  selectedPlate = 0, plateCount = 1,
 }) {
   const colors = Array.isArray(extruderColors) ? extruderColors : []
   const count = colors.length
   const raw = settings ?? {}
   const scalar = (key) => { const v = raw[key]; return Array.isArray(v) ? v[0] : v }
   const num = (key, fallback) => { const v = Number(scalar(key)); return Number.isFinite(v) ? v : fallback }
+  // Per-plate options read the SELECTED plate's entry — the card edits the plate on screen, like upstream's
+  //  per-plate wipe tower. A hole (null) is "auto for this plate", so it must not fall back to another entry.
+  const atPlate = (key) => { const v = raw[key]; return Array.isArray(v) ? v[selectedPlate] : v }
 
   // Three states, not two: no tower at all, the deterministic ring, or the real port. "Off" is the absence of a
   //  tower — upstream's own default — and it only makes sense next to a destination for the purge, which is the
@@ -52,10 +73,11 @@ export default function TowerCard({
   })
 
   const width = num('prime_tower_width', 0)
-  const towerX = scalar('wipe_tower_x'), towerY = scalar('wipe_tower_y')
-  // "auto" is the absence of a position, not a separate flag: with no wipe_tower_x/y the slicer places the tower
-  //  beside the model itself. Writing a coordinate is what takes over, and clearing it hands placement back.
-  const manual = Number.isFinite(Number(towerX)) && String(towerX) !== ''
+  const towerX = atPlate('wipe_tower_x'), towerY = atPlate('wipe_tower_y')
+  // "auto" is the absence of a position, not a separate flag: with no wipe_tower_x/y entry for THIS plate the
+  //  slicer places the tower beside the model itself. Writing a coordinate is what takes over, and clearing it
+  //  hands placement back. The null check matters now that holes exist: Number(null) is 0, which is finite.
+  const manual = towerX != null && towerX !== '' && Number.isFinite(Number(towerX))
 
   const set = (key, value) => setSettings?.(prev => {
     const next = { ...prev }
@@ -63,12 +85,7 @@ export default function TowerCard({
     else next[key] = Number(value)
     return next
   })
-  const setPosition = (x, y) => setSettings?.(prev => {
-    const next = { ...prev }
-    if (x === null) { delete next.wipe_tower_x; delete next.wipe_tower_y; return next }
-    next.wipe_tower_x = Number(x); next.wipe_tower_y = Number(y)
-    return next
-  })
+  const setPosition = (x, y) => setSettings?.(prev => writeTowerPosition(prev, selectedPlate, plateCount, x, y))
 
   const matrix = readMatrix(raw.flush_volumes_matrix, count)
   const setCell = (from, to, value) => setSettings?.(prev => {
@@ -118,7 +135,9 @@ export default function TowerCard({
         </span>
       </div>}
 
-      {mode !== 'off' && <div className="sc-info"><span>Position</span>
+      {/* Position is the one per-plate option on the card, so with several plates the label says which one is
+          being edited — everything else here applies to every plate alike. */}
+      {mode !== 'off' && <div className="sc-info"><span>{plateCount > 1 ? `Position · plate ${selectedPlate + 1}` : 'Position'}</span>
         <select className="sc-model" data-testid="tower-position-mode" value={manual ? 'manual' : 'auto'}
           onChange={e => setPosition(e.target.value === 'auto' ? null : (towerStats?.x ?? 10), towerStats?.y ?? 10)}
           title="Auto places the tower beside the model; manual pins it to a bed coordinate.">

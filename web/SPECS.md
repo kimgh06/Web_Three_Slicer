@@ -6,7 +6,7 @@ A companion to `REVERSE_ENGINEERING_GUIDE.md`. Everything here was measured agai
 
 ## 1. 3MF project file XML spec
 
-Source: [src/libslic3r/Format/bbs_3mf.cpp](../slicer/src/libslic3r/Format/bbs_3mf.cpp), the constant declarations (lines 232-439).
+Source: [src/libslic3r/Format/bbs_3mf.cpp](../slicers/slicer/src/libslic3r/Format/bbs_3mf.cpp), the constant declarations (lines 232-439).
 The ZIP entry list is in guide §7.2. This section covers the XML structure of each entry.
 
 ### 1.1 `3D/3dmodel.model` — scene/mesh (3MF core + extensions)
@@ -86,8 +86,8 @@ label_object_enabled|timelapse_type .../>` + `<filament id type color used_m use
 
 ## 2. Painting data codec (TriangleSelector)
 
-Source: [TriangleSelector.cpp:1692](../slicer/src/libslic3r/TriangleSelector.cpp#L1692) `serialize`,
-stringification: [Model.cpp `FacetsAnnotation::get_triangle_as_string`](../slicer/src/libslic3r/Model.cpp).
+Source: [TriangleSelector.cpp:1692](../slicers/slicer/src/libslic3r/TriangleSelector.cpp#L1692) `serialize`,
+stringification: [Model.cpp `FacetsAnnotation::get_triangle_as_string`](../slicers/slicer/src/libslic3r/Model.cpp).
 
 ### 2.1 Concept
 
@@ -122,7 +122,7 @@ Verification vector for a JS implementation: an unsplit ENFORCER leaf = bits `00
 
 ## 3. The PlaceholderParser expression language (EBNF)
 
-Source: [PlaceholderParser.cpp](../slicer/src/libslic3r/PlaceholderParser.cpp), the boost::spirit grammar (lines 1880-2400).
+Source: [PlaceholderParser.cpp](../slicers/slicer/src/libslic3r/PlaceholderParser.cpp), the boost::spirit grammar (lines 1880-2400).
 Used for (1) custom G-code slots and (2) the preset `compatible_printers_condition` / `compatible_prints_condition`.
 
 ```ebnf
@@ -162,7 +162,7 @@ assignment      = ["global"|"local"] ident "=" expr ;             (* script vari
 
 ## 4. Keyboard shortcuts (measured from KBShortcutsDialog.cpp)
 
-Per platform, ctrl = ⌘ on macOS. The full list is in [KBShortcutsDialog.cpp](../slicer/src/slic3r/GUI/KBShortcutsDialog.cpp).
+Per platform, ctrl = ⌘ on macOS. The full list is in [KBShortcutsDialog.cpp](../slicers/slicer/src/slic3r/GUI/KBShortcutsDialog.cpp).
 
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
@@ -194,10 +194,10 @@ ModelVolume.mesh (TriangleMesh)
 ```
 
 - **Vertex layout**: `EVertexLayout::P3N3` — position 3f + normal 3f, interleaved
-  ([GLModel.hpp:38-47](../slicer/src/slic3r/GUI/GLModel.hpp#L38)). Indices shrink automatically to UINT/USHORT/UBYTE.
+  ([GLModel.hpp:38-47](../slicers/slicer/src/slic3r/GUI/GLModel.hpp#L38)). Indices shrink automatically to UINT/USHORT/UBYTE.
 - **One GLVolume = one ModelVolume x ModelInstance combination**. The transforms are kept
   **in two separate stages**: `m_instance_transformation` (the instance) and `m_volume_transformation` (part local)
-  ([3DScene.hpp:117-119](../slicer/src/slic3r/GUI/3DScene.hpp#L117)) — the final world matrix = instance ∘ volume.
+  ([3DScene.hpp:117-119](../slicers/slicer/src/slic3r/GUI/3DScene.hpp#L117)) — the final world matrix = instance ∘ volume.
 - Extra caches: the convex hull (for arrangement and interference tests), 3 kinds of transformed bbox, and `SinkingContours` (drawing the outline of
   the part sunk below the bed, rendered separately with a flat shader — 3DScene.cpp:1060).
 - **State and color palettes are static GLVolume members**: `MODEL_COLOR[5]` (the filament fallback), `MODEL_NEGTIVE_COL`,
@@ -211,7 +211,7 @@ ModelVolume.mesh (TriangleMesh)
 
 The shader `_render_objects` uses is `gouraud` (confirmed fallback: inside GLCanvas3D.cpp `_render_objects`,
 `shader = get_shader("gouraud")`). The uniforms are effectively the feature list.
-([resources/shaders/110/gouraud.vs/.fs](../slicer/resources/shaders/110/)):
+([resources/shaders/110/gouraud.vs/.fs](../slicers/slicer/resources/shaders/110/)):
 
 | Uniform | Feature | Web equivalent |
 |---|---|---|
@@ -229,9 +229,9 @@ z_range and the clipping planes are set on all of `m_volumes` at once (GLCanvas3
 
 ### 5.3 Picking (not GPU color picking — a CPU raycast)
 
-- Entry point: `SceneRaycaster` ([SceneRaycaster.hpp:40](../slicer/src/slic3r/GUI/SceneRaycaster.hpp#L40)) —
+- Entry point: `SceneRaycaster` ([SceneRaycaster.hpp:40](../slicers/slicer/src/slic3r/GUI/SceneRaycaster.hpp#L40)) —
   a raycaster list per Bed/Volume/Gizmo group, with hits identified through `encode_id/decode_id/base_id` (:115-119).
-- Per mesh: `MeshRaycaster` ([MeshUtils.hpp:159](../slicer/src/slic3r/GUI/MeshUtils.hpp#L159)) —
+- Per mesh: `MeshRaycaster` ([MeshUtils.hpp:159](../slicers/slicer/src/slic3r/GUI/MeshUtils.hpp#L159)) —
   **based on `AABBMesh` (the igl AABB tree)**, providing `unproject_on_mesh` (mouse -> unproject -> tree query -> hit point + normal)
   and `closest_hit`. So mouse pixel -> world ray -> BVH traversal runs even on every hover frame.
 - Web mapping: `three.Raycaster` + **three-mesh-bvh** (the same acceleration structure). Id encoding is unnecessary
@@ -239,7 +239,7 @@ z_range and the clipping planes are set on all of `m_volumes` at once (GLCanvas3
 
 ### 5.4 Painting brush interaction (GLGizmoPainterBase — shared by support/seam/MMU/fuzzy skin)
 
-The full flow ([GLGizmoPainterBase.cpp](../slicer/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.cpp)):
+The full flow ([GLGizmoPainterBase.cpp](../slicers/slicer/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.cpp)):
 
 ```
 (1) mouse move -> update_raycast_cache(mouse, camera, trafo_matrices)   (:158, 495, 603)
@@ -285,7 +285,7 @@ Every step from the slice result (ExPolygon) to actual G1/G2 lines. All measured
 
 ### 6.1 Path data model — the ExtrusionEntity hierarchy
 
-([ExtrusionEntity.hpp:165-179](../slicer/src/libslic3r/ExtrusionEntity.hpp#L165))
+([ExtrusionEntity.hpp:165-179](../slicers/slicer/src/libslic3r/ExtrusionEntity.hpp#L165))
 
 ```
 ExtrusionPath      = Polyline3 (point list) + mm3_per_mm + width + height + role
@@ -300,10 +300,10 @@ a shortcut compared with re-parsing the G-code text.
 
 ### 6.2 Width -> flow math (Flow -> E value)
 
-- Cross-section formulas ([Flow.cpp:219-230](../slicer/src/libslic3r/Flow.cpp#L219)):
+- Cross-section formulas ([Flow.cpp:219-230](../slicers/slicer/src/libslic3r/Flow.cpp#L219)):
   - Normal extrusion: `mm3_per_mm = h × (w − h(1 − π/4))` — a stadium (rectangle + semicircular ends) cross-section
   - Bridges: `mm3_per_mm = π w²/4` — a circular cross-section
-- E value conversion ([GCode.cpp:7382](../slicer/src/libslic3r/GCode.cpp#L7382), [Extruder.cpp:19](../slicer/src/libslic3r/Extruder.cpp#L19)):
+- E value conversion ([GCode.cpp:7382](../slicers/slicer/src/libslic3r/GCode.cpp#L7382), [Extruder.cpp:19](../slicers/slicer/src/libslic3r/Extruder.cpp#L19)):
   ```
   e_per_mm3 = filament_flow_ratio / filament cross-section (π d²/4)
   e_per_mm  = e_per_mm3 × path.mm3_per_mm        (divided by flow_ratio again at :7383)
@@ -313,27 +313,27 @@ a shortcut compared with re-parsing the G-code text.
 
 ### 6.3 Wall path generation (PerimeterGenerator)
 
-- `process_classic()` ([PerimeterGenerator.cpp:1159](../slicer/src/libslic3r/PerimeterGenerator.cpp#L1159)) —
+- `process_classic()` ([PerimeterGenerator.cpp:1159](../slicers/slicer/src/libslic3r/PerimeterGenerator.cpp#L1159)) —
   **Repeatedly offsets the slice contour inward** by the line spacing (Clipper) -> wall_loops loops,
   with the remaining gaps becoming gap-fill paths. Overhanging stretches are tagged by splitting the polyline (role erOverhangPerimeter).
-- `process_arachne()` (:2108) — the Arachne variable-width algorithm ([src/libslic3r/Arachne/](../slicer/src/libslic3r/Arachne/)):
+- `process_arachne()` (:2108) — the Arachne variable-width algorithm ([src/libslic3r/Arachne/](../slicers/slicer/src/libslic3r/Arachne/)):
   skeleton-based bead placement varies the width continuously on thin walls. An ExtrusionPath's width differs per segment.
-- Infill paths: the per-pattern classes in [Fill/](../slicer/src/libslic3r/Fill/) turn a surface into polylines, then add
+- Infill paths: the per-pattern classes in [Fill/](../slicers/slicer/src/libslic3r/Fill/) turn a surface into polylines, then add
   anchors (short connections attaching to the wall) and convert them to ExtrusionPaths (the internal algorithms are per pattern; summarized here).
 
 ### 6.4 Ordering and seams
 
 - Nearest-neighbor chaining: `chain_extrusion_entities(entities, start_near)`
-  ([ShortestPath.hpp:21](../slicer/src/libslic3r/ShortestPath.hpp#L21)) — picks the entity closest to the previous end point
+  ([ShortestPath.hpp:21](../slicers/slicer/src/libslic3r/ShortestPath.hpp#L21)) — picks the entity closest to the previous end point
   and direction from the previous end point. `no_sort` collections (support, …) are skipped.
 - Seams: `extrude_loop` -> `m_seam_placer.place_seam(layer, loop, last_pos, …)` ->
-  `loop.split_at(seam point)` ([GCode.cpp:6626-6628](../slicer/src/libslic3r/GCode.cpp#L6626)) —
+  `loop.split_at(seam point)` ([GCode.cpp:6626-6628](../slicers/slicer/src/libslic3r/GCode.cpp#L6626)) —
   the loop is cut at the seam into an open path before emission. The scarf joint also starts here.
-  (SeamPlacer's internal scoring — visibility, angle, alignment — is in [SeamPlacer.cpp](../slicer/src/libslic3r/GCode/SeamPlacer.cpp); summarized here.)
+  (SeamPlacer's internal scoring — visibility, angle, alignment — is in [SeamPlacer.cpp](../slicers/slicer/src/libslic3r/GCode/SeamPlacer.cpp); summarized here.)
 
 ### 6.5 Travel and retraction
 
-([GCode.cpp:8254-8330](../slicer/src/libslic3r/GCode.cpp#L8254))
+([GCode.cpp:8254-8330](../slicers/slicer/src/libslic3r/GCode.cpp#L8254))
 
 ```
 travel_to(point, role):
@@ -354,14 +354,14 @@ Priority (observed around GCode.cpp:7390-7465):
 
 ### 6.7 Emission (GCodeWriter)
 
-- `extrude_to_xy(point, dE)` ([GCodeWriter.cpp:1094](../slicer/src/libslic3r/GCodeWriter.cpp#L1094)) → `G1 X.. Y.. E..`
+- `extrude_to_xy(point, dE)` ([GCodeWriter.cpp:1094](../slicers/slicer/src/libslic3r/GCodeWriter.cpp#L1094)) → `G1 X.. Y.. E..`
 - `travel_to_xy` (:749), `retract` (:1165)
-- With arc fitting on and an ArcSegment, G2/G3 is emitted ([GCode.cpp:7980](../slicer/src/libslic3r/GCode.cpp#L7980),
-  [GCodeWriter.cpp:1116](../slicer/src/libslic3r/GCodeWriter.cpp#L1116)) — the path was arc-approximated beforehand by ArcFitter
+- With arc fitting on and an ArcSegment, G2/G3 is emitted ([GCode.cpp:7980](../slicers/slicer/src/libslic3r/GCode.cpp#L7980),
+  [GCodeWriter.cpp:1116](../slicers/slicer/src/libslic3r/GCodeWriter.cpp#L1116)) — the path was arc-approximated beforehand by ArcFitter
 
 ### 6.8 Layer post-processing pipeline (the definitive order)
 
-TBB parallel_pipeline ([GCode.cpp:4223-4231](../slicer/src/libslic3r/GCode.cpp#L4223)):
+TBB parallel_pipeline ([GCode.cpp:4223-4231](../slicers/slicer/src/libslic3r/GCode.cpp#L4223)):
 
 ```
 generator (produces the layer G-code)
@@ -405,7 +405,7 @@ serialization (§6.1 — preview data) (3) knowledge of the post-processing orde
 
 ## 7. The upstream libvgcode toolpath rendering algorithm (broken down)
 
-Source: [src/libvgcode/](../slicer/src/libvgcode/) — SegmentTemplate.cpp, Shaders.hpp `Segments_Vertex_Shader`. All measured.
+Source: [src/libvgcode/](../slicers/slicer/src/libvgcode/) — SegmentTemplate.cpp, Shaders.hpp `Segments_Vertex_Shader`. All measured.
 
 ### 7.1 Data model — the CPU builds no geometry
 - `PathVertex` (PathVertex.hpp:17): one per G-code move endpoint — position, **height, width**, feedrate, role, type, …
@@ -454,7 +454,8 @@ The result of surveying the upstream UI file by file and line by line, plus the 
 ### S1. Custom top title bar — BBLTopbar.cpp:245-301  🟡 stage 27 (top bar + tabs + open; only placeholders for the File menu and undo/redo)
 Logo · File menu · dropdown menu · save · **undo/redo buttons** · window controls.
 -> Viewer: a file/save/undo/redo button bar. (The viewer's "header removal" only removed the builder listing — the desktop app does have a top bar.)
--> **Viewer (stage 27)**: a ~44px top bar = the logo "OrcaSlicer RE" + Open · the centered Prepare|Preview tabs · undo/redo placeholders (disabled + tooltip). The File menu and window controls are deferred.
+-> **Viewer (stage 27)**: a ~44px top bar = the logo "OrcaSlicer RE" + Open · the centered Prepare|Preview tabs · undo/redo. The File menu and window controls are deferred.
+-> **Undo/redo (live)**: the viewport's own state only — object transforms, add/remove, per-object extruder and visibility, with Ctrl+Z / Ctrl+Shift+Z bound to the component's root rather than window so a host app keeps its own. Print settings are the host's props and painting needs a kernel `prepare` per step, so neither is on the stack (`packages/viewer/src/history.js`).
 
 ### S2. View switching — the 3 ECanvasType modes (GLCanvas3D.hpp:510)  ✅ implemented in stage 25 (Prepare|Preview)
 Prepare | Preview | Assemble, switched through assemble_view_toolbar (GLCanvas3D.cpp:1172). Assemble is lower priority.
@@ -529,7 +530,7 @@ Loading 66 vendors, resolving inherits, compatibility conditions (an expression 
 3MF **project** save/restore (round-tripping settings, arrangement and painting — the §1 spec exists), STEP (OCCT) and DRC (Draco) import, G-code import (a viewer-only mode), and the project save feature itself
 
 ### E. UI (the rest of SPECS §8)
-undo/redo (placeholder only) · ~~automatic re-seating after a gizmo transform~~ **✅ stage 29** (re-seats minZ -> 0 on drag commit for move/rotate/scale; the one difference from upstream is no sinking support — upstream keeps sinking (minZ<0), while we snap any minZ≠0 to 0 because the slicer cannot handle negative z) · arrange/orient (needs the backend) · ObjectSettings/ObjectLayers (needs A-4 first) · the Global|Objects switch · **the plate system (S7 🟡 first pass done — stage 29; per-plate settings, lock and auto arrange remain)** · the File menu · most shortcuts (the §4 table) · camera presets (Ctrl+0~6) / the view cube · notification toasts · the AMS/flushing dialogs · **the horizontal move slider** · option markers (seam/retraction/tool change indicators)
+~~undo/redo (placeholder only)~~ **✅ scene actions live** (transforms/add/remove/extruder/visibility; painting, the prime tower and the plate count are still outside it, and settings belong to the host) · ~~automatic re-seating after a gizmo transform~~ **✅ stage 29** (re-seats minZ -> 0 on drag commit for move/rotate/scale; the one difference from upstream is no sinking support — upstream keeps sinking (minZ<0), while we snap any minZ≠0 to 0 because the slicer cannot handle negative z) · arrange/orient (needs the backend) · ObjectSettings/ObjectLayers (needs A-4 first) · the Global|Objects switch · **the plate system (S7 🟡 first pass done — stage 29; per-plate settings, lock and auto arrange remain)** · the File menu · most shortcuts (the §4 table) · camera presets (Ctrl+0~6) / the view cube · notification toasts · the AMS/flushing dialogs · **the horizontal move slider** · option markers (seam/retraction/tool change indicators)
 
 ### F. Painting
 Seam, MMU color and fuzzy skin painting are unimplemented (support enforcer/blocker only — the TriangleSelector base is already ported, so they are extensible) · only the SPHERE cursor (CIRCLE/POINTER/HEIGHT_RANGE/GAP_FILL are missing) · rough edges when aiming the brush from below

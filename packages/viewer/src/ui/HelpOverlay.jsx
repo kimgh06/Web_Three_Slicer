@@ -10,7 +10,8 @@ export default function HelpOverlay({ onClose }) {
           <section>
             <h4>Prepare</h4>
             <dl>
-              <dt>M / G</dt><dd>Move</dd><dt>R</dt><dd>Rotate</dd><dt>S</dt><dd>Scale</dd>
+              <dt>M / G</dt><dd>Move (on the bed)</dd><dt>R</dt><dd>Rotate</dd>
+              <dt>S</dt><dd>Scale — drag a box corner for all of XYZ</dd>
               <dt>Arrow keys</dt><dd>Move 10mm (Shift 1mm)</dd>
               <dt>PageUp/Down</dt><dd>Rotate 45°</dd>
               <dt>Del</dt><dd>Delete selection</dd><dt>Esc</dt><dd>Clear selection / leave paint</dd>
@@ -27,6 +28,8 @@ export default function HelpOverlay({ onClose }) {
           <section>
             <h4>Common</h4>
             <dl>
+              <dt>Ctrl+Z</dt><dd>Undo an object change (not settings or painting)</dd>
+              <dt>Ctrl+Shift+Z</dt><dd>Redo</dd>
               <dt>Ctrl+R</dt><dd>Slice</dd>
               <dt>Ctrl+K / ⌘D</dt><dd>Duplicate</dd>
               <dt>Ctrl+C/V/X</dt><dd>Copy / paste / cut</dd>
