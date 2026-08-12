@@ -294,7 +294,7 @@ export default function FilamentCard({
         <div className="sc-info"><span className="sc-dirty">{dirty ? '● Modified' : ''}</span>
           <span className="sc-head-btns sc-preset-btns">
             <button onClick={saveAs} data-testid="filament-save"
-              title="Save this extruder's filament values as your own material — system presets are vendor data and stay read-only">Save as…</button>
+              title="Save this extruder's filament values as your own material — system presets are vendor data and stay read-only">Save as template</button>
             <button onClick={remove} disabled={!custom[picked]} data-testid="filament-delete"
               title="Delete this saved material">Delete</button>
           </span>

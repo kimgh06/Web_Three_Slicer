@@ -14,18 +14,18 @@ const ROUTES = [
   ['Engine', 'three-slicer', 'Slice a binary STL into G-code, in Node or the browser'],
   ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
   ['Viewer', 'three-slicer/viewer', 'React 3D viewer: model loading, worker slicing, toolpath preview'],
-  ['Components', 'three-slicer/components', 'React SettingsPanel driven by the 907-option schema'],
-  ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, invalidation map'],
+  ['Components', 'three-slicer/components', `React SettingsPanel driven by the ${OPTION_COUNT}-option schema`],
+  ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, printer / process / filament catalogs'],
   ['Worker', 'three-slicer/worker', 'Layer streaming off the browser main thread'],
 ]
 
 const GROUPS = [
-  ['Input', ['STL', 'OBJ', '3MF', 'AMF', 'PLY', 'drag and drop', 'multiple models']],
+  ['Input', ['STL', 'OBJ', '3MF project (layout · settings · painting)', 'AMF', 'PLY', 'STEP', 'drag and drop', 'multiple models']],
   ['Arrange', ['move', 'rotate', 'scale', 'duplicate', 'split to objects', 'place on bed', 'multi-plate']],
   ['Slicing', [
     'Arachne variable-width walls', 'gyroid / honeycomb / crosshatch infill',
-    'tree · grid support', 'support painting',
-    'skirt', 'brim', 'raft', 'ironing', 'arc fitting', 'multi-material',
+    'tree · grid support', 'support painting', 'material painting',
+    'skirt', 'brim', 'raft', 'ironing', 'arc fitting', 'multi-material', 'prime tower',
   ]],
   ['Preview', ['layer slider', 'single layer', 'travel', 'feature / speed / height / width / fan / temperature views']],
   ['Output', ['G-code download', 'print time', 'filament usage']],
@@ -58,6 +58,17 @@ export default function Landing() {
       </header>
 
       <main>
+        <figure className="lp-shot">
+          <img
+            src="/usage.png"
+            alt="A sliced Benchy in the Preview tab: organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates"
+            width="2674"
+            height="1996"
+            loading="lazy"
+          />
+          <figcaption>The Preview tab — a sliced Benchy with tree supports, per-feature toolpath colors and print estimates</figcaption>
+        </figure>
+
         <section className="lp-section" aria-labelledby="install-title">
           <div className="lp-section-head">
             <h2 id="install-title">Install</h2>

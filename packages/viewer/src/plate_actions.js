@@ -14,7 +14,7 @@ export function makePlateActions(deps) {
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, syncPaintSelector,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
     onSlicedRef,
   } = deps
 
@@ -146,7 +146,20 @@ export function makePlateActions(deps) {
   // Add/remove/select plates
   function addPlate() { setPlateCount(n => Math.min(MAX_PLATES, n + 1)) }
   function deletePlate() {
-    setPlateCount(n => { if (n <= 1) return n; const last = n - 1; delete plateResultsRef.current[last]; disposePlateToolpath(last); refreshSlicedCount(); if (selectedPlateRef.current >= last) selectPlate(last - 1); return last })
+    setPlateCount(n => {
+      if (n <= 1) return n
+      const last = n - 1; delete plateResultsRef.current[last]; disposePlateToolpath(last); refreshSlicedCount()
+      // Per-plate settings shrink with the plate list (upstream erases the same index, PartPlate.cpp:4722) — a
+      //  stale trailing entry would come back as the wrong plate's position the moment a plate is re-added.
+      //  Only the LAST plate is ever deletable here, so truncation IS the erase.
+      setSettings?.(s => (Array.isArray(s?.wipe_tower_x) || Array.isArray(s?.wipe_tower_y))
+        ? { ...s,
+            wipe_tower_x: Array.isArray(s.wipe_tower_x) ? s.wipe_tower_x.slice(0, last) : s.wipe_tower_x,
+            wipe_tower_y: Array.isArray(s.wipe_tower_y) ? s.wipe_tower_y.slice(0, last) : s.wipe_tower_y }
+        : s)
+      if (selectedPlateRef.current >= last) selectPlate(last - 1)
+      return last
+    })
   }
   function selectPlate(i) {
     selectedPlateRef.current = i; setSelectedPlate(i); placeXRef.current = 0

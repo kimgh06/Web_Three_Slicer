@@ -8,12 +8,14 @@ import { MAX_PLATES, plateCols, plateStep } from './plate_layout.js'
 import { parseGcode } from './gcode_parse.js'
 import { objectTools } from './toolbar_items.js'
 import { makeKeyHandler } from './shortcut_keymap.js'
+import { createHistory } from './history.js'
 import { useThreeScene } from './use_three_scene.js'
 import { useSlicer } from './use_slicer.js'
 import { makeToolpathView } from './toolpath_view.js'
 import { makePlateActions } from './plate_actions.js'
 import { makeModelLoad } from './model_load.js'
 import { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
+import { makeExportActions } from './export_actions.js'
 import { makeObjectActions } from './object_actions.js'
 import { bedOverflow, overflowText } from './bed_bounds.js'
 // Stage 27: the desktop-style shell, split into presentational components (one file per panel).
@@ -30,7 +32,7 @@ import StatsCard from './ui/StatsCard.jsx'
 import PrinterCard from './ui/PrinterCard.jsx'
 import FilamentCard from './ui/FilamentCard.jsx'
 import ObjectList from './ui/ObjectList.jsx'
-import TowerCard from './ui/TowerCard.jsx'
+import TowerCard, { writeTowerPosition } from './ui/TowerCard.jsx'
 import SliceBar from './ui/SliceBar.jsx'
 
 // 3D viewport + browser-only slicing (WASM, track C stage 4).
@@ -92,6 +94,8 @@ export default function Viewport({
   const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
   const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
   const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
+  const recordHistoryRef = useRef(null)     // set below, from the undo history — the scene hook is installed first
+  const historyRef = useRef(null)           // the undo/redo stacks (history.js) — created once, below
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
   const plateResultsRef = useRef({})    // {plateIdx: sliceResult} cache
   const plateOffsetsRef = useRef({})    // {plateIdx: {offX, offZ}} toolpath display offset (the plate's own origin)
@@ -105,6 +109,9 @@ export default function Viewport({
   const [objects, setObjects] = useState([])
   const [triWarn, setTriWarn] = useState('')
   const [slicing, setSlicing] = useState(false)
+  // The label an export is currently showing, or null when idle. A string rather than a boolean because the two
+  //  export buttons say different things, and the one that is running is the one that has to say it.
+  const [exporting, setExporting] = useState(null)
   const [autoSlice, setAutoSlice] = useState(!!defaultAutoSlice)   // G004: debounced auto re-slice on settings change
   const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
@@ -122,6 +129,10 @@ export default function Viewport({
   const [showHelp, setShowHelp] = useState(false)       // '?' shortcut help overlay
   const [slicedPlateCount, setSlicedPlateCount] = useState(0)   // number of plates holding a result (drives the export-all button)
   const [ctxMenu, setCtxMenu] = useState(null)          // right-click context menu {x, y, onObject}
+  // The scene owns the selection; this is a read-only mirror so the object list and the context menu can render
+  //  from it. Pushed by the scene through onSelectionChanged rather than polled, because a click has to repaint
+  //  the list in the same frame it repaints the highlight.
+  const [selectedIds, setSelectedIds] = useState([])
   // Stage 25 S6: view type + dual slider + gradient legend
   const [viewType, setViewType] = useState('feature')
   const [colorRange, setColorRange] = useState(null)   // {min,max,label,unit,cont}
@@ -212,14 +223,22 @@ export default function Viewport({
     //  happens with the panel closed — a paint-mode gate would never fire. Through a ref because the paint module
     //  is built further down and this handler is installed once.
     onTransformCommitted: () => { if (selectorGeomRef.current) registerSelectorRef.current?.(); checkBed() },
+    // A gizmo/corner drag reports only that it ENDED, and by then the mesh already holds the new pose — so the
+    //  undo entry is taken at the start of the drag, where the old one is still readable.
+    onTransformStarted: () => recordHistoryRef.current?.('drag'),
     // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
     //  ref because the scene installs its handlers once and makePlateActions is built further down.
     onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
-    onTowerMoved: (x, y) => {
-      const o = apiRef.current?.platePos?.(selectedPlateRef.current) ?? { x: 0, z: 0 }
-      setSettings(s => ({ ...s,
-        wipe_tower_x: Math.round((x - o.x + kpRef.current.bedW / 2) * 10) / 10,
-        wipe_tower_y: Math.round((y + o.z + kpRef.current.bedD / 2) * 10) / 10 }))
+    onSelectionChanged: () => setSelectedIds(apiRef.current?.selectedObjectIds?.() ?? []),
+    //  The drag can land on any plate's box, and each plate's position is its own array entry — the origin
+    //  subtracted is the dragged box's own plate, and only that plate's entry is written, so the other plates'
+    //  towers stand still (writeTowerPosition owns the array/legacy-scalar mechanics).
+    onTowerMoved: (x, y, plate) => {
+      const idx = plate ?? selectedPlateRef.current
+      const o = apiRef.current?.platePos?.(idx) ?? { x: 0, z: 0 }
+      setSettings(s => writeTowerPosition(s, idx, plateCountRef.current,
+        Math.round((x - o.x + kpRef.current.bedW / 2) * 10) / 10,
+        Math.round((y + o.z + kpRef.current.bedD / 2) * 10) / 10))
     },
   })
 
@@ -252,27 +271,36 @@ export default function Viewport({
     const towerOff = settings?.enable_prime_tower === false
     if (!multi || towerOff || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
     const size = wipeTowerReal ? (Number(settingRaw(settings, 'prime_tower_width')) || 30) : 15
-    const box = api.modelBounds?.(selectedPlate)
     const bedW = kp.bed_width, bedD = kp.bed_depth
-    // The box is drawn in world coordinates and a bed coordinate is plate-local, so the plate's own origin is the
-    //  one conversion between them — the same origin the slice frame subtracts.
-    const origin = api.platePos?.(selectedPlate) ?? { x: 0, z: 0 }
     // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
-    const chosen = (key) => { const v = settings?.[key]; const n = Number(Array.isArray(v) ? v[0] : v)
-      return (v != null && v !== '' && Number.isFinite(n)) ? n : NaN }
-    const setX = chosen('wipe_tower_x'), setY = chosen('wipe_tower_y')
-    const auto = !Number.isFinite(setX)
-    // Auto mirrors use_slicer's placement exactly: one gap to the model's left, level with the model's middle,
-    //  clamped to the bed. Both now read the same box in the same frame, so the drawn tower is the sliced one.
+    //  Per plate: wipe_tower_x/y are upstream's per-plate arrays, so each plate reads its OWN entry — a hole
+    //  (null) means auto for that plate only. A legacy scalar still applies to every plate alike.
+    const chosen = (key, plate) => { const raw = settings?.[key]; const v = Array.isArray(raw) ? raw[plate] : raw
+      const n = Number(v); return (v != null && v !== '' && Number.isFinite(n)) ? n : NaN }
+    // Every plate slices with its own tower (the kernel is per-plate), so every plate with objects gets a box.
+    //  An empty plate gets none: the kernel has nothing to slice there, so a box would promise a tower that
+    //  never prints.
     const gap = 5
     const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
-    const x = auto ? origin.x + clamp((box ? box.minX - origin.x : 0) - gap - size / 2, -bedW / 2 + size / 2, bedW / 2 - size / 2)
-                   : origin.x + setX - bedW / 2 + size / 2
-    const y = auto ? -origin.z + clamp(box ? (box.minY + box.maxY) / 2 + origin.z : 0, -bedD / 2 + size / 2, bedD / 2 - size / 2)
-                   : -origin.z + setY - bedD / 2 + size / 2
-    const height = Math.max(2, box?.height ?? 20)
-    api.setPrimeTower?.({ x, y, size, height })
-  }, [extruderColors.length, canvasMode, objects.length, wipeTowerReal, settings, selectedPlate, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
+    const boxes = []
+    for (let plate = 0; plate < plateCount; plate++) {
+      const box = api.modelBounds?.(plate)
+      if (!box) continue
+      const setX = chosen('wipe_tower_x', plate), setY = chosen('wipe_tower_y', plate)
+      const auto = !Number.isFinite(setX)
+      // The box is drawn in world coordinates and a bed coordinate is plate-local, so the plate's own origin is
+      //  the one conversion between them — the same origin the slice frame subtracts.
+      const origin = api.platePos?.(plate) ?? { x: 0, z: 0 }
+      // Auto mirrors use_slicer's placement exactly: one gap to the model's left, level with the model's middle,
+      //  clamped to the bed. Both now read the same box in the same frame, so the drawn tower is the sliced one.
+      const x = auto ? origin.x + clamp(box.minX - origin.x - gap - size / 2, -bedW / 2 + size / 2, bedW / 2 - size / 2)
+                     : origin.x + setX - bedW / 2 + size / 2
+      const y = auto ? -origin.z + clamp((box.minY + box.maxY) / 2 + origin.z, -bedD / 2 + size / 2, bedD / 2 - size / 2)
+                     : -origin.z + setY - bedD / 2 + size / 2
+      boxes.push({ plate, x, y, size, height: Math.max(2, box.height) })
+    }
+    api.setPrimeTower?.(boxes.length ? boxes : null)
+  }, [extruderColors.length, canvasMode, objects.length, wipeTowerReal, settings, selectedPlate, plateCount, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -324,7 +352,7 @@ export default function Viewport({
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings,
     // Belt to the commit hook's braces: a move can reach a slice without a gizmo commit (keyboard nudge, plate
     //  re-arrange), so the slice itself hands the selector the mesh it is about to cut. Only for the selected
     //  plate — that is the mesh the brush painted — and only when a selector exists at all.
@@ -368,6 +396,14 @@ export default function Viewport({
     clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
+  })
+
+  // ---- Project export: "save as" a 3mf project, or the plain geometry as an STL ----
+  //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
+  //  must use the values in effect when they FINISH, not when the button was bound.
+  const settingsRef = useRef(settings); settingsRef.current = settings
+  const { exportProject, exportSTL, exportSelectedProject, exportSelectedSTL } = makeExportActions({
+    apiRef, getWorker, settingsRef, plateCountRef, bedRef: kpRef, setError, setSliceNotice, setExporting,
   })
 
   // G004: auto re-slice — 0.8s debounce after a settings or model change, for the current plate.
@@ -420,7 +456,7 @@ export default function Viewport({
     const x0 = ok ? Math.min(...pa.map(p => p[0])) : 0, y0 = ok ? Math.min(...pa.map(p => p[1])) : 0
     setSettings(s => ({ ...s, printable_area: [[x0, y0], [x0 + w, y0], [x0 + w, y0 + d], [x0, y0 + d]] }))
   }
-  function setObjExtruder(id, e) { apiRef.current?.setObjectExtruder(id, e); setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
+  function setObjExtruder(id, e) { recordHistoryRef.current?.(); apiRef.current?.setObjectExtruder(id, e); setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
 
   // Stage 25 S6: dual slider (lo/hi) — in single-layer mode both thumbs move together.
   function setRange(lo, hi) {
@@ -468,6 +504,44 @@ export default function Viewport({
   }, [overhangOn, overhangAngle, canvasMode, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
   // Stage 27 S4: filament colors/count + per-object print toggle + painting gizmo mode
   function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))); checkBed() }
+
+  // ---- Undo/redo, viewport scope (history.js holds the reasoning and the boundary) ----
+  //  One function takes the direction, because a snapshot history makes the two identical apart from which stack is
+  //  popped. Everything that can undo calls travelHistory(); everything that can be undone calls recordHistory()
+  //  BEFORE it mutates.
+  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 })
+  //  Restoring is a move like any other, so it has to do a move's commit work: hand the kernel's selector the new
+  //  coordinates and re-run the bed check, or the paint overlay stays where the model used to be.
+  const historyRestoreRef = useRef(null)
+  historyRestoreRef.current = (snapshot) => {
+    apiRef.current?.restoreScene(snapshot)
+    refreshObjects()
+    if (selectorGeomRef.current) registerSelectorRef.current?.()
+  }
+  if (!historyRef.current) historyRef.current = createHistory({
+    capture: () => apiRef.current?.sceneSnapshot() ?? [],
+    restore: (snapshot) => historyRestoreRef.current?.(snapshot),
+  })
+  function recordHistory(kind) { historyRef.current.record(kind); setHistoryDepth(historyRef.current.depth()) }
+  function travelHistory(direction) {
+    if (canvasModeRef.current === 'preview') return false   // preview shows toolpaths; there is no object to move there
+    const moved = historyRef.current.travel(direction)
+    if (moved) setHistoryDepth(historyRef.current.depth())
+    return moved
+  }
+  recordHistoryRef.current = recordHistory
+  //  Bound to the component root (see the JSX), so it never reaches the host application's own Ctrl+Z. Matched on
+  //  e.code for the same reason the other shortcuts are: a Korean layout reports 'ㅋ' for the Z key.
+  function onShellKey(e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+    const target = e.nativeEvent?.composedPath ? e.nativeEvent.composedPath()[0] : e.target
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+    const z = e.code === 'KeyZ' || e.key?.toLowerCase?.() === 'z'
+    const y = e.code === 'KeyY' || e.key?.toLowerCase?.() === 'y'
+    if (!z && !y) return
+    e.preventDefault(); e.stopPropagation()
+    travelHistory(y || e.shiftKey ? 'redo' : 'undo')
+  }
   function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; extruderColorsRef.current = n; apiRef.current?.recolorObjects(); applyViewColors(); return n }) }
   function addFilament() { setExtruderColors(cs => { if (cs.length >= MAX_PAINT_EXTRUDERS) return cs; const n = [...cs, DEFAULT_FILAMENT_COLORS[cs.length] || '#888888']; extruderColorsRef.current = n; return n }) }
   function removeFilament(index) {
@@ -484,7 +558,7 @@ export default function Viewport({
       apiRef.current?.recolorObjects(); refreshObjects(); return n
     })
   }
-  function toggleObjVisible(id) { const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
+  function toggleObjVisible(id) { recordHistoryRef.current?.(); const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
   // Both brushes take the pointer away from the gizmos, so the rail/object-card toggle reads "a brush is active"
   //  rather than "the support brush is active": while material painting, the move gizmo must not look selected.
   //  Which brush is active is what the two floating panels below say.
@@ -519,6 +593,7 @@ export default function Viewport({
   } = makeObjectActions({
     apiRef, objectsRef, clipboardRef, paintModeRef,
     setPaintMode, removeObject, refreshObjects, setError, setSliceNotice,
+    recordHistory,
   })
 
   // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
@@ -528,7 +603,7 @@ export default function Viewport({
     removeAll: deleteAllObjects,
     duplicate: duplicateSelected,
     split: splitSelected,
-    placeOnBed: () => apiRef.current?.placeOnBed(),
+    placeOnBed: () => { recordHistory(); apiRef.current?.placeOnBed() },
     objectCount: () => objects.length,
   })
 
@@ -545,8 +620,11 @@ export default function Viewport({
     leavePreview: () => setCanvasMode('prepare'),
     setGizmo,
     cancelTool: () => { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() },
-    rotateSelected: (rad) => apiRef.current?.rotateSelectedY(rad),
-    nudgeSelected: (dx, dy) => { apiRef.current?.nudgeSelected(dx, dy); checkBed() },
+    selectAll: () => apiRef.current?.selectAllObjects(),
+    // Both repeat while the key is held, so they record under a kind: history.js folds a run of them into the one
+    //  entry that takes the object back to where it stood before the run started.
+    rotateSelected: (rad) => { recordHistory('rotate'); apiRef.current?.rotateSelectedY(rad) },
+    nudgeSelected: (dx, dy) => { recordHistory('nudge'); apiRef.current?.nudgeSelected(dx, dy); checkBed() },
     toggleHelp: () => setShowHelp(v => !v),
   })
 
@@ -602,13 +680,21 @@ export default function Viewport({
 
   return (
     <ShadowHost css={shadowCss}>
-    <div className="app-shell">
+    {/* Ctrl+Z is bound HERE, on the component's own root, not on window like the other shortcuts. It is the one
+        shortcut a host application is likely to own as well (text fields, its own editor), so it must not leak out
+        of the viewer — an element listener only fires when focus is inside, which is exactly the rule wanted. The
+        canvas is given a tabIndex below so that clicking it counts as being inside. */}
+    <div className="app-shell" onKeyDown={onShellKey}>
       {/* Shared hidden file input */}
-      <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={onFiles} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={e => { recordHistory(); onFiles(e) }} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
 
       {showPanel('topBar') && (
         <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
-          previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()} />
+          previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()}
+          onSaveProject={exportProject} onExportSTL={exportSTL} canSave={objects.length > 0} exporting={exporting}
+          onUndo={() => travelHistory('undo')} onRedo={() => travelHistory('redo')}
+          canUndo={historyDepth.undo > 0 && canvasMode === 'prepare'}
+          canRedo={historyDepth.redo > 0 && canvasMode === 'prepare'} />
       )}
 
       <div className="app-body">
@@ -620,8 +706,12 @@ export default function Viewport({
 
         {/* Center viewport */}
         <div className="viewport-col">
+          {/* tabIndex + focus on press: a plain div cannot receive key events, which is why every other shortcut
+              had to live on window. Ctrl+Z is scoped to this component instead, and this is what lets a click on
+              the 3D view count as "inside" it. */}
           <div className={(ok ? 'vp-canvas' : 'vp-canvas fail') + (dragOver ? ' drag-over' : '')} ref={mountRef}
-            onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave} data-testid="drop-zone">
+            tabIndex={0} onPointerDown={() => mountRef.current?.focus({ preventScroll: true })}
+            onDrop={e => { recordHistory(); onDrop(e) }} onDragOver={onDragOver} onDragLeave={onDragLeave} data-testid="drop-zone">
             {!ok && <div className="vp-fallback">⚠ {status}</div>}
             {ok && objects.length === 0 && canvasMode !== 'preview' && showPanel('emptyHint') && (
               <div className="empty-hint" data-testid="empty-hint">
@@ -634,11 +724,13 @@ export default function Viewport({
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
             {ctxMenu && (
               <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
+                selectedCount={selectedIds.length}
                 actions={{
                   duplicate: duplicateSelected, copy: copySelected, split: splitSelected,
                   placeOnBed: () => apiRef.current?.placeOnBed(), remove: deleteSelected,
                   openFile: () => fileInputRef.current?.click(), paste: pasteClipboard,
                   zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
+                  exportSelectedSTL, exportSelectedProject,
                 }} />
             )}
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
@@ -702,8 +794,11 @@ export default function Viewport({
 
               {objects.length > 0 && showPanel('objectList') && (
                 <ObjectList objects={objects} extruderColors={extruderColors}
+                  selectedIds={selectedIds}
+                  onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
-                  onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }} onRemove={removeObject}
+                  onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
+                  onRemove={id => { recordHistory(); removeObject(id) }}
                   supportOn={supportOn} onToggleSupport={onToggleSupport}
                   overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}
                   overhangAngle={overhangAngle} paintMode={paintMode} onTogglePaint={togglePaintGizmo}
@@ -719,7 +814,7 @@ export default function Viewport({
               {extruderColors.length > 1 && showPanel('towerCard') && (
                 <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
                   wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
-                  towerStats={towerStats} />
+                  towerStats={towerStats} selectedPlate={selectedPlate} plateCount={plateCount} />
               )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}

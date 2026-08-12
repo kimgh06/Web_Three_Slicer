@@ -229,7 +229,8 @@ export function useSlicer(deps) {
     params.reuse_stages = dig && dig === lastGeomRef.current ? 2 : 0
   }
   function buildParams(merged) {
-    const params = deriveKernelParams(settings)
+    // The plate this merge cut — per-plate settings (wipe_tower_x/y arrays) index by it.
+    const params = deriveKernelParams(settings, { plate: merged.plate })
     if (merged.extruders >= 2 && merged.split > 0) {
       params.extruder_count = merged.extruders; params.mm_group_split = merged.split
       // One group per extruder run — mm_group_split alone can only express two.

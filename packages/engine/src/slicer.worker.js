@@ -109,6 +109,12 @@ const paintedReply = (Module, message, paintedState) => {
 self.onmessage = async (e) => {
   const d = e.data
   try {
+    // Asking for the painting must not be what LOADS the kernel. Every other command needs it, but if this worker
+    //  has never loaded it then selector_prepare has never run either, so there is no painting to report — and
+    //  making a save wait on a 4MB WASM load before the first slice is seconds of nothing, for an empty answer.
+    if (d.cmd === 'exportPaint' && !modPromise) {
+      self.postMessage({ type: 'paintExport', supported: false, facets: [], hex: '' }); return
+    }
     if (!modPromise) modPromise = loadCore()
     const Module = await modPromise
     // Warmup: only load the kernel (+ spawn the mt pthread pool) ahead of time — removes the perceived load on the first slice
@@ -159,6 +165,17 @@ self.onmessage = async (e) => {
       const reply = paintedReply(Module, d, null)
       reply.applied = applied
       self.postMessage(reply); return
+    }
+    // exportPaint: the reverse of importPaint — every marked facet's split tree as {facets, hex} in the CURRENT
+    //  selector's numbering, the same parallel-array pairing importPaint takes (hex is one newline-joined blob).
+    //  The caller (3mf save) rebases the facet indices back onto per-object numbering; this worker cannot, because
+    //  which objects were merged in what order is the viewer's knowledge. A kernel built before the binding existed
+    //  reports supported:false rather than throwing — the save then falls back to the paint it imported.
+    if (d.cmd === 'exportPaint') {
+      const exported = Module.selector_export_paint ? Module.selector_export_paint() : null
+      self.postMessage({ type: 'paintExport', supported: !!Module.selector_export_paint,
+                         facets: exported?.facets ?? [], hex: exported?.hex ?? '' })
+      return
     }
     // clear wipes every state at once, so each requested count is 0 by construction — no need to ask the kernel back.
     if (d.cmd === 'clear')   {

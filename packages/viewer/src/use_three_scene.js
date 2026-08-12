@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { plateStep, plateCols } from './plate_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'
+import { createScaleBox, clampMeshScale } from './scale_box.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
 // model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
@@ -83,6 +84,25 @@ export function useThreeScene(deps) {
     orbit.rotateSpeed = 1.6; orbit.panSpeed = 1.6   // mouse rotate/pan responsiveness (the default 1.0 felt sluggish)
     const transform = new TransformControls(camera, renderer.domElement)
     transform.setMode('translate'); transform.setSize(0.8)
+    // No lifting: a part prints off the bed, so the only moves that mean anything are on it. Hiding Y in translate
+    //  mode takes the up arrow AND the XY/YZ plane handles with it (TransformControls hides a plane whose axes are
+    //  not all shown), leaving X, Z and the XZ plane. Rotate and scale still show every axis — hence per mode,
+    //  set here for the initial mode and in setMode for every switch. seatMesh below stays either way: rotating or
+    //  scaling still moves the lowest point, so the re-seat on commit is what actually keeps the part on the bed.
+    transform.showY = false
+    // The scale gizmo's XYZ handle is removed outright — both the drawn octahedron and its picker. It is the
+    //  "all three axes" grip the bounding-box corners now provide at a size that can be hit, and it is actively
+    //  harmful where it is: it sits AT the gizmo's origin, so a press starts the drag ~0 away from the centre and
+    //  the ratio TransformControls divides by that is unbounded. Measured on a 20mm cube, one small drag took it to
+    //  4e7, and past the centre it comes back negative (a mirrored mesh, which inverts the winding the kernel
+    //  slices). Removing the object is what sticks: the per-frame update rewrites `visible` and `scale` on every
+    //  handle it still owns, so the flags this control uses on itself are not usable from outside. 'XYZ' names only
+    //  exist in the scale gizmo (translate has no such handle, rotate's is 'XYZE'), so the axis handles are untouched.
+    for (const root of transform.children) {
+      for (const modeGroup of root.children ?? []) {
+        for (const handle of [...(modeGroup.children ?? [])]) if (handle.name === 'XYZ') modeGroup.remove(handle)
+      }
+    }
     // Stage 29-1: re-seat on the bed after every transform commit (drag end) — measured from the desktop GLCanvas3D::do_move/rotate/scale
     //  "snaps object to buildplate" (ensure_on_bed). Applies to move/rotate/scale, only on commit (no need for it live during rotation).
     //  Upstream: flying (minZ>0) snaps to the bed, sinking (minZ<0) is kept down to SINKING_Z_THRESHOLD. **Difference (documented)**: our kernel
@@ -100,6 +120,7 @@ export function useThreeScene(deps) {
     const paintDragBase = new Map()   // overlay mesh -> its matrix at grab (a prior drag's delta may still be on it)
     let paintDragging = false
     transform.addEventListener('objectChange', () => {
+      if (transform.mode === 'scale' && transform.object) clampMeshScale(transform.object)
       if (!paintDragging || !transform.object) return
       transform.object.updateMatrixWorld(true)
       paintDragDelta.copy(transform.object.matrixWorld).multiply(paintDragStartInverse)
@@ -111,6 +132,7 @@ export function useThreeScene(deps) {
     transform.addEventListener('dragging-changed', e => {
       orbit.enabled = !e.value
       if (e.value) {
+        deps.onTransformStarted?.()   // undo records the state BEFORE the drag; the commit below only says it ended
         paintDragBase.clear()
         const overlays = deps.paintOverlayRef?.current
         paintDragging = !!(overlays && overlays.size && transform.object && !transform.object.userData?.isPrimeTower)
@@ -127,7 +149,18 @@ export function useThreeScene(deps) {
           // The kernel reads prime_tower_x/y as the tower's CORNER (ptx .. ptx+side), so the box's centre has to
           //  give up half its footprint on the way out — otherwise a dropped tower re-renders half a width away.
           const half = transform.object.scale.x / 2
-          deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half)
+          // Which plate's box was dragged decides which origin comes back off the world coordinates — the
+          //  setting itself is one shared scalar, so a drag on any plate moves every plate's tower alike.
+          deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half,
+                              transform.object.userData.plate)
+        } else if (transform.object === pivot) {
+          // A multi-selection drag moved the pivot, not the meshes. Release it so each mesh carries the new world
+          //  transform for real, seat them individually (they land at different heights after a rotation), then
+          //  rebuild the pivot around where they ended up — the selection itself must survive its own drag.
+          releasePivot()
+          for (const mesh of selection) seatMesh(mesh)
+          refreshGizmo()
+          deps.onTransformCommitted?.()
         } else { seatMesh(transform.object); deps.onTransformCommitted?.() }
       }
       three.current.invalidate?.()
@@ -141,6 +174,9 @@ export function useThreeScene(deps) {
     //  Every path that can change the scene calls invalidate(): orbit/gizmo change, pointer, keys, resize, React re-render.
     //  ponytail: a 500ms heartbeat render (2fps) as a safety net against a missed path leaving a stale frame.
     let renderPending = true
+    // Set while an export runs (suspendRendering below). The heartbeat above is what makes this worth having: it
+    //  fires every 500ms regardless of whether anything changed, so a long export always collides with at least one.
+    let renderSuspended = false
     const invalidate = () => { renderPending = true }
     three.current.invalidate = invalidate
     orbit.addEventListener('change', invalidate)
@@ -148,27 +184,131 @@ export function useThreeScene(deps) {
     renderer.domElement.addEventListener('pointermove', invalidate)
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
-    let hovered = null, selected = null, objIdCounter = 0   // the placement cursor is placeXRef (plate-relative)
+    let hovered = null, objIdCounter = 0   // the placement cursor is placeXRef (plate-relative)
+    // Selection is a SET, following upstream (Selection.hpp holds an IndicesList). `selected` is the primary of
+    //  that set — the last mesh added — and stays a single mesh because everything that needs "the one object"
+    //  (the scale box, the status line, the tower's own drag) is genuinely singular. Upstream's rules, from
+    //  GLCanvas3D.cpp:4412: a plain click replaces the selection, Ctrl+click adds, Ctrl+click on something already
+    //  selected removes it, and clicking empty space clears — but a plain click on something ALREADY selected
+    //  keeps the set, which is what makes dragging several objects at once possible.
+    const selection = new Set()
+    let selected = null
+    // The selection bounding box + its uniform-scale corner handles. It is fed the current selection once per
+    //  rendered frame instead of being attached and detached, so the eight places that change `selected` do not
+    //  each need a second call to keep in step. The prime tower is excluded: its size is a setting, not a drag.
+    let gizmoMode = 'translate', overScaleHandle = false
+    const scaleBox = createScaleBox({ scene, camera, domElement: renderer.domElement })
+    // The scale box is single-object by construction (it reads one mesh's box and writes one mesh's scale), so a
+    //  multi-selection simply does not offer it — the move/rotate gizmo still drives the whole set through pivot.
+    const scaleBoxTarget = () => (selection.size === 1 && selected && !selected.userData?.isPrimeTower ? selected : null)
+
+    // TransformControls attaches to ONE Object3D, so a multi-selection is driven through a pivot the selected
+    //  meshes are temporarily re-parented onto. Object3D.attach() preserves world transforms in both directions,
+    //  which is the whole reason this works without any matrix arithmetic here. The pivot lives INSIDE
+    //  objectsGroup so that hiding that group (onSliced) hides its children too.
+    const pivot = new THREE.Group()
+    pivot.name = 'selection-pivot'
+    objectsGroup.add(pivot)
+    const releasePivot = () => {
+      if (!pivot.children.length) return
+      for (const mesh of [...pivot.children]) objectsGroup.attach(mesh)
+      pivot.position.set(0, 0, 0); pivot.quaternion.identity(); pivot.scale.set(1, 1, 1)
+      pivot.updateMatrixWorld(true)
+    }
+    // Point the gizmo at whatever the selection currently is. Always releases the pivot first, so the meshes are
+    //  back under objectsGroup with their world transforms baked before anything reads them.
+    const refreshGizmo = () => {
+      releasePivot()
+      if (selection.size === 0) { transform.detach(); return }
+      if (selection.size === 1) { transform.attach([...selection][0]); return }
+      const box = new THREE.Box3()
+      for (const mesh of selection) { mesh.updateMatrixWorld(true); box.expandByObject(mesh) }
+      pivot.position.copy(box.getCenter(new THREE.Vector3()))
+      pivot.updateMatrixWorld(true)
+      for (const mesh of selection) pivot.attach(mesh)
+      transform.attach(pivot)
+    }
+    const selectOnly = (mesh) => {
+      selection.clear()
+      if (mesh) selection.add(mesh)
+      selected = mesh || null
+      refreshGizmo()
+    }
+    const toggleSelect = (mesh) => {
+      if (selection.has(mesh)) {
+        selection.delete(mesh)
+        if (selected === mesh) selected = [...selection].pop() ?? null
+      } else { selection.add(mesh); selected = mesh }
+      refreshGizmo()
+    }
+    const clearSelection = () => { selection.clear(); selected = null; refreshGizmo() }
+    // Everything that changes the selection ends here: the tint, the status line, and the host's own list UI all
+    //  have to follow, and a caller forgetting one of them is how a stale highlight survives a click.
+    const announceSelection = () => { paint(); setStatus(statusText()); deps.onSelectionChanged?.() }
+    // In scale mode a corner handle can land on the same pixels as one of the gizmo's own axes — measured: the
+    //  top-far corner of a 20mm cube sits right on the tip of the Y arrow. The handles are drawn over everything, so
+    //  the handle has to be the thing that reacts there; without this the press went to the gizmo instead and a
+    //  corner drag came out as a single-axis scale ([1, 3.04, 1] on a corner that should have given [3, 3, 3]).
+    //  TransformControls chooses its axis on HOVER and its pointerdown listener is registered before ours (it is
+    //  built first), so no ordering trick in onDown can outrun it — the gizmo is switched off for as long as the
+    //  pointer is over a handle instead. onDown then tests the handles before the gizmo guard, because that guard
+    //  reads transform.axis, which stays stale while the gizmo is disabled.
+    // Removing the XYZ handle was not enough on its own: what runs away is any scale drag that STARTS at the gizmo's
+    //  origin, because the ratio is (distance now / distance at the press) and every axis picker is a cylinder that
+    //  reaches the origin. With XYZ gone the same press landed on the Y picker and took a 20mm cube to 5000mm tall.
+    //  So the origin itself is dead in scale mode — a small radius, well inside where the arrows are actually
+    //  grabbed, and the size it would have produced is not a size anyone is aiming for.
+    const GIZMO_DEAD_ZONE_PX = 16
+    const _originNdc = new THREE.Vector3()
+    const nearGizmoOrigin = (ev, target) => {
+      target.updateMatrixWorld(true)
+      _originNdc.setFromMatrixPosition(target.matrixWorld).project(camera)
+      const rect = renderer.domElement.getBoundingClientRect()
+      const ox = rect.left + (_originNdc.x * 0.5 + 0.5) * rect.width
+      const oy = rect.top + (-_originNdc.y * 0.5 + 0.5) * rect.height
+      return Math.hypot(ev.clientX - ox, ev.clientY - oy) < GIZMO_DEAD_ZONE_PX
+    }
+    const updateHandleHover = (ev) => {
+      const wasOver = overScaleHandle, wasEnabled = transform.enabled
+      const target = scaleBoxTarget()
+      overScaleHandle = false
+      let suppressGizmo = false
+      if (!transform.dragging && !scaleBox.dragging() && gizmoMode === 'scale' && target) {
+        toPointer(ev); raycaster.setFromCamera(pointer, camera)
+        overScaleHandle = !!scaleBox.hitTest(raycaster)
+        suppressGizmo = overScaleHandle || nearGizmoOrigin(ev, target)
+      }
+      transform.enabled = !suppressGizmo
+      if (overScaleHandle !== wasOver) applyCursor()
+      if (overScaleHandle !== wasOver || transform.enabled !== wasEnabled) invalidate()
+      return overScaleHandle
+    }
     // The prime tower as a scene object, the way upstream carries it (a GLVolume with is_wipe_tower). Before this
     //  the tower existed only in the sliced result, so "does it collide with the model?" could not be answered
     //  until after slicing. It is pickable and moves on the same TransformControls the objects use; dragging it
     //  writes wipe_tower_x/y, which is what turns the placement from automatic into chosen.
-    let towerMesh = null
+    //  One mesh per plate: the position setting is a single shared scalar (plate-local), so every plate's tower
+    //  sits at the same local spot, but each stand-in must still be drawn at its own plate's world offset.
+    let towerMeshes = []
     const activeMeshes = () => {
       const list = objectsRef.current.map(o => o.mesh)
-      if (towerMesh && towerMesh.visible) list.push(towerMesh)
+      for (const m of towerMeshes) if (m.visible) list.push(m)
       return list
     }
     // Selection tint. The tower is pickable but is drawn with an unlit material, which has no emissive channel —
     //  tinting it threw on every hover and left the click handler half-run (a paint stroke after it never
     //  registered). It shows selection through its own opacity instead.
     const paint = () => { for (const m of activeMeshes()) {
-      if (m.material.emissive) m.material.emissive.setHex(m === selected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
-      else if (m.userData?.isPrimeTower) m.material.opacity = m === selected ? 0.6 : m === hovered ? 0.5 : 0.35
+      const isSelected = selection.has(m)
+      if (m.material.emissive) m.material.emissive.setHex(isSelected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
+      else if (m.userData?.isPrimeTower) m.material.opacity = isSelected ? 0.6 : m === hovered ? 0.5 : 0.35
     } }
+    // With several objects selected the name of one of them says less than the count does.
+    const selectionLabel = () => (selection.size > 1 ? `${selection.size} objects`
+      : selected ? selected.userData.name : '—')
     const statusText = () => objectsRef.current.length
-      ? `${objectsRef.current.length} object(s) · selected: ${selected ? selected.userData.name : '—'} | M/R/S · left-drag to orbit · ? for shortcuts`
-      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selected ? selected.userData.name : '—'} | left-drag to orbit · ? for shortcuts`
+      ? `${objectsRef.current.length} object(s) · selected: ${selectionLabel()} | M/R/S · Ctrl+click to add · Shift+drag to box-select · ? for shortcuts`
+      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selectionLabel()} | left-drag to orbit · ? for shortcuts`
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
     // Stage 20: painting — converts the raycast hit (faceIndex + world point) into kernel coordinates and sends a paint command to the worker.
@@ -207,11 +347,15 @@ export function useThreeScene(deps) {
       const el = renderer.domElement
       el.style.cursor = canvasModeRef.current === 'preview' ? ''
         : paintModeRef.current !== 'off' ? 'crosshair'
+        : overScaleHandle ? 'nwse-resize'
         : hovered ? 'pointer' : ''
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
+      if (rubber) { rubber.x1 = ev.clientX; rubber.y1 = ev.clientY; drawBand(); return }
+      if (scaleBox.dragging()) { scaleBox.move(ev); invalidate(); return }
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
+      if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
     //  meets the bed plane. A camera looking exactly along the plane never meets it — then there is no answer.
@@ -221,6 +365,69 @@ export function useThreeScene(deps) {
       raycaster.setFromCamera(pointer, camera)
       return raycaster.ray.intersectPlane(_bedPlane, _bedHit) ? plateOfXZ(_bedHit.x, _bedHit.z) : null
     }
+    // ---- Box select (upstream's rectangle selection, GLCanvas3D.cpp:4404) --------------------------------------
+    // Shift + left-drag, exactly as upstream binds it — Alt is NOT a de-select there either (`//BBS: don't use alt
+    //  as de-select`), it switches to volume mode, which this viewer has no equivalent for.
+    // Upstream decides what is inside with a GPU picking pass over a framebuffer the size of the rectangle. That
+    //  buys per-pixel accuracy (an object hidden behind another is not caught) at the cost of a second render path.
+    //  Here each object's world bounding box is projected to screen and its 2D extent is intersected with the
+    //  rectangle instead — the same idea upstream uses for its point-based gizmos (GLSelectionRectangle::contains).
+    //  The difference is visible in one case only: a fully occluded object inside the rectangle is selected here
+    //  and would not be upstream. For picking whole objects that is the harmless direction to err in.
+    const band = document.createElement('div')
+    band.dataset.testid = 'box-select-band'
+    band.style.cssText = 'position:absolute;border:1px solid #00ae42;background:rgba(0,174,66,0.12);'
+      + 'pointer-events:none;display:none;z-index:5'
+    mount.appendChild(band)
+    let rubber = null
+    const drawBand = () => {
+      const r = renderer.domElement.getBoundingClientRect()
+      const left = Math.min(rubber.x0, rubber.x1) - r.left, top = Math.min(rubber.y0, rubber.y1) - r.top
+      band.style.left = `${left}px`; band.style.top = `${top}px`
+      band.style.width = `${Math.abs(rubber.x1 - rubber.x0)}px`
+      band.style.height = `${Math.abs(rubber.y1 - rubber.y0)}px`
+      band.style.display = 'block'
+    }
+    const _corner = new THREE.Vector3(), _box = new THREE.Box3()
+    const meshesInBand = () => {
+      const r = renderer.domElement.getBoundingClientRect()
+      const minX = Math.min(rubber.x0, rubber.x1), maxX = Math.max(rubber.x0, rubber.x1)
+      const minY = Math.min(rubber.y0, rubber.y1), maxY = Math.max(rubber.y0, rubber.y1)
+      const out = []
+      for (const o of objectsRef.current) {
+        if (o.visible === false) continue
+        o.mesh.updateMatrixWorld(true)
+        _box.setFromObject(o.mesh)
+        if (!Number.isFinite(_box.min.x)) continue
+        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
+        for (let corner = 0; corner < 8; corner++) {
+          _corner.set(corner & 1 ? _box.max.x : _box.min.x,
+                      corner & 2 ? _box.max.y : _box.min.y,
+                      corner & 4 ? _box.max.z : _box.min.z).project(camera)
+          const sx = r.left + (_corner.x * 0.5 + 0.5) * r.width
+          const sy = r.top + (-_corner.y * 0.5 + 0.5) * r.height
+          if (sx < sMinX) sMinX = sx
+          if (sx > sMaxX) sMaxX = sx
+          if (sy < sMinY) sMinY = sy
+          if (sy > sMaxY) sMaxY = sy
+        }
+        if (sMaxX >= minX && sMinX <= maxX && sMaxY >= minY && sMinY <= maxY) out.push(o.mesh)
+      }
+      return out
+    }
+    const endBand = () => {
+      const picked = meshesInBand()
+      band.style.display = 'none'
+      rubber = null
+      orbit.enabled = true
+      // Additive, like upstream's Select state: a box drag adds to what was already selected rather than replacing
+      //  it, which is what makes several drags in a row build one set.
+      for (const mesh of picked) selection.add(mesh)
+      if (picked.length) selected = picked[picked.length - 1]
+      refreshGizmo()
+      announceSelection()
+    }
+
     // Press position + the plate under it, resolved on release: a left-drag over the beds is how you orbit, so
     //  switching plates on press would change plate every time the camera moves. Only a press that does not travel
     //  counts as a click.
@@ -229,11 +436,53 @@ export function useThreeScene(deps) {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
       if (canvasModeRef.current === 'preview') return   // S2: no gizmo/painting in preview
       if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
-      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick()
+      // Before the gizmo guard and before the model is picked: a handle grab must beat both the gizmo axis it may
+      //  overlap and the part it sits on top of. Pointer capture keeps the drag alive outside the canvas.
+      if (!transform.dragging && gizmoMode === 'scale' && scaleBoxTarget()) {
+        toPointer(ev); raycaster.setFromCamera(pointer, camera)
+        if (scaleBox.hitTest(raycaster) && scaleBox.begin(ev, scaleBoxTarget())) {
+          deps.onTransformStarted?.()
+          orbit.enabled = false
+          renderer.domElement.setPointerCapture?.(ev.pointerId)
+          return
+        }
+      }
+      if (transform.dragging || transform.axis) return
+      // Shift+drag starts a box select instead of an orbit. Upstream gates this on the painting gizmos being off
+      //  (GLCanvas3D.cpp:4398) for the same reason it matters here: shift is the eraser modifier while painting.
+      if (ev.shiftKey && paintModeRef.current === 'off') {
+        rubber = { x0: ev.clientX, y0: ev.clientY, x1: ev.clientX, y1: ev.clientY }
+        orbit.enabled = false
+        renderer.domElement.setPointerCapture?.(ev.pointerId)
+        drawBand()
+        return
+      }
+      toPointer(ev)
+      const hit = pick()
       downAt = { x: ev.clientX, y: ev.clientY }; downPlate = plateUnderPointer(hit)
-      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
+      if (hit) {
+        // Ctrl/⌘ toggles; a plain click on something already selected leaves the set alone so the whole set can be
+        //  dragged. Both are upstream's rules — `add(idx, !ctrl_down, true)` plus the already-selected branch.
+        if (ev.ctrlKey || ev.metaKey) toggleSelect(hit)
+        else if (!selection.has(hit)) selectOnly(hit)
+      } else if (!ev.shiftKey) clearSelection()
+      announceSelection()
+    }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
     const onUp = (ev) => {
+      if (rubber) { endBand(); return }
+      // A corner drag commits the same way a gizmo drag does — re-seat on the bed, then let the component rebuild
+      //  the paint/kernel coordinates the new size invalidates.
+      if (scaleBox.dragging()) {
+        const scaled = scaleBox.end()
+        orbit.enabled = true
+        seatMesh(scaled); deps.onTransformCommitted?.()
+        // Re-decide from where the pointer actually ended up: the handles moved with the new size, so leaving the
+        //  gizmo disabled (or re-enabling it blindly) would decide the next press on a stale hover.
+        if (ev) updateHandleHover(ev); else { overScaleHandle = false; transform.enabled = true }
+        invalidate()
+        return
+      }
       // A press that stayed put is a click: select the plate it landed on. 4px of slop covers the wobble of a
       //  physical click without letting an orbit drag through.
       if (downAt) {
@@ -250,7 +499,7 @@ export function useThreeScene(deps) {
       if (ev.button !== 0 || canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
       toPointer(ev)
       if (pick()) frameObjects()
-      else { selected = null; transform.detach(); paint(); setStatus(statusText()) }
+      else { clearSelection(); announceSelection() }
     }
     // Wheel: adjusts the brush radius in paint mode (upstream GLGizmoPainterBase convention) — otherwise plain OrbitControls zoom.
     const onWheel = ev => {
@@ -271,8 +520,10 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
       if (rmbDown && Math.hypot(ev.clientX - rmbDown.x, ev.clientY - rmbDown.y) > 4) return   // that was a pan drag
       toPointer(ev); const hit = pick()
-      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() }
-      paint(); setStatus(statusText())
+      // Right-clicking INSIDE an existing multi-selection keeps it — otherwise "export selected" from the menu
+      //  could only ever mean the one object under the cursor.
+      if (hit) { if (!selection.has(hit)) selectOnly(hit) } else clearSelection()
+      announceSelection()
       const r = renderer.domElement.getBoundingClientRect()
       setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top, onObject: !!hit })
     }
@@ -285,7 +536,12 @@ export function useThreeScene(deps) {
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
 
-    const setMode = m => { transform.setMode(m); setGmode(m) }
+    // Leaving scale mode with the pointer parked on a handle would otherwise keep the gizmo switched off until the
+    //  next pointermove — which never comes if the next thing the user does is click without moving.
+    const setMode = m => {
+      transform.setMode(m); transform.showY = (m !== 'translate'); gizmoMode = m
+      overScaleHandle = false; transform.enabled = true; applyCursor(); setGmode(m)
+    }
     const frameObjects = () => {
       const arr = objectsRef.current
       const box = new THREE.Box3()
@@ -298,7 +554,12 @@ export function useThreeScene(deps) {
     // Shared path for registering an object mesh — used by addObject (fresh load) and spawnSnapshot (duplicate/paste).
     //  Stage 26 R4 + 29-2: places them side by side on the selected plate (placeXRef = plate-relative cursor, PX = plate offset).
     //  When pos is given, the object goes there instead of the placement cursor (split: parts must stay where they were).
-    const spawnMesh = (name, localPos, rot = null, scale = null, pos = null) => {
+    //  `opts` is the undo path's entry: it restores an object under its ORIGINAL id, because the id is half of the
+    //  paint topology key (`${id}:${ext}:${faces}` below) — a re-created object with a fresh id reads as a different
+    //  mesh and its painting is dropped. `quiet` skips the camera reframe, which is welcome on a load and jarring
+    //  when it fires on every undo. (The placement cursor needs no such guard: it only advances when `pos` is
+    //  absent, and a restore always carries one.)
+    const spawnMesh = (name, localPos, rot = null, scale = null, pos = null, opts = null) => {
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3)); geo.computeVertexNormals()
       geo.computeBoundingBox()
@@ -317,12 +578,34 @@ export function useThreeScene(deps) {
       }
       mesh.userData = { name }
       objectsGroup.add(mesh)
-      const id = ++objIdCounter
-      objectsRef.current.push({ id, name, mesh, localPos, extruder: 1, visible: true })   // MM: extruder 1 by default
+      const id = opts?.id ?? ++objIdCounter
+      if (opts?.id != null) objIdCounter = Math.max(objIdCounter, opts.id)   // never hand a restored id out again
+      const extruder = opts?.extruder ?? 1
+      const visible = opts?.visible !== false
+      if (extruder !== 1) { const c = extruderColorsRef.current[extruder - 1]; if (c) mesh.material.color.set(c) }
+      mesh.visible = visible
+      objectsRef.current.push({ id, name, mesh, localPos, extruder, visible })   // MM: extruder 1 by default
       objectsGroup.visible = true
       if (overhangDeg != null) rebuildOverhang()      // a newly added object gets shaded too
-      setStatus(statusText()); frameObjects()
+      setStatus(statusText())
+      if (!opts?.quiet) frameObjects()
       return { id, name }
+    }
+
+    // Removing an object is its own function rather than only an api entry, because restoreScene has to call it too.
+    const removeObjectById = (id) => {
+      const arr = objectsRef.current
+      const k = arr.findIndex(o => o.id === id); if (k < 0) return
+      const o = arr[k]
+      if (selection.has(o.mesh)) { selection.delete(o.mesh); if (selected === o.mesh) selected = [...selection].pop() ?? null; refreshGizmo() }
+      if (hovered === o.mesh) hovered = null
+      for (const child of [...o.mesh.children]) {      // the overhang overlay rides along as a child
+        o.mesh.remove(child); child.geometry?.dispose(); child.material?.dispose()
+      }
+      objectsGroup.remove(o.mesh); o.mesh.geometry.dispose(); o.mesh.material.dispose()
+      arr.splice(k, 1)
+      if (arr.length === 0) placeXRef.current = 0
+      paint(); setStatus(statusText())
     }
 
     // Overhang shading: an overlay child per object holding just the facets that will need support. Being a child
@@ -353,7 +636,7 @@ export function useThreeScene(deps) {
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
       refreshCursor: () => applyCursor(),                                        // keeps the cursor hint in sync when the paint mode changes
-      detachTransform: () => { selected = null; transform.detach(); paint() },   // stage 20: release the gizmo when entering painting
+      detachTransform: () => { clearSelection(); announceSelection() },   // stage 20: release the gizmo when entering painting
       // `paint` is a 3mf's painted facets ({color,supports,…}: Map(localTriangleIndex -> split-tree hex)), held on the
       //  object until something registers the selector — only then is the merged facet numbering they must be rebased
       //  onto known. bakeLocal is a per-vertex transform, so the triangle ORDER the indices refer to survives it.
@@ -377,19 +660,43 @@ export function useThreeScene(deps) {
         const d = Math.max(plateBWRef.current, plateBDRef.current) * 1.1 + 40
         orbit.target.set(pp.x, 0, pp.z); camera.position.set(pp.x + d * 0.55, d * 0.8, pp.z + d); orbit.update()
       },
-      removeObject: (id) => {
-        const arr = objectsRef.current
-        const k = arr.findIndex(o => o.id === id); if (k < 0) return
-        const o = arr[k]
-        if (selected === o.mesh) { selected = null; transform.detach() }
-        if (hovered === o.mesh) hovered = null
-        for (const child of [...o.mesh.children]) {      // the overhang overlay rides along as a child
-          o.mesh.remove(child); child.geometry?.dispose(); child.material?.dispose()
+      removeObject: (id) => removeObjectById(id),
+      /** The undo snapshot: everything about the objects that a viewport action can change. The geometry rides
+       *  along BY REFERENCE (`localPos` is immutable), so a whole entry is a few hundred bytes per object and a
+       *  50-deep history costs kilobytes. Paint is not in here — see history.js. */
+      sceneSnapshot: () => objectsRef.current.map(o => ({
+        id: o.id, name: o.name, localPos: o.localPos,
+        extruder: o.extruder || 1, visible: o.visible !== false,
+        pos: o.mesh.position.clone(), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),
+      })),
+      /** Put the scene back the way a snapshot found it, as a diff by id: drop what is gone, re-create what is
+       *  missing under its ORIGINAL id, and re-apply the rest. The caller still has to run the transform-commit
+       *  work afterwards (the kernel selector's coordinates and the bed check) — restoring is a move like any
+       *  other, and skipping that is how a paint overlay ends up in the wrong place. */
+      restoreScene: (snapshot) => {
+        if (!Array.isArray(snapshot)) return
+        const wanted = new Map(snapshot.map(s => [s.id, s]))
+        for (const o of [...objectsRef.current]) if (!wanted.has(o.id)) removeObjectById(o.id)
+        for (const s of snapshot) {
+          let o = objectsRef.current.find(x => x.id === s.id)
+          if (!o) {
+            spawnMesh(s.name, s.localPos, s.rot, s.scale, s.pos,
+                      { id: s.id, extruder: s.extruder, visible: s.visible, quiet: true })
+            o = objectsRef.current.find(x => x.id === s.id)
+            if (!o) continue
+          }
+          o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
+          o.mesh.updateMatrixWorld(true)
+          o.extruder = s.extruder; o.visible = s.visible; o.mesh.visible = s.visible
+          const col = extruderColorsRef.current[(s.extruder || 1) - 1]; if (col) o.mesh.material.color.set(col)
         }
-        objectsGroup.remove(o.mesh); o.mesh.geometry.dispose(); o.mesh.material.dispose()
-        arr.splice(k, 1)
-        if (arr.length === 0) placeXRef.current = 0
-        paint(); setStatus(statusText())
+        // Merge order is the viewer's knowledge (buildMergedSTL sorts by extruder over THIS array), so the array is
+        //  put back in the snapshot's order rather than in whatever order the re-creations happened to append in.
+        const rank = new Map(snapshot.map((s, i) => [s.id, i]))
+        objectsRef.current.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        if (objectsRef.current.length) objectsGroup.visible = true
+        if (overhangDeg != null) rebuildOverhang()
+        paint(); setStatus(statusText()); invalidate()
       },
       // MM: merges triangles sorted by ascending extruder -> group0 (ext1) followed by group1 (ext2); returns split.
       platePos: (i) => platePos(i),   // three (x,z) offset of plate i
@@ -485,8 +792,46 @@ export function useThreeScene(deps) {
           paint[slot] = paintImport[slot].facets.length
             ? { facets: Int32Array.from(paintImport[slot].facets), hex: paintImport[slot].hex.join('\n') }
             : null
+        // `plate` rides along so per-plate settings (the wipe_tower_x/y arrays) can be indexed by the plate this
+        //  merge actually cut, not by whatever is selected when the slice runs.
         return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
+                 plate: plateIdx != null ? plateIdx : selectedPlateRef.current,
                  topology: topology.join('|'), minX, minY, maxX, maxY, paint }
+      },
+      /** Stop drawing the scene while something long and non-visual runs (an export). The scene cannot change
+       *  during it, so the frames would be identical — and on a large model each one is a main-thread block that
+       *  delays the very worker replies the export is waiting on. Resuming redraws once. */
+      suspendRendering: (on) => { renderSuspended = !!on; if (!on) invalidate() },
+      /** Every object as the 3mf writer needs it: world MODEL-space triangles (three (x,y,z) -> model (x,-z,y),
+       *  the same convention buildMergedSTL uses), plus the plate it sits on and its facet count. Per object and
+       *  NOT merged, because a 3mf keeps one <object> per model and its facet indices are per object.
+       *  The merge order is the writer's problem, not this one's — it needs the same sort buildMergedSTL applies
+       *  to line the selector's facet numbering back up, so that sort is spelled out here as well. */
+      // `selectedOnly` is upstream's `export_stl(..., selection_only, ...)`. Upstream additionally refuses anything
+      //  that is not a whole object (Plater.cpp:16244 — it rejects volume-level selections); this viewer has no
+      //  parts, so every selection is already a set of whole objects and there is nothing to reject.
+      exportObjects: ({ selectedOnly = false } = {}) => {
+        let visible = objectsRef.current.filter(o => o.visible !== false)
+        if (selectedOnly) visible = visible.filter(o => selection.has(o.mesh))
+        const sorted = [...visible].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
+        const tmp = new THREE.Vector3()
+        return sorted.map(o => {
+          o.mesh.updateMatrixWorld(true)
+          const M = o.mesh.matrixWorld, lp = o.localPos
+          const tris = new Float32Array(lp.length)
+          for (let i = 0; i < lp.length; i += 3) {
+            tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M)
+            tris[i] = tmp.x; tris[i + 1] = -tmp.z; tris[i + 2] = tmp.y
+          }
+          const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld)
+          const plate = plateOfXZ(wp.x, wp.z)
+          // The plate's own origin in MODEL coordinates, so the writer can express the object's position relative
+          //  to its plate without re-deriving this viewer's grid (it has upstream's to encode into already).
+          const origin = platePos(plate)
+          return { id: o.id, name: o.name, extruder: o.extruder || 1, plate,
+                   plateOriginX: origin.x, plateOriginY: -origin.z,
+                   tris, faceCount: lp.length / 9, paint: o.paint || null }
+        })
       },
       /** Drop the pending 3mf painting after it has been handed to the kernel — the import is one-shot, and a
        *  second one would resurrect marks the user has since erased. */
@@ -496,14 +841,35 @@ export function useThreeScene(deps) {
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes
       selectedObjectId: () => selected ? (objectsRef.current.find(o => o.mesh === selected)?.id ?? null) : null,   // stage 27: viewport toolbar "delete selected"
+      /** Every selected object's id, in scene order. The primary (`selectedObjectId`) is one OF these — callers
+       *  that act on "the selection" want this one; callers that need a single subject want that one. */
+      selectedObjectIds: () => objectsRef.current.filter(o => selection.has(o.mesh)).map(o => o.id),
       selectObject: (id) => {   // stage 33: select the object clicked in the list (for selection-driven actions such as split)
         const o = objectsRef.current.find(x => x.id === id); if (!o) return
-        selected = o.mesh; transform.attach(o.mesh); paint(); setStatus(statusText())
+        selectOnly(o.mesh); announceSelection()
       },
+      /** Select several by id. `additive` toggles each against the current set, matching Ctrl+click in the scene,
+       *  so the object list and the viewport cannot disagree about what a modifier means. */
+      selectObjects: (ids, additive = false) => {
+        const wanted = objectsRef.current.filter(o => ids.includes(o.id))
+        if (!additive) { selection.clear(); selected = null }
+        for (const o of wanted) {
+          if (additive && selection.has(o.mesh)) { selection.delete(o.mesh); if (selected === o.mesh) selected = null }
+          else { selection.add(o.mesh); selected = o.mesh }
+        }
+        if (!selection.has(selected)) selected = [...selection].pop() ?? null
+        refreshGizmo(); announceSelection()
+      },
+      selectAllObjects: () => {   // Ctrl+A, upstream's EVT_GLCANVAS_SELECT_ALL
+        selection.clear()
+        for (const o of objectsRef.current) if (o.visible !== false) { selection.add(o.mesh); selected = o.mesh }
+        refreshGizmo(); announceSelection()
+      },
+      clearSelection: () => { clearSelection(); announceSelection() },
       // Stage 28 P1: seat on the bed — local geometry is baked to minZ->0 by bakeLocal (once on load). Re-seat after a gizmo Z move.
       //  (The upstream ensure_on_bed sinking allowance [allow_negative_z] is out of scope — we only seat by -min_z.)
       placeOnBed: () => { for (const o of objectsRef.current) o.mesh.position.y = 0; if (selected) transform.update?.() },
-      onSliced: () => { objectsGroup.visible = false; transform.detach(); selected = null; paint() },
+      onSliced: () => { objectsGroup.visible = false; clearSelection(); paint() },
       showObjects: () => { objectsGroup.visible = true },
       // Footprint + height of everything currently on the plate, in the same coordinates the tower box uses.
       modelBounds: (plateIdx = null) => {
@@ -516,29 +882,36 @@ export function useThreeScene(deps) {
         if (!Number.isFinite(box.min.x)) return null
         return { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z, height: box.max.y - box.min.y }
       },
-      // Draw (or move) the tower stand-in. size/height in mm, x/y in the same bed-centred coordinates the objects
-      //  use. Passing null removes it — a single-filament print has no tower to show.
-      setPrimeTower: (box) => {
+      // Draw (or move) the tower stand-ins — one per plate that gets a tower. Takes an array of
+      //  {plate, x, y, size, height} (a single box still works), size/height in mm, x/y in the same bed-centred
+      //  world coordinates the objects use. Passing null/[] removes them all — a single-filament print has no tower.
+      setPrimeTower: (boxes) => {
         const t = three.current
-        if (!box) {
-          if (towerMesh) { if (selected === towerMesh) { selected = null; transform.detach() }
-            t.scene.remove(towerMesh); towerMesh.geometry.dispose(); towerMesh.material.dispose(); towerMesh = null }
-          return
+        const list = !boxes ? [] : (Array.isArray(boxes) ? boxes : [boxes])
+        while (towerMeshes.length > list.length) {
+          const m = towerMeshes.pop()
+          if (selection.has(m)) { selection.delete(m); if (selected === m) selected = [...selection].pop() ?? null; refreshGizmo() }
+          t.scene.remove(m); m.geometry.dispose(); m.material.dispose()
         }
-        const { x, y, size, height } = box
-        if (!towerMesh) {
-          const geo = new THREE.BoxGeometry(1, 1, 1)
-          // Translucent and unlit so it reads as a placeholder rather than a part to be printed, and so the model
-          //  behind it stays visible when the two overlap — which is exactly the case worth seeing.
-          const mat = new THREE.MeshBasicMaterial({ color: 0x4fd1c5, transparent: true, opacity: 0.35, depthWrite: false })
-          towerMesh = new THREE.Mesh(geo, mat)
-          towerMesh.userData = { name: 'Prime tower', isPrimeTower: true }
-          t.scene.add(towerMesh)
-        }
-        towerMesh.userData.halfHeight = height / 2
-        towerMesh.scale.set(size, height, size)
-        towerMesh.position.set(x, height / 2, -y)      // model(x,y) -> three(x, up, -y)
-        towerMesh.visible = true
+        list.forEach((box, i) => {
+          const { plate = 0, x, y, size, height } = box
+          let m = towerMeshes[i]
+          if (!m) {
+            const geo = new THREE.BoxGeometry(1, 1, 1)
+            // Translucent and unlit so it reads as a placeholder rather than a part to be printed, and so the model
+            //  behind it stays visible when the two overlap — which is exactly the case worth seeing.
+            const mat = new THREE.MeshBasicMaterial({ color: 0x4fd1c5, transparent: true, opacity: 0.35, depthWrite: false })
+            m = new THREE.Mesh(geo, mat)
+            m.userData = { name: 'Prime tower', isPrimeTower: true }
+            t.scene.add(m)
+            towerMeshes[i] = m
+          }
+          m.userData.plate = plate
+          m.userData.halfHeight = height / 2
+          m.scale.set(size, height, size)
+          m.position.set(x, height / 2, -y)      // model(x,y) -> three(x, up, -y)
+          m.visible = true
+        })
         t.invalidate?.()
       },
       // Stage 29-2: render N plates — each plate = grid + border, offset by PX_i, with the selected plate's border highlighted.
@@ -579,8 +952,20 @@ export function useThreeScene(deps) {
     setStatus(statusText())
     let raf = 0, lastRender = 0
     const loop = (now = 0) => {
-      raf = requestAnimationFrame(loop); orbit.update()
-      if (renderPending || now - lastRender > 500) { renderPending = false; lastRender = now; renderer.render(scene, camera) }
+      raf = requestAnimationFrame(loop)
+      // Drawing during an export is work nobody sees — the scene cannot change while it runs — and it is not free:
+      //  the keep-alive branch below redraws every 500ms no matter what, which on a 980k-facet model is one long
+      //  main-thread block. That block was landing between the export's postMessage and the worker's reply and
+      //  reading as 400ms of "kernel time" that the worker spent 0ms on. Skipping frames costs nothing here.
+      if (renderSuspended) return
+      orbit.update()
+      if (renderPending || now - lastRender > 500) {
+        renderPending = false; lastRender = now
+        // Per rendered frame, not per change: the handles are sized in screen pixels, so they have to be re-sized
+        //  whenever the camera moves, and that is exactly the set of frames that get drawn.
+        scaleBox.update(canvasModeRef.current === 'preview' ? null : scaleBoxTarget(), gizmoMode === 'scale')
+        renderer.render(scene, camera)
+      }
     }
     loop()
 
@@ -592,7 +977,7 @@ export function useThreeScene(deps) {
       renderer.domElement.removeEventListener('dblclick', onDblClick); renderer.domElement.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
       apiRef.current = null
-      transform.detach(); transform.dispose(); orbit.dispose()
+      transform.detach(); transform.dispose(); orbit.dispose(); scaleBox.dispose()
       scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose() })
       renderer.dispose()
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)

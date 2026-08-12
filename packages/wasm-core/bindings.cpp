@@ -113,6 +113,23 @@ static int selector_import_paint(em::val facets_val, std::string hex_joined) {
   // pairing facets with the wrong trees, and that is exactly the outcome wanted here too.
   return selector_bridge::apply_paint_hex(facets, hex);
 }
+// 3mf painting export — the reverse of selector_import_paint, on the same pairing contract: a parallel facet-index
+// array plus ONE '\n'-joined hex blob, because embind cannot return a std::vector<std::string> without registering
+// a vector type nothing else uses. facets[i] pairs with the i-th line of hex.
+static em::val selector_export_paint() {
+  const std::vector<std::pair<int, std::string>> painted = selector_bridge::export_paint_hex();
+  em::val facets = em::val::array();
+  std::string hex_joined;
+  for (size_t i = 0; i < painted.size(); ++i) {
+    facets.set(i, painted[i].first);
+    if (i) hex_joined += '\n';
+    hex_joined += painted[i].second;
+  }
+  em::val out = em::val::object();
+  out.set("facets", facets);
+  out.set("hex", hex_joined);
+  return out;
+}
 static void selector_clear() { selector_bridge::clear(); }
 static int  selector_facet_count() { return selector_bridge::facet_count(); }
 static int  selector_painted_count_state(int state) { return selector_bridge::painted_count(state); }
@@ -155,6 +172,7 @@ EMSCRIPTEN_BINDINGS(slicer) {
   // State-addressed twins: 1=ENFORCER(Extruder1), 2=BLOCKER(Extruder2), 3..16=Extruder3..16 — MMU painting.
   em::function("selector_paint_state", &selector_paint_state);
   em::function("selector_import_paint", &selector_import_paint);   //  load a 3mf's paint_color/paint_supports hex
+  em::function("selector_export_paint", &selector_export_paint);   //  the reverse: current marks as {facets, hex} for 3mf save
   em::function("selector_erase", &selector_erase);            //  the eraser: writes NONE, no state argument to coerce
   em::function("selector_painted_count_state", &selector_painted_count_state);
   em::function("selector_overlay_state", &selector_overlay_state);

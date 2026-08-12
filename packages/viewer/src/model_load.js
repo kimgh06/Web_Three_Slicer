@@ -1,6 +1,6 @@
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
-import { plateCols } from './plate_layout.js'
+import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
 
 // Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop.
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -23,7 +23,7 @@ const APPLIED_OBJECT_KEYS = new Set(['name', 'extruder'])
 //     here (plate_layout.js):      origin = (col*(W+40),  +row*(D+40)),  plate origin at the plate's CENTRE
 //  So the coordinates are decoded with upstream's rule and re-emitted with ours. Verified against a real 6-plate
 //  MakerWorld project: every one of its 17 objects decodes to inside 0..256mm of the plate it claims.
-const UPSTREAM_PLATE_GAP_RATIO = 1 / 5
+//  (The grid constant lives in plate_layout.js so the 3mf WRITER encodes with the same rule.)
 
 function groupCentredPlacements(plates, byObjectId) {
   // Fallback: keep each plate's objects arranged relative to each other and centre the group on our plate. Used

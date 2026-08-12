@@ -16,7 +16,7 @@ export function settingScalar(settings: SlicerSettings | null | undefined, key: 
  * ponytail: 53 returned keys, so Record instead of listing each — kernel params are passed straight to slice(),
  * not an API consumers read field by field. Expand it when field access is actually needed.
  */
-export function deriveKernelParams(settings: SlicerSettings | null | undefined): Record<string, unknown>
+export function deriveKernelParams(settings: SlicerSettings | null | undefined, opts?: { plate?: number }): Record<string, unknown>
 
 /**
  * A 3mf project's raw `Metadata/project_settings.config` -> a settings map this API accepts.
@@ -29,6 +29,13 @@ export function normalizeProjectSettings(raw: Record<string, unknown> | null | u
   applied: number
   skipped: string[]
 }
+
+/**
+ * The inverse, for WRITING a 3mf's `Metadata/project_settings.config`: every value back to the string shape
+ * upstream serializes (a bool as "1"/"0", a point as "XxY", a points group as "X1xY1,X2xY2"), so another slicer
+ * reads what it expects. Keys the config schema does not define are dropped.
+ */
+export function serializeProjectSettings(settings: SlicerSettings | null | undefined): Record<string, string | string[]>
 
 // ---- Lazily loaded presets --------------------------------------------------
 // Both facades hide the column layout of the artifact they wrap; the promise is created once and reused.

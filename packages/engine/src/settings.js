@@ -217,9 +217,47 @@ export function normalizeProjectSettings(raw) {
   return { settings, applied, skipped }
 }
 
+// The exact inverse, for WRITING a project_settings.config: every value back to the string shape upstream
+//  serializes (bool -> "1"/"0", point -> "XxY", a points group -> "X1xY1,X2xY2"), because that is what every other
+//  slicer's reader — and normalizeProjectSettings above — expects to coerce FROM. Writing the JS types raw would
+//  hand OrcaSlicer a bool it reads with its own string parser and this package a round-trip that only works here.
+//  Keys the schema does not define are dropped for the same reason normalize drops them: they could not be typed.
+const pointToText = (point) => (Array.isArray(point) ? `${point[0]}x${point[1]}` : String(point))
+
+function serializeScalar(type, value) {
+  if (value == null) return ''
+  switch (type) {
+    case 'coBool': case 'coBools':
+      return value ? '1' : '0'
+    case 'coPoint': case 'coPoints':
+      return pointToText(value)
+    case 'coPointsGroups':
+      return Array.isArray(value) ? value.map(pointToText).join(',') : String(value)
+    default:
+      return String(value)   // numbers, percents, strings, enums — String() is upstream's own spelling for all of them
+  }
+}
+
+/** A settings map (real JS types) -> the all-strings object a 3mf's `project_settings.config` stores. */
+export function serializeProjectSettings(settings) {
+  const out = {}
+  for (const [key, value] of Object.entries(settings || {})) {
+    const type = schema[key]?.type
+    if (!type) continue
+    // A coPoint's value IS an array ([x, y]) — the generic array path would serialize its two numbers separately.
+    out[key] = (type !== 'coPoint' && Array.isArray(value))
+      ? value.map(entry => serializeScalar(type, entry))
+      : serializeScalar(type, value)
+  }
+  return out
+}
+
 
 // Right-panel settings values -> kernel parameters (derived from schema keys)
-export function deriveKernelParams(settings) {
+//  opts.plate: which plate's entry to take from per-plate array options (wipe_tower_x/y — upstream coFloats,
+//  one entry per plate). Defaults to 0, so every existing caller reads exactly what it always did.
+export function deriveKernelParams(settings, opts) {
+  const plate = opts?.plate ?? 0
   const S = k => settingScalar(settings, k)
   const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
   const bool = (k, d) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
@@ -283,7 +321,9 @@ export function deriveKernelParams(settings) {
   //  A hole (a material that overrides nothing) is filled with the value tool 0 resolved to, because the kernel
   //  reads the array positionally and cannot tell "absent" from "0".
   // Prime tower keys, omitted when unset so the kernel/viewer defaults stay in charge (same rule as supportTools).
-  //  wipe_tower_x/y are coFloats upstream — one entry per plate — so the scalar reduction takes the first set one.
+  //  wipe_tower_x/y are coFloats upstream — one entry per plate — indexed by opts.plate. A hole (null entry) means
+  //  nobody chose a position for THAT plate, so the automatic placement stands there; a scalar applies to every
+  //  plate (the pre-array form, kept readable so old saved settings keep meaning what they meant).
   const towerSettings = {}
   {
     const width = num('prime_tower_width', 0)
@@ -292,7 +332,9 @@ export function deriveKernelParams(settings) {
     //  a coordinate off the front of a 200mm bed. Taking it as "the user chose a position" put the tower outside
     //  the plate and disabled the automatic placement entirely — measured as a tower at z=-127.5 on a 200mm bed.
     //  Absent from the map means nobody chose one, and the placement beside the model stands.
-    const chosen = (key) => { const v = settings?.[key]; const n = Number(Array.isArray(v) ? v[0] : v)
+    const chosen = (key) => { const raw = settings?.[key]
+      const v = Array.isArray(raw) ? raw[plate] : raw
+      const n = Number(v)
       return (v != null && v !== '' && Number.isFinite(n)) ? n : null }
     const towerX = chosen('wipe_tower_x'), towerY = chosen('wipe_tower_y')
     if (towerX != null) towerSettings.prime_tower_x = towerX

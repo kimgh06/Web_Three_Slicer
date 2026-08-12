@@ -4,6 +4,8 @@ Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github
 
 The package is published as a single npm package, `three-slicer`, with subpath exports for the engine, viewer, components, worker, and extracted OrcaSlicer data.
 
+![A sliced Benchy in the viewer's Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](https://raw.githubusercontent.com/kimgh06/Web_Three_Slicer/main/web/viewer/public/usage.png)
+
 ## Links
 
 - Package: [npmjs.com/package/three-slicer](https://www.npmjs.com/package/three-slicer)
@@ -19,6 +21,7 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 - React `<SettingsPanel/>` generated from extracted OrcaSlicer metadata.
 - Vendor printer, print-process and filament preset catalogs, with one material assignable per extruder.
 - Support painting and material painting, plus per-tool filament and purge statistics.
+- 3MF **project** import in the viewer: a slicer-written `.3mf` (OrcaSlicer/BambuStudio save, MakerWorld download) restores its plate layout, project settings, and painted facets — not just the meshes.
 - Extracted data files for custom UIs: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament catalogs.
 - Automatic multithreaded WASM selection on cross-origin-isolated browser pages.
 
@@ -107,7 +110,7 @@ export default function App() {
 }
 ```
 
-The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
+The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. A `.3mf` written by a slicer is treated as a project, not just geometry: its plate layout, project settings, and support/material painting are restored on import (where a facet carries both paint kinds, material paint wins and the dropped support paint is reported). Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
 
 ## Quick Start: Settings Panel
 

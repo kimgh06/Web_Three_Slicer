@@ -1,0 +1,334 @@
+// 3MF project WRITER — the inverse of parse_3mf.js. What upstream calls "save project as": a zip whose
+//  3D/3dmodel.model holds the meshes and whose Metadata/*.config hold the preset, the per-object state and the
+//  plate layout. Reading only the geometry back would lose the half of the file the user actually tuned, so all of
+//  it is written — and it is written the way UPSTREAM spells it, because the point of a project file is that
+//  OrcaSlicer/BambuStudio can open it.
+// Three spellings that are not negotiable (each is the mirror of a trap parse_3mf.js documents):
+//   · every project_settings.config value is a STRING — serializeProjectSettings does that coercion
+//   · plates live in WORLD space under upstream's own grid (corner origin, gap = bed/5, rows along -y)
+//   · painting rides on the <triangle> tag as paint_color / paint_supports hex, not in model_settings.config
+import { zipSync, zip, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
+import { serializeProjectSettings } from 'three-slicer/settings'
+import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
+
+// Deflate is the single largest cost of writing a project, and on the main thread every millisecond of it is a
+//  frozen tab. fflate's async entry point moves it to a Web Worker pool — the mirror of what parse_3mf.js does for
+//  reading. It is a deliberate trade, measured in the app on a 980k-facet model: going off-thread costs ~270ms of
+//  total time (1.27s -> 1.53s, the price of handing the buffers across) and buys back more than twice that in
+//  responsiveness — the longest frame gap drops from 1203ms to 515ms. The bigger the model the better that trade
+//  gets, since the freeze grows with the deflate while the handover does not.
+// The fallback is not defensive padding, for the same reason it is not there: `zip` needs the `Worker` global and
+//  throws SYNCHRONOUSLY without it, which is every node caller (this package's own tests) and any environment
+//  that refuses nested workers.
+function zipAll(files, opts) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const done = (bytes) => { if (!settled) { settled = true; resolve(bytes) } }
+    try {
+      zip(files, opts, (err, bytes) => {
+        if (!err) return done(bytes)
+        try { done(zipSync(files, opts)) } catch (syncErr) { reject(syncErr) }
+      })
+    } catch {
+      try { done(zipSync(files, opts)) } catch (syncErr) { reject(syncErr) }
+    }
+  })
+}
+
+const xmlEscape = (text) => String(text)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// Coordinates are written at 6 decimals — micron-level for a printer whose own resolution is ~10µm, and short
+//  enough that a 100k-triangle model does not triple the file size on trailing zeros.
+const num = (value) => {
+  const rounded = Math.round(value * 1e6) / 1e6
+  return Object.is(rounded, -0) ? '0' : String(rounded)
+}
+
+// A soup of triangles (flat x,y,z per vertex, 3 per face) -> indexed vertices. 3mf has no other form: <triangle>
+//  references <vertex> by index. Welding keeps the FACET ORDER — which the painting is keyed by — identical to
+//  the order the selector numbered, and on a real mesh it removes ~83% of the vertices (measured on a 980k-facet
+//  sphere: 2.94M vertex slots -> 489k), so the XML it saves pays for itself many times over in the deflate.
+// The key is the vertices' BIT PATTERN, not a string of their decimals. The coordinates are already float32, so
+//  bit equality is coordinate equality — and the string form cost 708ms of a 980k-facet export against 89ms here,
+//  because it built three `String(float)`s per vertex slot. Two levels because a Map key must be one value and
+//  three 32-bit words do not fit in one double: x picks the bucket, (y,z) combine exactly inside it.
+//  (+0 and -0 have different bits and so stay separate vertices — harmless, a 3mf may list a coordinate twice.)
+function weld(tris) {
+  const source = tris instanceof Float32Array ? tris : Float32Array.from(tris)
+  const words = new Uint32Array(source.buffer, source.byteOffset, source.length)
+  const buckets = new Map()
+  const vertices = []
+  const faces = new Int32Array(source.length / 3)
+  for (let i = 0, f = 0; i < source.length; i += 3, f++) {
+    let bucket = buckets.get(words[i])
+    if (bucket === undefined) { bucket = new Map(); buckets.set(words[i], bucket) }
+    const inner = words[i + 1] * 4294967296 + words[i + 2]
+    let at = bucket.get(inner)
+    if (at === undefined) {
+      at = vertices.length / 3
+      bucket.set(inner, at)
+      vertices.push(source[i], source[i + 1], source[i + 2])
+    }
+    faces[f] = at
+  }
+  return { vertices, faces }
+}
+
+// Where an object goes in the FILE's coordinates. The viewer's plate origin is the plate's centre with a constant
+//  40mm gap; upstream's is the corner with a gap of bed/5. Decoding is model_load.js platePlacements — this is the
+//  same rule run backwards, so a project written here and reopened here lands where it started, and one opened in
+//  OrcaSlicer lands on the plate it was saved on.
+function upstreamPlateOrigin(plateIndex, plateTotal, bedWidth, bedDepth) {
+  const cols = plateCols(Math.max(1, plateTotal))
+  return {
+    x: (plateIndex % cols) * bedWidth * (1 + UPSTREAM_PLATE_GAP_RATIO),
+    y: -Math.floor(plateIndex / cols) * bedDepth * (1 + UPSTREAM_PLATE_GAP_RATIO),
+  }
+}
+
+// The object's own XY centre, so the plate offset can be applied about it. Z is left alone: the viewer already
+//  seats every object at z=0 (bakeLocal + placeOnBed), which is where a 3mf expects it.
+function centreXY(tris) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (let i = 0; i < tris.length; i += 3) {
+    if (tris[i] < minX) minX = tris[i]
+    if (tris[i] > maxX) maxX = tris[i]
+    if (tris[i + 1] < minY) minY = tris[i + 1]
+    if (tris[i + 1] > maxY) maxY = tris[i + 1]
+  }
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+}
+
+// A growable byte sink. The mesh XML is built straight into bytes rather than as JS strings that are joined and
+//  then encoded: the string path allocated ~1.5M chunks, joined them into one 79MB string and re-encoded THAT into
+//  79MB of UTF-8 — measured at 410ms against 117ms here on a 980k-facet model, and it held two full copies of the
+//  document at the peak. It grows instead of pre-sizing exactly because a painted facet's hex is its whole split
+//  tree, which has no fixed length (one measured brush stroke was 1673 nibbles on a single facet).
+function byteSink(initialSize) {
+  let buffer = new Uint8Array(Math.max(1024, initialSize))
+  let length = 0
+  const room = (needed) => {
+    if (length + needed <= buffer.length) return
+    let size = buffer.length * 2
+    while (size < length + needed) size *= 2
+    const grown = new Uint8Array(size)
+    grown.set(buffer.subarray(0, length))
+    buffer = grown
+  }
+  return {
+    // Every caller passes markup or an already-formatted number, so one byte per char holds.
+    ascii(text) {
+      room(text.length)
+      for (let i = 0; i < text.length; i++) buffer[length++] = text.charCodeAt(i)
+    },
+    // Vertex indices are non-negative integers — writing the digits directly skips a String() per index, which at
+    //  three per triangle was the single most repeated allocation in the document.
+    int(value) {
+      room(11)
+      if (value === 0) { buffer[length++] = 48; return }
+      const start = length
+      let rest = value
+      while (rest > 0) { buffer[length++] = 48 + (rest % 10); rest = (rest / 10) | 0 }
+      for (let i = start, j = length - 1; i < j; i++, j--) { const swap = buffer[i]; buffer[i] = buffer[j]; buffer[j] = swap }
+    },
+    bytes: () => buffer.subarray(0, length),
+  }
+}
+
+// The indentation is kept on purpose: dropping it makes the XML 11% smaller but the deflate SLOWER (646ms -> 705ms
+//  measured), because regular whitespace is the most compressible thing in the document.
+function meshBytes(object, shift, paintOf) {
+  const { vertices, faces } = weld(object.tris)
+  const sink = byteSink((vertices.length / 3) * 96 + (faces.length / 3) * 72 + 1024)
+  sink.ascii('   <mesh>\n    <vertices>\n')
+  for (let v = 0; v < vertices.length; v += 3) {
+    sink.ascii('     <vertex x="'); sink.ascii(num(vertices[v] + shift.x))
+    sink.ascii('" y="'); sink.ascii(num(vertices[v + 1] + shift.y))
+    sink.ascii('" z="'); sink.ascii(num(vertices[v + 2])); sink.ascii('"/>\n')
+  }
+  sink.ascii('    </vertices>\n    <triangles>\n')
+  for (let f = 0; f < faces.length; f += 3) {
+    sink.ascii('     <triangle v1="'); sink.int(faces[f])
+    sink.ascii('" v2="'); sink.int(faces[f + 1])
+    sink.ascii('" v3="'); sink.int(faces[f + 2])
+    sink.ascii('"'); sink.ascii(paintOf(f / 3)); sink.ascii('/>\n')
+  }
+  sink.ascii('    </triangles>\n   </mesh>\n')
+  return sink.bytes()
+}
+
+// The document is a mix by design: the small markup around the meshes stays as strings (it is written once and
+//  reads far better that way), while the meshes themselves arrive already in bytes.
+function joinChunks(chunks) {
+  const encoded = chunks.map(chunk => (typeof chunk === 'string' ? strToU8(chunk) : chunk))
+  let total = 0
+  for (const chunk of encoded) total += chunk.length
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const chunk of encoded) { out.set(chunk, at); at += chunk.length }
+  return out
+}
+
+const RELS = `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>
+`
+
+const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+ <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+ <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+ <Default Extension="config" ContentType="text/xml"/>
+ <Default Extension="png" ContentType="image/png"/>
+</Types>
+`
+
+/**
+ * Write a whole project as a 3mf.
+ *   objects  — apiRef.exportObjects(): [{id, name, extruder, plate, tris, faceCount, paint}], in MERGE order
+ *   settings — the viewer's settings map (real JS types); serialized to strings here
+ *   opts.paintExport — {facets:Int32Array|number[], hex:string} straight off the kernel's selector_export_paint,
+ *     in MERGED facet numbering. Rebased onto per-object numbering with the same running offset buildMergedSTL
+ *     used, which is why `objects` must arrive in that same order.
+ *   opts.paintKind — 'color' (material) | 'supports'; which annotation the kernel's marks are. One facet holds one
+ *     state, so they can only be one or the other — the same constraint the import side reports.
+ *   opts.bedWidth/bedDepth/plateCount — the plate grid to encode positions under.
+ * Returns a Promise of a Uint8Array (the zip) — the compression runs off the main thread where it can.
+ */
+export async function write3MFProject(objects, settings, opts = {}) {
+  const {
+    paintExport = null, paintKind = 'color', bedWidth = 200, bedDepth = 200, plateCount = 1,
+    application = 'ThreeSlicer',
+  } = opts
+  if (!objects?.length) throw new Error('nothing to export')
+
+  // The kernel's facets are numbered across the merged mesh; a 3mf's are per object. Rebasing needs the same
+  //  running offset the merge used — so the caller's object order must be the merge order (exportObjects sorts by
+  //  extruder exactly as buildMergedSTL does). Anything landing outside an object's range is dropped rather than
+  //  guessed at, because a mis-rebased facet paints a different part of the model.
+  const paintByObject = new Map()
+  if (paintExport?.facets?.length) {
+    const hexLines = String(paintExport.hex ?? '').split('\n')
+    const bases = []
+    let running = 0
+    for (const object of objects) { bases.push(running); running += object.faceCount }
+    for (let i = 0; i < paintExport.facets.length; i++) {
+      const facet = paintExport.facets[i], hex = hexLines[i]
+      if (!hex) continue
+      let at = -1
+      for (let o = 0; o < objects.length; o++) if (facet >= bases[o] && facet < bases[o] + objects[o].faceCount) { at = o; break }
+      if (at < 0) continue
+      if (!paintByObject.has(at)) paintByObject.set(at, new Map())
+      paintByObject.get(at).set(facet - bases[at], hex)
+    }
+  }
+  // No kernel export (no selector this session): the marks a 3mf was IMPORTED with still sit on the objects, and
+  //  losing them on a save-reload round trip would be the worse outcome. Per object, so no rebasing is involved.
+  const importedPaint = (object) => object.paint?.[paintKind] ?? object.paint?.color ?? object.paint?.supports ?? null
+
+  const paintAttr = paintKind === 'supports' ? 'paint_supports' : 'paint_color'
+
+  const modelParts = [
+    '<?xml version="1.0" encoding="UTF-8"?>\n',
+    '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"',
+    ' xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">\n',
+    ` <metadata name="Application">${xmlEscape(application)}</metadata>\n`,
+    ' <resources>\n',
+  ]
+  const items = []
+  objects.forEach((object, at) => {
+    const objectId = at + 1                     // 3mf ids are 1-based and must be unique within the model part
+    const origin = upstreamPlateOrigin(object.plate ?? 0, plateCount, bedWidth, bedDepth)
+    // The object's placement ON its plate is what carries over; only the plate frames differ. The viewer's origin
+    //  is the plate CENTRE, upstream's is the corner — so subtracting the viewer origin and adding the upstream one
+    //  plus half a bed re-expresses the same position. Exactly what model_load.js platePlacements decodes.
+    const shift = {
+      x: origin.x + bedWidth / 2 - (object.plateOriginX ?? 0),
+      y: origin.y + bedDepth / 2 - (object.plateOriginY ?? 0),
+    }
+
+    const painted = paintByObject.get(at) ?? importedPaint(object)
+    const paintOf = painted
+      ? (face) => { const hex = painted.get(face); return hex ? ` ${paintAttr}="${hex}"` : '' }
+      : () => ''
+    modelParts.push(`  <object id="${objectId}" type="model">\n`)
+    modelParts.push(meshBytes(object, shift, paintOf))
+    modelParts.push('  </object>\n')
+    items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 0 0 0" printable="1"/>\n`)
+  })
+  modelParts.push(' </resources>\n <build>\n', ...items, ' </build>\n</model>\n')
+
+  // Per-object state: name and extruder are what this viewer owns (the import applies exactly these two).
+  const objectConfig = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>\n']
+  objects.forEach((object, at) => {
+    objectConfig.push(`  <object id="${at + 1}">\n`)
+    objectConfig.push(`    <metadata key="name" value="${xmlEscape(object.name ?? `object_${at + 1}`)}"/>\n`)
+    objectConfig.push(`    <metadata key="extruder" value="${object.extruder ?? 1}"/>\n`)
+    objectConfig.push('  </object>\n')
+  })
+  // plater_id is 1-based upstream; the viewer's plates are 0-based (parse_3mf.js reads it back the same way).
+  const plates = new Map()
+  objects.forEach((object, at) => {
+    const plate = object.plate ?? 0
+    if (!plates.has(plate)) plates.set(plate, [])
+    plates.get(plate).push(at + 1)
+  })
+  for (const [plate, ids] of [...plates.entries()].sort((a, b) => a[0] - b[0])) {
+    objectConfig.push('  <plate>\n')
+    objectConfig.push(`    <metadata key="plater_id" value="${plate + 1}"/>\n`)
+    for (const id of ids)
+      objectConfig.push(`    <model_instance>\n      <metadata key="object_id" value="${id}"/>\n      <metadata key="instance_id" value="0"/>\n    </model_instance>\n`)
+    objectConfig.push('  </plate>\n')
+  }
+  objectConfig.push('</config>\n')
+
+  const files = {
+    '_rels/.rels': strToU8(RELS),
+    '[Content_Types].xml': strToU8(CONTENT_TYPES),
+    '3D/3dmodel.model': joinChunks(modelParts),
+    'Metadata/model_settings.config': strToU8(objectConfig.join('')),
+  }
+  const projectSettings = serializeProjectSettings(settings)
+  if (Object.keys(projectSettings).length)
+    files['Metadata/project_settings.config'] = strToU8(JSON.stringify(projectSettings, null, 4) + '\n')
+
+  // level 3, not the 6 that looks like the safe default: a 3mf is XML, which deflate shreds at any level, so 6
+  //  buys nothing here and costs the user seconds of a frozen tab. Measured on a 980k-facet sphere (79MB of XML):
+  //  level 6 = 1445ms -> 7.94MB, level 3 = 781ms -> 7.92MB. Level 3 is both faster AND smaller on this input;
+  //  level 1 (681ms -> 8.77MB) starts giving real size back, so 3 is where the curve turns.
+  return zipAll(files, { level: 3 })
+}
+
+/** Binary STL of a triangle soup (flat x,y,z per vertex, 3 vertices per face) — the plain mesh export.
+ *  Facet normals are computed the way upstream computes them (`its_write_stl_binary`, TriangleMesh.cpp:1650):
+ *  `(v1-v0) × (v2-v1)`, normalized. Leaving them zero is tolerated by anything that recomputes from winding —
+ *  this viewer's own parser ignores the field entirely — but they are a required part of the format, and at a
+ *  measured 16ms per million facets there is no reason to ship a file that leans on the reader's forgiveness.
+ *  A degenerate triangle has no direction to point in, so its normal stays zero rather than becoming NaN. */
+export function writeSTL(tris, header = 'ThreeSlicer export') {
+  const faceCount = tris.length / 9
+  const buffer = new ArrayBuffer(84 + faceCount * 50)
+  const view = new DataView(buffer)
+  new Uint8Array(buffer, 0, 80).set(strToU8(header.slice(0, 79)))
+  view.setUint32(80, faceCount, true)
+  let at = 84, read = 0
+  for (let f = 0; f < faceCount; f++) {
+    const ax = tris[read + 3] - tris[read], ay = tris[read + 4] - tris[read + 1], az = tris[read + 5] - tris[read + 2]
+    const bx = tris[read + 6] - tris[read + 3], by = tris[read + 7] - tris[read + 4], bz = tris[read + 8] - tris[read + 5]
+    let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx
+    const len = Math.hypot(nx, ny, nz)
+    if (len > 0) { nx /= len; ny /= len; nz /= len } else { nx = ny = nz = 0 }
+    view.setFloat32(at, nx, true); view.setFloat32(at + 4, ny, true); view.setFloat32(at + 8, nz, true)
+    at += 12
+    for (let v = 0; v < 3; v++) {
+      view.setFloat32(at, tris[read++], true)
+      view.setFloat32(at + 4, tris[read++], true)
+      view.setFloat32(at + 8, tris[read++], true)
+      at += 12
+    }
+    view.setUint16(at, 0, true); at += 2
+  }
+  return new Uint8Array(buffer)
+}

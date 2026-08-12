@@ -81,6 +81,10 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 .lp-links span { color: var(--lp-text); font-weight: 700; }
 .lp-links small { color: var(--lp-subtle); font-size: 12.5px; }
 
+.lp-shot { margin: 0 0 48px; border: 1px solid var(--lp-border); border-radius: 8px; overflow: hidden; background: var(--lp-panel); }
+.lp-shot img { display: block; width: 100%; height: auto; }
+.lp-shot figcaption { padding: 10px 16px; border-top: 1px solid var(--lp-border-subtle); color: var(--lp-subtle); font-size: 12.5px; word-break: keep-all; }
+
 .lp-section { margin: 0 0 48px; }
 .lp-section-head { margin-bottom: 14px; }
 .lp-section-head h2 { margin: 0 0 4px; color: var(--lp-text); font-size: 18px; line-height: 1.35; }
