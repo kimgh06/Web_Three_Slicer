@@ -77,6 +77,25 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   from choices worth not undoing: the weld keys vertices by their float32 BIT PATTERN rather than a decimal string
   (708ms -> 89ms), and the zip is level **3**, which on this XML is both faster than level 6 and slightly smaller.
   The `[vp-prof] export` line reports gather/paint/write separately, because the three scale with different things.
+- **Selection is a set, and the kernel's facet numbering does not follow it.** `exportObjects({selectedOnly})` is
+  upstream's `export_stl(..., selection_only, ...)`; upstream additionally rejects anything that is not a whole
+  object (`Plater.cpp:16244`), which this viewer cannot hit because it has no parts. The trap is the painting: the
+  kernel numbers facets across the merge of every VISIBLE object, so handing that numbering to a file holding only
+  SOME of them paints the wrong triangles. `rebasePaintOntoSubset` (`export_actions.js`) walks each mark back to its
+  owning object through the full merge order and forwards it onto the subset's own offset; `test_3mf_export.mjs`
+  pins it, including that a gap in the middle renumbers everything after it.
+- Upstream's selection rules, ported as-is (`GLCanvas3D.cpp:4412` and `:4404`): a plain click replaces the
+  selection, **Ctrl+click** adds or removes, a plain click on something already selected KEEPS the set (that is what
+  makes dragging several objects work), empty space clears, **Shift+drag** is the box select, and Ctrl+A selects
+  all. Alt is not a de-select there (`//BBS: don't use alt as de-select`) and is not one here.
+  Two deliberate differences. **(1)** `TransformControls` attaches to one Object3D, so a multi-selection is driven
+  through a pivot Group the meshes are re-parented onto (`Object3D.attach` preserves world transforms both ways);
+  the commit releases it, seats each mesh individually — a rotation lands them at different heights — and rebuilds
+  the pivot, because the selection has to survive its own drag. The pivot lives inside `objectsGroup` so hiding that
+  group still hides its children. **(2)** Upstream's box select is a GPU picking pass over a framebuffer the size of
+  the rectangle; here each object's world bbox is projected to screen and intersected with it, the same approach
+  upstream uses for its point-based gizmos. The only visible difference is that a fully occluded object inside the
+  rectangle IS selected here — the harmless direction to err in when picking whole objects.
 - **An imported project's object positions are absolute, under UPSTREAM's plate grid — not this one's.** A
   slicer-written 3mf lays its plates out in world space, so an object's coordinates already say which plate it is
   on and where: upstream's origin is `(col*W*1.2, -row*D*1.2)` at the plate's **corner** with rows growing along

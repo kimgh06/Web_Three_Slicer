@@ -156,7 +156,11 @@
 .fil-paint.on { background: #2b6cff; border-color: #2b6cff; }
 
 .obj-list2 { list-style: none; margin: 0 0 6px; padding: 0; }
-.obj-list2 li { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; }
+
+.obj-list2 li { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; cursor: pointer; }
+/* A row of the object list that is part of the current selection. The card is light and the row text is near-black
+   (.obj-name is #24282e), so the tint has to be a LIGHT green — a dark one swallows the name it is highlighting. */
+.obj-list2 li.obj-selected { background: #e3f6ea; box-shadow: inset 2px 0 0 #00ae42; }
 .obj-list2 li.obj-hidden { opacity: .5; }
 .obj-eye { border: 0; background: none; cursor: pointer; font-size: 13px; padding: 0; }
 .obj-list2 .obj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #24282e; }

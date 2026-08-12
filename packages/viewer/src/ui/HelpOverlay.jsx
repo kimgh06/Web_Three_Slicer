@@ -15,6 +15,9 @@ export default function HelpOverlay({ onClose }) {
               <dt>Arrow keys</dt><dd>Move 10mm (Shift 1mm)</dd>
               <dt>PageUp/Down</dt><dd>Rotate 45°</dd>
               <dt>Del</dt><dd>Delete selection</dd><dt>Esc</dt><dd>Clear selection / leave paint</dd>
+              <dt>Click</dt><dd>Select · <b>Ctrl+click</b> adds or removes</dd>
+              <dt>Shift+drag</dt><dd>Box-select everything the rectangle touches</dd>
+              <dt>Ctrl+A</dt><dd>Select all</dd>
             </dl>
           </section>
           <section>

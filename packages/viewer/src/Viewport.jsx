@@ -129,6 +129,10 @@ export default function Viewport({
   const [showHelp, setShowHelp] = useState(false)       // '?' shortcut help overlay
   const [slicedPlateCount, setSlicedPlateCount] = useState(0)   // number of plates holding a result (drives the export-all button)
   const [ctxMenu, setCtxMenu] = useState(null)          // right-click context menu {x, y, onObject}
+  // The scene owns the selection; this is a read-only mirror so the object list and the context menu can render
+  //  from it. Pushed by the scene through onSelectionChanged rather than polled, because a click has to repaint
+  //  the list in the same frame it repaints the highlight.
+  const [selectedIds, setSelectedIds] = useState([])
   // Stage 25 S6: view type + dual slider + gradient legend
   const [viewType, setViewType] = useState('feature')
   const [colorRange, setColorRange] = useState(null)   // {min,max,label,unit,cont}
@@ -225,6 +229,7 @@ export default function Viewport({
     // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
     //  ref because the scene installs its handlers once and makePlateActions is built further down.
     onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
+    onSelectionChanged: () => setSelectedIds(apiRef.current?.selectedObjectIds?.() ?? []),
     //  The drag can land on any plate's box, and each plate's position is its own array entry — the origin
     //  subtracted is the dragged box's own plate, and only that plate's entry is written, so the other plates'
     //  towers stand still (writeTowerPosition owns the array/legacy-scalar mechanics).
@@ -397,7 +402,7 @@ export default function Viewport({
   //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
   //  must use the values in effect when they FINISH, not when the button was bound.
   const settingsRef = useRef(settings); settingsRef.current = settings
-  const { exportProject, exportSTL } = makeExportActions({
+  const { exportProject, exportSTL, exportSelectedProject, exportSelectedSTL } = makeExportActions({
     apiRef, getWorker, settingsRef, plateCountRef, bedRef: kpRef, setError, setSliceNotice, setExporting,
   })
 
@@ -615,6 +620,7 @@ export default function Viewport({
     leavePreview: () => setCanvasMode('prepare'),
     setGizmo,
     cancelTool: () => { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() },
+    selectAll: () => apiRef.current?.selectAllObjects(),
     // Both repeat while the key is held, so they record under a kind: history.js folds a run of them into the one
     //  entry that takes the object back to where it stood before the run started.
     rotateSelected: (rad) => { recordHistory('rotate'); apiRef.current?.rotateSelectedY(rad) },
@@ -718,11 +724,13 @@ export default function Viewport({
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
             {ctxMenu && (
               <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
+                selectedCount={selectedIds.length}
                 actions={{
                   duplicate: duplicateSelected, copy: copySelected, split: splitSelected,
                   placeOnBed: () => apiRef.current?.placeOnBed(), remove: deleteSelected,
                   openFile: () => fileInputRef.current?.click(), paste: pasteClipboard,
                   zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
+                  exportSelectedSTL, exportSelectedProject,
                 }} />
             )}
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
@@ -786,6 +794,8 @@ export default function Viewport({
 
               {objects.length > 0 && showPanel('objectList') && (
                 <ObjectList objects={objects} extruderColors={extruderColors}
+                  selectedIds={selectedIds}
+                  onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
                   onRemove={id => { recordHistory(); removeObject(id) }}

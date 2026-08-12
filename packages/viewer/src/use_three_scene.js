@@ -153,6 +153,14 @@ export function useThreeScene(deps) {
           //  setting itself is one shared scalar, so a drag on any plate moves every plate's tower alike.
           deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half,
                               transform.object.userData.plate)
+        } else if (transform.object === pivot) {
+          // A multi-selection drag moved the pivot, not the meshes. Release it so each mesh carries the new world
+          //  transform for real, seat them individually (they land at different heights after a rotation), then
+          //  rebuild the pivot around where they ended up — the selection itself must survive its own drag.
+          releasePivot()
+          for (const mesh of selection) seatMesh(mesh)
+          refreshGizmo()
+          deps.onTransformCommitted?.()
         } else { seatMesh(transform.object); deps.onTransformCommitted?.() }
       }
       three.current.invalidate?.()
@@ -176,13 +184,67 @@ export function useThreeScene(deps) {
     renderer.domElement.addEventListener('pointermove', invalidate)
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
-    let hovered = null, selected = null, objIdCounter = 0   // the placement cursor is placeXRef (plate-relative)
+    let hovered = null, objIdCounter = 0   // the placement cursor is placeXRef (plate-relative)
+    // Selection is a SET, following upstream (Selection.hpp holds an IndicesList). `selected` is the primary of
+    //  that set — the last mesh added — and stays a single mesh because everything that needs "the one object"
+    //  (the scale box, the status line, the tower's own drag) is genuinely singular. Upstream's rules, from
+    //  GLCanvas3D.cpp:4412: a plain click replaces the selection, Ctrl+click adds, Ctrl+click on something already
+    //  selected removes it, and clicking empty space clears — but a plain click on something ALREADY selected
+    //  keeps the set, which is what makes dragging several objects at once possible.
+    const selection = new Set()
+    let selected = null
     // The selection bounding box + its uniform-scale corner handles. It is fed the current selection once per
     //  rendered frame instead of being attached and detached, so the eight places that change `selected` do not
     //  each need a second call to keep in step. The prime tower is excluded: its size is a setting, not a drag.
     let gizmoMode = 'translate', overScaleHandle = false
     const scaleBox = createScaleBox({ scene, camera, domElement: renderer.domElement })
-    const scaleBoxTarget = () => (selected && !selected.userData?.isPrimeTower ? selected : null)
+    // The scale box is single-object by construction (it reads one mesh's box and writes one mesh's scale), so a
+    //  multi-selection simply does not offer it — the move/rotate gizmo still drives the whole set through pivot.
+    const scaleBoxTarget = () => (selection.size === 1 && selected && !selected.userData?.isPrimeTower ? selected : null)
+
+    // TransformControls attaches to ONE Object3D, so a multi-selection is driven through a pivot the selected
+    //  meshes are temporarily re-parented onto. Object3D.attach() preserves world transforms in both directions,
+    //  which is the whole reason this works without any matrix arithmetic here. The pivot lives INSIDE
+    //  objectsGroup so that hiding that group (onSliced) hides its children too.
+    const pivot = new THREE.Group()
+    pivot.name = 'selection-pivot'
+    objectsGroup.add(pivot)
+    const releasePivot = () => {
+      if (!pivot.children.length) return
+      for (const mesh of [...pivot.children]) objectsGroup.attach(mesh)
+      pivot.position.set(0, 0, 0); pivot.quaternion.identity(); pivot.scale.set(1, 1, 1)
+      pivot.updateMatrixWorld(true)
+    }
+    // Point the gizmo at whatever the selection currently is. Always releases the pivot first, so the meshes are
+    //  back under objectsGroup with their world transforms baked before anything reads them.
+    const refreshGizmo = () => {
+      releasePivot()
+      if (selection.size === 0) { transform.detach(); return }
+      if (selection.size === 1) { transform.attach([...selection][0]); return }
+      const box = new THREE.Box3()
+      for (const mesh of selection) { mesh.updateMatrixWorld(true); box.expandByObject(mesh) }
+      pivot.position.copy(box.getCenter(new THREE.Vector3()))
+      pivot.updateMatrixWorld(true)
+      for (const mesh of selection) pivot.attach(mesh)
+      transform.attach(pivot)
+    }
+    const selectOnly = (mesh) => {
+      selection.clear()
+      if (mesh) selection.add(mesh)
+      selected = mesh || null
+      refreshGizmo()
+    }
+    const toggleSelect = (mesh) => {
+      if (selection.has(mesh)) {
+        selection.delete(mesh)
+        if (selected === mesh) selected = [...selection].pop() ?? null
+      } else { selection.add(mesh); selected = mesh }
+      refreshGizmo()
+    }
+    const clearSelection = () => { selection.clear(); selected = null; refreshGizmo() }
+    // Everything that changes the selection ends here: the tint, the status line, and the host's own list UI all
+    //  have to follow, and a caller forgetting one of them is how a stale highlight survives a click.
+    const announceSelection = () => { paint(); setStatus(statusText()); deps.onSelectionChanged?.() }
     // In scale mode a corner handle can land on the same pixels as one of the gizmo's own axes — measured: the
     //  top-far corner of a 20mm cube sits right on the tip of the Y arrow. The handles are drawn over everything, so
     //  the handle has to be the thing that reacts there; without this the press went to the gizmo instead and a
@@ -237,12 +299,16 @@ export function useThreeScene(deps) {
     //  tinting it threw on every hover and left the click handler half-run (a paint stroke after it never
     //  registered). It shows selection through its own opacity instead.
     const paint = () => { for (const m of activeMeshes()) {
-      if (m.material.emissive) m.material.emissive.setHex(m === selected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
-      else if (m.userData?.isPrimeTower) m.material.opacity = m === selected ? 0.6 : m === hovered ? 0.5 : 0.35
+      const isSelected = selection.has(m)
+      if (m.material.emissive) m.material.emissive.setHex(isSelected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
+      else if (m.userData?.isPrimeTower) m.material.opacity = isSelected ? 0.6 : m === hovered ? 0.5 : 0.35
     } }
+    // With several objects selected the name of one of them says less than the count does.
+    const selectionLabel = () => (selection.size > 1 ? `${selection.size} objects`
+      : selected ? selected.userData.name : '—')
     const statusText = () => objectsRef.current.length
-      ? `${objectsRef.current.length} object(s) · selected: ${selected ? selected.userData.name : '—'} | M/R/S · left-drag to orbit · ? for shortcuts`
-      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selected ? selected.userData.name : '—'} | left-drag to orbit · ? for shortcuts`
+      ? `${objectsRef.current.length} object(s) · selected: ${selectionLabel()} | M/R/S · Ctrl+click to add · Shift+drag to box-select · ? for shortcuts`
+      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selectionLabel()} | left-drag to orbit · ? for shortcuts`
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
     // Stage 20: painting — converts the raycast hit (faceIndex + world point) into kernel coordinates and sends a paint command to the worker.
@@ -286,6 +352,7 @@ export function useThreeScene(deps) {
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
+      if (rubber) { rubber.x1 = ev.clientX; rubber.y1 = ev.clientY; drawBand(); return }
       if (scaleBox.dragging()) { scaleBox.move(ev); invalidate(); return }
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
@@ -298,6 +365,69 @@ export function useThreeScene(deps) {
       raycaster.setFromCamera(pointer, camera)
       return raycaster.ray.intersectPlane(_bedPlane, _bedHit) ? plateOfXZ(_bedHit.x, _bedHit.z) : null
     }
+    // ---- Box select (upstream's rectangle selection, GLCanvas3D.cpp:4404) --------------------------------------
+    // Shift + left-drag, exactly as upstream binds it — Alt is NOT a de-select there either (`//BBS: don't use alt
+    //  as de-select`), it switches to volume mode, which this viewer has no equivalent for.
+    // Upstream decides what is inside with a GPU picking pass over a framebuffer the size of the rectangle. That
+    //  buys per-pixel accuracy (an object hidden behind another is not caught) at the cost of a second render path.
+    //  Here each object's world bounding box is projected to screen and its 2D extent is intersected with the
+    //  rectangle instead — the same idea upstream uses for its point-based gizmos (GLSelectionRectangle::contains).
+    //  The difference is visible in one case only: a fully occluded object inside the rectangle is selected here
+    //  and would not be upstream. For picking whole objects that is the harmless direction to err in.
+    const band = document.createElement('div')
+    band.dataset.testid = 'box-select-band'
+    band.style.cssText = 'position:absolute;border:1px solid #00ae42;background:rgba(0,174,66,0.12);'
+      + 'pointer-events:none;display:none;z-index:5'
+    mount.appendChild(band)
+    let rubber = null
+    const drawBand = () => {
+      const r = renderer.domElement.getBoundingClientRect()
+      const left = Math.min(rubber.x0, rubber.x1) - r.left, top = Math.min(rubber.y0, rubber.y1) - r.top
+      band.style.left = `${left}px`; band.style.top = `${top}px`
+      band.style.width = `${Math.abs(rubber.x1 - rubber.x0)}px`
+      band.style.height = `${Math.abs(rubber.y1 - rubber.y0)}px`
+      band.style.display = 'block'
+    }
+    const _corner = new THREE.Vector3(), _box = new THREE.Box3()
+    const meshesInBand = () => {
+      const r = renderer.domElement.getBoundingClientRect()
+      const minX = Math.min(rubber.x0, rubber.x1), maxX = Math.max(rubber.x0, rubber.x1)
+      const minY = Math.min(rubber.y0, rubber.y1), maxY = Math.max(rubber.y0, rubber.y1)
+      const out = []
+      for (const o of objectsRef.current) {
+        if (o.visible === false) continue
+        o.mesh.updateMatrixWorld(true)
+        _box.setFromObject(o.mesh)
+        if (!Number.isFinite(_box.min.x)) continue
+        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
+        for (let corner = 0; corner < 8; corner++) {
+          _corner.set(corner & 1 ? _box.max.x : _box.min.x,
+                      corner & 2 ? _box.max.y : _box.min.y,
+                      corner & 4 ? _box.max.z : _box.min.z).project(camera)
+          const sx = r.left + (_corner.x * 0.5 + 0.5) * r.width
+          const sy = r.top + (-_corner.y * 0.5 + 0.5) * r.height
+          if (sx < sMinX) sMinX = sx
+          if (sx > sMaxX) sMaxX = sx
+          if (sy < sMinY) sMinY = sy
+          if (sy > sMaxY) sMaxY = sy
+        }
+        if (sMaxX >= minX && sMinX <= maxX && sMaxY >= minY && sMinY <= maxY) out.push(o.mesh)
+      }
+      return out
+    }
+    const endBand = () => {
+      const picked = meshesInBand()
+      band.style.display = 'none'
+      rubber = null
+      orbit.enabled = true
+      // Additive, like upstream's Select state: a box drag adds to what was already selected rather than replacing
+      //  it, which is what makes several drags in a row build one set.
+      for (const mesh of picked) selection.add(mesh)
+      if (picked.length) selected = picked[picked.length - 1]
+      refreshGizmo()
+      announceSelection()
+    }
+
     // Press position + the plate under it, resolved on release: a left-drag over the beds is how you orbit, so
     //  switching plates on press would change plate every time the camera moves. Only a press that does not travel
     //  counts as a click.
@@ -318,12 +448,29 @@ export function useThreeScene(deps) {
         }
       }
       if (transform.dragging || transform.axis) return
+      // Shift+drag starts a box select instead of an orbit. Upstream gates this on the painting gizmos being off
+      //  (GLCanvas3D.cpp:4398) for the same reason it matters here: shift is the eraser modifier while painting.
+      if (ev.shiftKey && paintModeRef.current === 'off') {
+        rubber = { x0: ev.clientX, y0: ev.clientY, x1: ev.clientX, y1: ev.clientY }
+        orbit.enabled = false
+        renderer.domElement.setPointerCapture?.(ev.pointerId)
+        drawBand()
+        return
+      }
       toPointer(ev)
       const hit = pick()
       downAt = { x: ev.clientX, y: ev.clientY }; downPlate = plateUnderPointer(hit)
-      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() } paint(); setStatus(statusText()) }
+      if (hit) {
+        // Ctrl/⌘ toggles; a plain click on something already selected leaves the set alone so the whole set can be
+        //  dragged. Both are upstream's rules — `add(idx, !ctrl_down, true)` plus the already-selected branch.
+        if (ev.ctrlKey || ev.metaKey) toggleSelect(hit)
+        else if (!selection.has(hit)) selectOnly(hit)
+      } else if (!ev.shiftKey) clearSelection()
+      announceSelection()
+    }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
     const onUp = (ev) => {
+      if (rubber) { endBand(); return }
       // A corner drag commits the same way a gizmo drag does — re-seat on the bed, then let the component rebuild
       //  the paint/kernel coordinates the new size invalidates.
       if (scaleBox.dragging()) {
@@ -352,7 +499,7 @@ export function useThreeScene(deps) {
       if (ev.button !== 0 || canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
       toPointer(ev)
       if (pick()) frameObjects()
-      else { selected = null; transform.detach(); paint(); setStatus(statusText()) }
+      else { clearSelection(); announceSelection() }
     }
     // Wheel: adjusts the brush radius in paint mode (upstream GLGizmoPainterBase convention) — otherwise plain OrbitControls zoom.
     const onWheel = ev => {
@@ -373,8 +520,10 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
       if (rmbDown && Math.hypot(ev.clientX - rmbDown.x, ev.clientY - rmbDown.y) > 4) return   // that was a pan drag
       toPointer(ev); const hit = pick()
-      if (hit) { selected = hit; transform.attach(hit) } else { selected = null; transform.detach() }
-      paint(); setStatus(statusText())
+      // Right-clicking INSIDE an existing multi-selection keeps it — otherwise "export selected" from the menu
+      //  could only ever mean the one object under the cursor.
+      if (hit) { if (!selection.has(hit)) selectOnly(hit) } else clearSelection()
+      announceSelection()
       const r = renderer.domElement.getBoundingClientRect()
       setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top, onObject: !!hit })
     }
@@ -448,7 +597,7 @@ export function useThreeScene(deps) {
       const arr = objectsRef.current
       const k = arr.findIndex(o => o.id === id); if (k < 0) return
       const o = arr[k]
-      if (selected === o.mesh) { selected = null; transform.detach() }
+      if (selection.has(o.mesh)) { selection.delete(o.mesh); if (selected === o.mesh) selected = [...selection].pop() ?? null; refreshGizmo() }
       if (hovered === o.mesh) hovered = null
       for (const child of [...o.mesh.children]) {      // the overhang overlay rides along as a child
         o.mesh.remove(child); child.geometry?.dispose(); child.material?.dispose()
@@ -487,7 +636,7 @@ export function useThreeScene(deps) {
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
       refreshCursor: () => applyCursor(),                                        // keeps the cursor hint in sync when the paint mode changes
-      detachTransform: () => { selected = null; transform.detach(); paint() },   // stage 20: release the gizmo when entering painting
+      detachTransform: () => { clearSelection(); announceSelection() },   // stage 20: release the gizmo when entering painting
       // `paint` is a 3mf's painted facets ({color,supports,…}: Map(localTriangleIndex -> split-tree hex)), held on the
       //  object until something registers the selector — only then is the merged facet numbering they must be rebased
       //  onto known. bakeLocal is a per-vertex transform, so the triangle ORDER the indices refer to survives it.
@@ -658,8 +807,12 @@ export function useThreeScene(deps) {
        *  NOT merged, because a 3mf keeps one <object> per model and its facet indices are per object.
        *  The merge order is the writer's problem, not this one's — it needs the same sort buildMergedSTL applies
        *  to line the selector's facet numbering back up, so that sort is spelled out here as well. */
-      exportObjects: () => {
-        const visible = objectsRef.current.filter(o => o.visible !== false)
+      // `selectedOnly` is upstream's `export_stl(..., selection_only, ...)`. Upstream additionally refuses anything
+      //  that is not a whole object (Plater.cpp:16244 — it rejects volume-level selections); this viewer has no
+      //  parts, so every selection is already a set of whole objects and there is nothing to reject.
+      exportObjects: ({ selectedOnly = false } = {}) => {
+        let visible = objectsRef.current.filter(o => o.visible !== false)
+        if (selectedOnly) visible = visible.filter(o => selection.has(o.mesh))
         const sorted = [...visible].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
         const tmp = new THREE.Vector3()
         return sorted.map(o => {
@@ -688,14 +841,35 @@ export function useThreeScene(deps) {
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes
       selectedObjectId: () => selected ? (objectsRef.current.find(o => o.mesh === selected)?.id ?? null) : null,   // stage 27: viewport toolbar "delete selected"
+      /** Every selected object's id, in scene order. The primary (`selectedObjectId`) is one OF these — callers
+       *  that act on "the selection" want this one; callers that need a single subject want that one. */
+      selectedObjectIds: () => objectsRef.current.filter(o => selection.has(o.mesh)).map(o => o.id),
       selectObject: (id) => {   // stage 33: select the object clicked in the list (for selection-driven actions such as split)
         const o = objectsRef.current.find(x => x.id === id); if (!o) return
-        selected = o.mesh; transform.attach(o.mesh); paint(); setStatus(statusText())
+        selectOnly(o.mesh); announceSelection()
       },
+      /** Select several by id. `additive` toggles each against the current set, matching Ctrl+click in the scene,
+       *  so the object list and the viewport cannot disagree about what a modifier means. */
+      selectObjects: (ids, additive = false) => {
+        const wanted = objectsRef.current.filter(o => ids.includes(o.id))
+        if (!additive) { selection.clear(); selected = null }
+        for (const o of wanted) {
+          if (additive && selection.has(o.mesh)) { selection.delete(o.mesh); if (selected === o.mesh) selected = null }
+          else { selection.add(o.mesh); selected = o.mesh }
+        }
+        if (!selection.has(selected)) selected = [...selection].pop() ?? null
+        refreshGizmo(); announceSelection()
+      },
+      selectAllObjects: () => {   // Ctrl+A, upstream's EVT_GLCANVAS_SELECT_ALL
+        selection.clear()
+        for (const o of objectsRef.current) if (o.visible !== false) { selection.add(o.mesh); selected = o.mesh }
+        refreshGizmo(); announceSelection()
+      },
+      clearSelection: () => { clearSelection(); announceSelection() },
       // Stage 28 P1: seat on the bed — local geometry is baked to minZ->0 by bakeLocal (once on load). Re-seat after a gizmo Z move.
       //  (The upstream ensure_on_bed sinking allowance [allow_negative_z] is out of scope — we only seat by -min_z.)
       placeOnBed: () => { for (const o of objectsRef.current) o.mesh.position.y = 0; if (selected) transform.update?.() },
-      onSliced: () => { objectsGroup.visible = false; transform.detach(); selected = null; paint() },
+      onSliced: () => { objectsGroup.visible = false; clearSelection(); paint() },
       showObjects: () => { objectsGroup.visible = true },
       // Footprint + height of everything currently on the plate, in the same coordinates the tower box uses.
       modelBounds: (plateIdx = null) => {
@@ -716,7 +890,7 @@ export function useThreeScene(deps) {
         const list = !boxes ? [] : (Array.isArray(boxes) ? boxes : [boxes])
         while (towerMeshes.length > list.length) {
           const m = towerMeshes.pop()
-          if (selected === m) { selected = null; transform.detach() }
+          if (selection.has(m)) { selection.delete(m); if (selected === m) selected = [...selection].pop() ?? null; refreshGizmo() }
           t.scene.remove(m); m.geometry.dispose(); m.material.dispose()
         }
         list.forEach((box, i) => {

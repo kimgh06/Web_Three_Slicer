@@ -4,6 +4,7 @@ import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../icons.js'
 // Object list card: print toggle, name, extruder selector, split and delete, plus the two slice toggles.
 export default function ObjectList({
   objects, extruderColors, onToggleVisible, onExtruder, onSplit, onRemove,
+  selectedIds, onSelect,
   supportOn, onToggleSupport,
   overhangOn, onToggleOverhang, overhangAngle, paintMode, onTogglePaint,
   supportStyle, supportStyles, onSupportStyle,
@@ -18,6 +19,15 @@ export default function ObjectList({
   const dedicatedTool = supportTool > 0 || interfaceTool > 0
   // Painted-object ids arrive as a Set from a live tracker or as a plain array from serialised state; absent
   //  entirely until the paint side lands, in which case no row gets a badge.
+  // Selection is shared with the 3D view, so the list highlights whatever is selected there and clicking a row
+  //  selects in both. Ctrl/⌘+click toggles, the same modifier the viewport uses — a list that disagreed with the
+  //  scene about what "add to selection" means would be worse than a list with no selection at all.
+  const isSelected = (objectId) => Array.isArray(selectedIds) && selectedIds.includes(objectId)
+  const clickRow = (event, objectId) => {
+    if (!onSelect) return
+    onSelect(objectId, event.ctrlKey || event.metaKey)
+  }
+
   const isPainted = (objectId) => {
     if (!paintedObjectIds) return false
     return typeof paintedObjectIds.has === 'function'
@@ -35,8 +45,11 @@ export default function ObjectList({
       <div className="sc-head">📦 Objects <span className="sc-count">{objects.length}</span></div>
       <ul className="obj-list2" data-testid="obj-list">
         {objects.map(o => (
-          <li key={o.id} className={o.visible === false ? 'obj-hidden' : ''}>
-            <button className="obj-eye" onClick={() => onToggleVisible(o.id)} title="Include/exclude this object from printing — excluding it keeps it in the scene" data-testid={`eye-${o.id}`}>
+          <li key={o.id}
+              className={`${o.visible === false ? 'obj-hidden' : ''}${isSelected(o.id) ? ' obj-selected' : ''}`.trim()}
+              onClick={e => clickRow(e, o.id)}
+              data-testid={`obj-row-${o.id}`}>
+            <button className="obj-eye" onClick={e => { e.stopPropagation(); onToggleVisible(o.id) }} title="Include/exclude this object from printing — excluding it keeps it in the scene" data-testid={`eye-${o.id}`}>
               <img src={o.visible === false ? eyeSlashIcon : eyeIcon} alt={o.visible === false ? 'Hidden' : 'Visible'} />
             </button>
             <span className="obj-name" title={o.name}>{o.name}</span>
@@ -44,11 +57,11 @@ export default function ObjectList({
               <span className="obj-painted" data-testid={`obj-painted-${o.id}`}
                     title="This object has material-painted regions — the extruder below applies only to the rest of it">🖌</span>
             )}
-            <select className="obj-ext" value={o.extruder ?? 1} onChange={e => onExtruder(o.id, +e.target.value)} title="Which filament (extruder) prints this object" data-testid={`ext-${o.id}`}>
+            <select className="obj-ext" value={o.extruder ?? 1} onClick={e => e.stopPropagation()} onChange={e => onExtruder(o.id, +e.target.value)} title="Which filament (extruder) prints this object" data-testid={`ext-${o.id}`}>
               {extruderColors.map((c, i) => <option key={i} value={i + 1}>T{i + 1}</option>)}
             </select>
-            <button className="obj-split" onClick={() => onSplit(o.id)} title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="Split" /></button>
-            <button className="obj-del" onClick={() => onRemove(o.id)} title="Remove this object from the scene"><img src={deleteIcon} alt="Delete" /></button>
+            <button className="obj-split" onClick={e => { e.stopPropagation(); onSplit(o.id) }} title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="Split" /></button>
+            <button className="obj-del" onClick={e => { e.stopPropagation(); onRemove(o.id) }} title="Remove this object from the scene"><img src={deleteIcon} alt="Delete" /></button>
           </li>
         ))}
       </ul>

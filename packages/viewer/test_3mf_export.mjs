@@ -3,6 +3,7 @@
 // parse3MFProject / normalizeProjectSettings / platePlacements — the code that reads a MakerWorld file — rather
 // than re-parsing the XML the writer just produced.
 import { write3MFProject, writeSTL } from './src/write_3mf.js'
+import { rebasePaintOntoSubset } from './src/export_actions.js'
 import { parse3MFProject } from './src/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../engine/src/settings.js'
 import { platePlacements } from './src/model_load.js'
@@ -183,6 +184,53 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
   // First vertex of the first facet, past the 12-byte normal.
   near('the first vertex survives', view.getFloat32(84 + 12, true), tris[0])
   near('...and its y', view.getFloat32(84 + 16, true), tris[1])
+  eq('the attribute byte count is 0', view.getUint16(84 + 48, true), 0)
+  check('the header is not mistakable for an ASCII STL',
+    !new TextDecoder().decode(stl.subarray(0, 5)).startsWith('solid'))
+}
+// Facet normals, the one place the writer differed from upstream's its_write_stl_binary. A known winding must
+// produce a known unit normal — zeros would still load in most tools, which is exactly why nothing caught it.
+{
+  // CCW seen from +z: (0,0,0) -> (10,0,0) -> (0,10,0). (v1-v0)x(v2-v1) points at +z.
+  const stl = writeSTL(Float32Array.from([0, 0, 0, 10, 0, 0, 0, 10, 0]))
+  const view = new DataView(stl.buffer, stl.byteOffset, stl.byteLength)
+  const normal = [view.getFloat32(84, true), view.getFloat32(88, true), view.getFloat32(92, true)]
+  eq('a CCW facet gets a +z unit normal', normal.map(v => Math.round(v * 1000) / 1000), [0, 0, 1])
+  // Reversed winding must flip it, or the normal is decoration rather than data.
+  const flipped = writeSTL(Float32Array.from([0, 0, 0, 0, 10, 0, 10, 0, 0]))
+  const flippedView = new DataView(flipped.buffer, flipped.byteOffset, flipped.byteLength)
+  eq('reversing the winding flips the normal', Math.round(flippedView.getFloat32(92, true) * 1000) / 1000, -1)
+  // A degenerate triangle has no direction; it must stay zero rather than become NaN.
+  const degenerate = writeSTL(Float32Array.from([1, 1, 1, 1, 1, 1, 1, 1, 1]))
+  const degenerateView = new DataView(degenerate.buffer, degenerate.byteOffset, degenerate.byteLength)
+  eq('a degenerate facet keeps a zero normal, not NaN',
+    [0, 4, 8].map(o => degenerateView.getFloat32(84 + o, true)), [0, 0, 0])
+}
+
+// ---- 7. exporting a SUBSET rebases the kernel's facet numbering ----------------------------------------------
+// The kernel numbers facets across every visible object's merge. Handing that numbering to a file containing only
+// some of those objects would paint the wrong triangles — silently, and on the model the user is looking at.
+{
+  const all = [
+    { id: 1, faceCount: 4 },
+    { id: 2, faceCount: 4 },
+    { id: 3, faceCount: 4 },
+  ]
+  // merged facet 9 is object 3's facet 1; merged facet 2 is object 1's facet 2.
+  const kernelPaint = { facets: [2, 5, 9], hex: '8\n4\n0C' }
+
+  const middleOnly = rebasePaintOntoSubset(kernelPaint, all, [all[1]])
+  eq('only the marks of the exported object survive', middleOnly.facets, [1])
+  eq('...with its own hex', middleOnly.hex, '4')
+
+  const firstAndLast = rebasePaintOntoSubset(kernelPaint, all, [all[0], all[2]])
+  // object 1 keeps base 0, object 3 now starts at 4 — so its facet 1 becomes 5.
+  eq('a gap in the middle renumbers what follows it', firstAndLast.facets, [2, 5])
+  eq('...and each hex rides with its own facet', firstAndLast.hex, '8\n0C')
+
+  eq('exporting everything is the identity', rebasePaintOntoSubset(kernelPaint, all, all).facets, [2, 5, 9])
+  eq('a subset with no marks yields nothing', rebasePaintOntoSubset(kernelPaint, all, [{ id: 9, faceCount: 4 }]), null)
+  eq('no kernel paint yields nothing', rebasePaintOntoSubset(null, all, all), null)
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3mf export passed')

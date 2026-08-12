@@ -22,6 +22,10 @@ export function makeKeyHandler(deps) {
       else if (key('v')) { stop(); deps.paste() }
       else if (key('x')) { stop(); deps.copy(); deps.remove() }
       else if (key('k') || key('d')) { stop(); deps.duplicate() }  // Ctrl+K (upstream) / ⌘D (macOS convention)
+      // Ctrl+A selects every object, as upstream does (EVT_GLCANVAS_SELECT_ALL). Upstream ignores it while a
+      //  painting gizmo is open; here the paint modes take the canvas anyway, so the same intent is served by the
+      //  handler simply not being reachable with a brush active.
+      else if (key('a')) { stop(); deps.selectAll?.() }
       return
     }
 
