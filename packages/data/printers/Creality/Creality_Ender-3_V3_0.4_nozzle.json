@@ -1,0 +1,160 @@
+{
+ "type": "machine",
+ "name": "Creality Ender-3 V3 0.4 nozzle",
+ "from": "system",
+ "auxiliary_fan": "1",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "PAUSE",
+ "default_filament_profile": [
+  "Creality Generic PLA @Ender-3V3-all"
+ ],
+ "default_print_profile": "0.20mm Standard @Creality Ender3 V3",
+ "deretraction_speed": [
+  "40"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "250",
+ "extruder_clearance_height_to_rod": "14",
+ "extruder_clearance_radius": "70",
+ "gcode_flavor": "klipper",
+ "layer_change_gcode": "",
+ "machine_end_gcode": "END_PRINT",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "6000",
+  "6000"
+ ],
+ "machine_max_acceleration_travel": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_z": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_jerk_e": [
+  "10",
+  "10"
+ ],
+ "machine_max_jerk_x": [
+  "20",
+  "20"
+ ],
+ "machine_max_jerk_y": [
+  "10",
+  "10"
+ ],
+ "machine_max_jerk_z": [
+  "20",
+  "20"
+ ],
+ "machine_max_speed_e": [
+  "100",
+  "100"
+ ],
+ "machine_max_speed_x": [
+  "600",
+  "600"
+ ],
+ "machine_max_speed_y": [
+  "600",
+  "600"
+ ],
+ "machine_max_speed_z": [
+  "500",
+  "500"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "PAUSE",
+ "machine_start_gcode": "M140 S0\nM104 S0\nSTART_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single]",
+ "manual_filament_change": "1",
+ "max_layer_height": [
+  "0.35"
+ ],
+ "min_layer_height": [
+  "0.1"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_type": "hardened_steel",
+ "printable_area": [
+  "0x0",
+  "220x0",
+  "220x220",
+  "0x220"
+ ],
+ "printable_height": "250",
+ "printer_model": "Creality Ender-3 V3",
+ "printer_structure": "i3",
+ "printer_technology": "FFF",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "1"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "0.6"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "40"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "support_air_filtration": "0",
+ "support_multi_bed_types": "1",
+ "thumbnails": [
+  "96x96/PNG, 300x300/PNG"
+ ],
+ "wipe": [
+  "1"
+ ],
+ "wipe_distance": [
+  "2"
+ ],
+ "z_hop": [
+  "0.2"
+ ],
+ "z_hop_types": [
+  "Auto Lift"
+ ]
+}

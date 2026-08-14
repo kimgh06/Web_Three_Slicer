@@ -3,7 +3,7 @@
 Output: web/{ui-tree,config-schema,invalidation-map,toggle-rules}.json
 Stage 33 restructure: upstream sources live in slicers/slicer/, generated JSON in web/ (where this script lives). Paths are derived from __file__ (no hardcoded absolute paths).
 """
-import re, json, os, sys
+import re, json, os, sys, glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # .../<repo>/web
 REPO = os.path.dirname(HERE)                          # repository root
@@ -753,6 +753,77 @@ def extract_preset_keys(schema):
     }
 
 
+def extract_printer_profiles(schema):
+    """One file per printer: packages/data/printers/<Vendor>/<name>.json.
+
+    printers.json stays what it is — the 21 columns the kernel reads, column-oriented and deduplicated, which is
+    what a picker over a thousand machines needs. This is the other half: the whole machine preset, per printer,
+    so a profile can be found, read and edited as a file instead of as a row index into a shared table.
+
+    Each file is written FLATTENED — the inherits chain resolved, `inherits` itself dropped — and holds only the
+    keys the chain actually sets (69 of 175 on average). That is the shape that makes the directory worth having:
+    open one file and the printer is all there, with no parent to chase and no wall of schema defaults. It also
+    makes each file a valid standalone OrcaSlicer machine preset, which `readPresetFile` can read directly.
+
+    Non-instantiable profiles (the `_common` parents) are not written: nothing selects them, and flattening has
+    already folded them into the children that do.
+    """
+    root = os.path.join(SRC, 'resources', 'profiles')
+    raw = {}
+    for vendor in sorted(os.listdir(root)):
+        mdir = os.path.join(root, vendor, 'machine')
+        if not os.path.isdir(mdir):
+            continue
+        for path in sorted(glob.glob(os.path.join(mdir, '*.json'))):
+            try:
+                j = json.load(open(path, encoding='utf-8'))
+            except Exception:
+                continue
+            if j.get('type') == 'machine' and j.get('name'):
+                raw[j['name']] = (vendor, j)
+
+    keys = set(extract_preset_keys(schema)['printer'])
+
+    def resolved(name, seen=None):
+        seen = seen or set()
+        entry = raw.get(name)
+        if not entry or name in seen:      # a missing or circular parent yields what we have, never a hang
+            return {}
+        seen.add(name)
+        _vendor, j = entry
+        out = resolved(j.get('inherits', ''), seen) if j.get('inherits') else {}
+        out.update({k: v for k, v in j.items() if k in keys})
+        return out
+
+    out_dir = os.path.join(OUT, 'printers')
+    # Wipe first: a printer upstream renamed or dropped would otherwise linger forever, and a stale profile is
+    #  worse than a missing one because nothing about it looks wrong.
+    if os.path.isdir(out_dir):
+        for stale in glob.glob(os.path.join(out_dir, '*', '*.json')):
+            os.remove(stale)
+    written = 0
+    for name, (vendor, j) in sorted(raw.items()):
+        if j.get('instantiation') != 'true':
+            continue
+        values = resolved(name)
+        values.pop('inherits', None)        # flattened: a parent pointer here would be a lie
+        preset = {'type': 'machine', 'name': name, 'from': 'system'}
+        preset.update({k: values[k] for k in sorted(values)})
+        # Three vendors have spaces of their own ("Ginger Additive", "Wanhao France", "Co Print"), so the same
+        #  rule applies to the directory or the path still needs quoting.
+        vdir = os.path.join(out_dir, vendor.replace(' ', '_'))
+        os.makedirs(vdir, exist_ok=True)
+        # Preset names are globally unique upstream and carry no path characters (verified), so the name IS the
+        #  filename — that is the entire point of the directory. Spaces become underscores: the names are full of
+        #  them ("Bambu Lab X1 Carbon 0.4 nozzle"), and a path that needs quoting in every shell command, glob and
+        #  URL is a directory nobody enjoys grepping through. The `name` field inside stays the real preset name,
+        #  which is what any lookup should key on — the filename is for humans.
+        json.dump(preset, open(os.path.join(vdir, name.replace(' ', '_') + '.json'), 'w', encoding='utf-8'),
+                  ensure_ascii=False, indent=1)
+        written += 1
+    return written, len({v for v, _ in raw.values()})
+
+
 # ---------------------------------------------------------------- main
 if __name__ == '__main__':
     ui = extract_ui_tree()
@@ -775,6 +846,8 @@ if __name__ == '__main__':
 
     pk = extract_preset_keys(sch)
     json.dump(pk, open(os.path.join(OUT, 'preset-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
+
+    nprofiles, nvendors = extract_printer_profiles(sch)
 
     # Emitted as a JS module, not JSON: this one is dynamically imported, and a dynamic JSON import needs
     #  `with { type: 'json' }` in Node while that same attribute makes browsers reject Vite's text/javascript

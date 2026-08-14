@@ -1,0 +1,157 @@
+{
+ "type": "machine",
+ "name": "Co Print ChromaSet 0.4 nozzle fast",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "FILAMENT_CHANGE LAYER_NUM=[layer_num] NEXT_EXTRUDER=[next_extruder]",
+ "cooling_tube_length": [
+  "0"
+ ],
+ "cooling_tube_retraction": [
+  "0"
+ ],
+ "default_filament_profile": [
+  "CoPrint Generic PLA"
+ ],
+ "default_print_profile": "0.2mm Fast @Co Print ChromaSet 0.4",
+ "deretraction_speed": [
+  "30"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "enable_filament_ramming": [
+  "0"
+ ],
+ "extra_loading_move": [
+  "0"
+ ],
+ "extruder_clearance_height_to_lid": [
+  "140"
+ ],
+ "extruder_clearance_height_to_rod": [
+  "36"
+ ],
+ "extruder_clearance_radius": [
+  "65"
+ ],
+ "gcode_flavor": "klipper",
+ "high_current_on_filament_swap": [
+  "0"
+ ],
+ "machine_end_gcode": "end_print",
+ "machine_max_acceleration_e": [
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "5000"
+ ],
+ "machine_max_acceleration_travel": [
+  "40000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "20000"
+ ],
+ "machine_max_acceleration_z": [
+  "500"
+ ],
+ "machine_max_jerk_e": [
+  "5"
+ ],
+ "machine_max_jerk_x": [
+  "20"
+ ],
+ "machine_max_jerk_y": [
+  "20"
+ ],
+ "machine_max_jerk_z": [
+  "0.5"
+ ],
+ "machine_max_speed_e": [
+  "100"
+ ],
+ "machine_max_speed_x": [
+  "700"
+ ],
+ "machine_max_speed_y": [
+  "700"
+ ],
+ "machine_max_speed_z": [
+  "20"
+ ],
+ "machine_start_gcode": "start_print  EXTRUDER=[initial_extruder] EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single]",
+ "max_layer_height": [
+  "0.32"
+ ],
+ "min_layer_height": [
+  "0.08"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_volume": [
+  "156"
+ ],
+ "parking_pos_retraction": [
+  "0"
+ ],
+ "printable_area": [
+  "0x0",
+  "225x0",
+  "225x225",
+  "0x225"
+ ],
+ "printable_height": "250",
+ "printer_model": "Co Print ChromaSet",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "0%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_lift_below": [
+  "343"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "0"
+ ],
+ "retraction_length": [
+  "0.5"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "60"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "thumbnails": [
+  "300x300",
+  "400x300",
+  "96x96",
+  "32x32"
+ ],
+ "thumbnails_format": "PNG",
+ "wipe": [
+  "1"
+ ],
+ "wipe_distance": [
+  "2"
+ ],
+ "z_hop": [
+  "0.2"
+ ],
+ "z_hop_types": "Spiral Lift"
+}

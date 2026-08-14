@@ -1,0 +1,154 @@
+{
+ "type": "machine",
+ "name": "Geeetech Mizar Pro 0.8 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Generic PLA @System"
+ ],
+ "default_print_profile": "0.40mm Standard @Geeetech common 0.8 nozzle",
+ "deretraction_speed": [
+  "20"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "34",
+ "extruder_clearance_height_to_rod": "34",
+ "extruder_type": [
+  "Bowden"
+ ],
+ "gcode_flavor": "marlin",
+ "layer_change_gcode": ";------------------------------------\n;layer No: [layer_num] ———>Print Height: [layer_z] mm\n;------------------------------------",
+ "machine_end_gcode": "{if max_layer_z < printable_height}G1 Z{z_offset+min(max_layer_z+2, printable_height)} F600 ; Move print head up{endif}\nG1 X5 Y{print_bed_max[1]*0.8} F{travel_speed*60} ; present print\n{if max_layer_z < printable_height-10}G1 Z{z_offset+min(max_layer_z+70, printable_height-10)} F600 ; Move print head further up{endif}\n{if max_layer_z < max_print_height*0.6}G1 Z{printable_height*0.6} F600 ; Move print head further up{endif}\nM140 S0 ; turn off heatbed\nM104 S0 ; turn off temperature\nM107 ; turn off fan\nM84 X Y E ; disable motors",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "1000",
+  "1000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "1000",
+  "1000"
+ ],
+ "machine_max_acceleration_travel": [
+  "500",
+  "500"
+ ],
+ "machine_max_acceleration_x": [
+  "500",
+  "500"
+ ],
+ "machine_max_acceleration_y": [
+  "500",
+  "500"
+ ],
+ "machine_max_acceleration_z": [
+  "500",
+  "500"
+ ],
+ "machine_max_jerk_e": [
+  "5",
+  "5"
+ ],
+ "machine_max_jerk_x": [
+  "8",
+  "8"
+ ],
+ "machine_max_jerk_y": [
+  "8",
+  "8"
+ ],
+ "machine_max_jerk_z": [
+  "0.4",
+  "0.4"
+ ],
+ "machine_max_speed_e": [
+  "60",
+  "60"
+ ],
+ "machine_max_speed_x": [
+  "200",
+  "200"
+ ],
+ "machine_max_speed_y": [
+  "200",
+  "200"
+ ],
+ "machine_max_speed_z": [
+  "10",
+  "10"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "M25 ;pause print",
+ "machine_start_gcode": ";Geeetech official wiki homepage for MizarPro: https://www.geeetech.com/wiki/index.php/Geeetech_Mizar_Pro_3D_Printer \nM104 S[first_layer_temperature] ; set extruder temp\nM140 S[first_layer_bed_temperature] ; set bed temp\nM190 S[first_layer_bed_temperature] ; wait for bed temp\nM109 S[first_layer_temperature] ; wait for extruder temp\nM220 S100 ;Reset Feedrate\nM221 S100 ;Reset Flowrate\nG92 E0 ; Reset Extruder\nG28 ; Home all axes\nM107 ;Off Fan\nG1 Z5.0 F3000 ;Move Z Axis up little to prevent scratching of Heat Bed\nG1 X0.1 Y20 Z1.4 F6000 ; Move to start position\nG1 X0.1 Y80.0 Z1.4 F1000 E25 ; Draw the first line\nG92 E0 ; Reset Extruder\nG1 X0.4 Y80.0 Z1.4 F6000 ; Move to side a little\nG1 X1.4 Y20 Z1.4 F1000 E20 ; Draw the second line\nG92 E0 ; Reset Extruder\nG1 Z2.0 F3000 ; Move Z Axis up little to prevent scratching of Heat Bed\nG1 X5 Y20 Z0.28 F3000.0 ; Move over to prevent blob squish\nG92 E0",
+ "max_layer_height": [
+  "0.56"
+ ],
+ "min_layer_height": [
+  "0.16"
+ ],
+ "nozzle_diameter": [
+  "0.8"
+ ],
+ "nozzle_type": "brass",
+ "printable_area": [
+  "0x0",
+  "220x0",
+  "220x220",
+  "0x220"
+ ],
+ "printable_height": "260",
+ "printer_model": "Geeetech Mizar Pro",
+ "printer_technology": "FFF",
+ "printer_variant": "0.8",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_lift_below": [
+  "259"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "7"
+ ],
+ "retraction_minimum_travel": [
+  "2"
+ ],
+ "retraction_speed": [
+  "20"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "support_multi_bed_types": "1",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0"
+ ],
+ "z_hop_types": "Normal Lift"
+}

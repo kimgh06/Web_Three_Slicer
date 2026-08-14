@@ -1,0 +1,149 @@
+{
+ "type": "machine",
+ "name": "Voron Trident 350 0.8 nozzle",
+ "from": "system",
+ "auxiliary_fan": "1",
+ "bed_exclude_area": [
+  "0x0",
+  "18x0",
+  "18x28",
+  "0x28"
+ ],
+ "best_object_pos": "0.5x0.5",
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Generic PLA @System"
+ ],
+ "default_print_profile": "0.40mm Standard 0.8 nozzle @Voron",
+ "deretraction_speed": [
+  "30"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "140",
+ "extruder_clearance_height_to_rod": "36",
+ "extruder_clearance_radius": "65",
+ "extruder_colour": [
+  "#018001"
+ ],
+ "gcode_flavor": "klipper",
+ "layer_change_gcode": "",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_travel": [
+  "9000",
+  "9000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_z": [
+  "500",
+  "200"
+ ],
+ "machine_max_jerk_e": [
+  "2.5",
+  "2.5"
+ ],
+ "machine_max_jerk_x": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_y": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_z": [
+  "3",
+  "3"
+ ],
+ "machine_max_speed_e": [
+  "25",
+  "25"
+ ],
+ "machine_max_speed_x": [
+  "600",
+  "200"
+ ],
+ "machine_max_speed_y": [
+  "600",
+  "200"
+ ],
+ "machine_max_speed_z": [
+  "20",
+  "20"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "PAUSE",
+ "max_layer_height": [
+  "0.64"
+ ],
+ "min_layer_height": [
+  "0.2"
+ ],
+ "nozzle_diameter": [
+  "0.8"
+ ],
+ "nozzle_type": "hardened_steel",
+ "nozzle_volume": "107",
+ "printable_area": [
+  "0x0",
+  "350x0",
+  "350x350",
+  "0x350"
+ ],
+ "printable_height": "250",
+ "printer_model": "Voron Trident 350",
+ "printer_structure": "corexy",
+ "printer_variant": "0.8",
+ "retract_before_wipe": [
+  "0%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_lift_below": [
+  "290"
+ ],
+ "retraction_length": [
+  "0.8"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "30"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "support_multi_bed_types": "1",
+ "time_lapse_gcode": ";TIMELAPSE_TAKE_FRAME",
+ "z_hop": [
+  "0.4"
+ ],
+ "z_hop_types": [
+  "Auto Lift"
+ ]
+}
