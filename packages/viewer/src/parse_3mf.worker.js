@@ -5,7 +5,7 @@
 //  ~136MB on that file) and the worker has no use for them afterwards. The input buffer is NOT transferred —
 //  cloning 52MB costs little next to the parse, and neutering it would leave the caller's in-thread fallback
 //  (model_loaders.js) with an empty buffer if this worker ever fails to start.
-import { parse3MFProject } from './parse_3mf.js'
+import { parse3MFProject } from './core/parse_3mf.js'
 
 self.onmessage = async (event) => {
   const { id, buffer, baseName } = event.data || {}

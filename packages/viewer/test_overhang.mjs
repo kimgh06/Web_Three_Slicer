@@ -2,7 +2,7 @@
 // threshold from a wrong one (a box looks the same at 30° and 85°, since a vertical wall never qualifies).
 //   Run: node packages/viewer/test_overhang.mjs
 import * as THREE from 'three'
-import { buildOverhangGeometry } from './src/overhang_view.js'
+import { buildOverhangGeometry } from './src/scene/overhang_view.js'
 
 let failed = 0
 const check = (name, got, want) => {

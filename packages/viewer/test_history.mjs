@@ -1,7 +1,8 @@
 // The undo/redo stack semantics — the part that is pure logic and therefore worth pinning:
 //   node packages/viewer/test_history.mjs
 import assert from 'node:assert'
-import { createHistory } from './src/history.js'
+import { createHistory } from './src/core/history.js'
+import { undoRedoDirection } from './src/use_viewport_history.js'
 
 // A stand-in scene: capture/restore of one value, which is all the stack machinery can see anyway.
 function harness(opts = {}) {
@@ -76,5 +77,25 @@ function harness(opts = {}) {
   assert.strictEqual(scene, 3)                                  // 0..2 fell off the bottom
   assert.strictEqual(history.travel('undo'), false)
 }
+
+// ---- the Ctrl+Z/Y binding, which is layout-independent for the same reason the other shortcuts are ----
+//  A Korean layout reports 'ㅋ' for the Z key, so e.code is what decides and e.key is only the Latin fallback.
+const key = (over = {}) => ({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, code: '', key: '', target: null, ...over })
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyZ' })), 'undo')
+assert.strictEqual(undoRedoDirection(key({ metaKey: true, code: 'KeyZ' })), 'undo', 'Cmd on macOS')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyZ', key: '\u314b' })), 'undo', 'IME on: e.code still matches')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, shiftKey: true, code: 'KeyZ' })), 'redo')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyY' })), 'redo')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: '', key: 'z' })), 'undo', 'remapped Latin layout falls back to e.key')
+// Not ours:
+assert.strictEqual(undoRedoDirection(key({ code: 'KeyZ' })), null, 'no modifier')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, altKey: true, code: 'KeyZ' })), null, 'Alt is someone elses')
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyC' })), null)
+// A text field owns its own undo.
+for (const tagName of ['INPUT', 'TEXTAREA', 'SELECT'])
+  assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyZ', target: { tagName } })), null, tagName)
+assert.strictEqual(undoRedoDirection(key({ ctrlKey: true, code: 'KeyZ', target: { isContentEditable: true } })), null)
+// The shadow root hides the real target behind the host element, so composedPath()[0] is what has to be read.
+assert.strictEqual(undoRedoDirection({ ...key({ ctrlKey: true, code: 'KeyZ' }), nativeEvent: { composedPath: () => [{ tagName: 'INPUT' }] } }), null)
 
 console.log('history: ok')

@@ -1,5 +1,5 @@
 import React from 'react'
-import { moveIcon, rotateIcon, scaleIcon, paintIcon } from '../icons.js'
+import { moveIcon, rotateIcon, scaleIcon, paintIcon } from '../core/icons.js'
 
 // S3 left rail: the transform gizmos plus the support painting mode.
 export default function GizmoRail({ gizmoMode, paintMode, onGizmo, onTogglePaint }) {

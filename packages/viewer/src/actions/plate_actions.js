@@ -1,7 +1,7 @@
-import { log } from './log.js'
+import { log } from '../core/log.js'
 import { deriveKernelParams } from 'three-slicer/settings'
-import { roleRatios } from './toolpath_segments.js'
-import { MAX_PLATES } from './plate_layout.js'
+import { roleRatios } from '../core/toolpath_segments.js'
+import { MAX_PLATES } from '../core/plate_layout.js'
 import { statsFromKernel } from './use_slicer.js'
 import { download } from './export_actions.js'
 

@@ -2,9 +2,12 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { plateStep, plateCols } from './plate_layout.js'
+import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
+import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'
 import { buildOverhangGeometry } from './overhang_view.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
+import { createBoxSelect } from './box_select.js'
+import { bedGridLines } from '../core/bed_grid.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
 // model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
@@ -36,18 +39,17 @@ export function useThreeScene(deps) {
   const plateBWRef = useRef(200)        // plate (bed) width/depth — used for PX_i and membership calculations
   const plateBDRef = useRef(200)
 
-  // three world offset of plate i (square grid layout)
-  function platePos(i) {
-    const cols = plateCols(plateCountRef.current)
-    return { x: (i % cols) * plateStep(plateBWRef.current), z: Math.floor(i / cols) * plateStep(plateBDRef.current) }
-  }
-  // world (x,z) -> nearest plate index
-  function plateOfXZ(wx, wz) {
-    const n = plateCountRef.current, cols = plateCols(n)
-    const col = Math.max(0, Math.min(cols - 1, Math.round(wx / plateStep(plateBWRef.current))))
-    const row = Math.max(0, Math.round(wz / plateStep(plateBDRef.current)))
-    return Math.max(0, Math.min(n - 1, row * cols + col))
-  }
+  // The grid itself is plate_layout.js (pure, tested). These two only bind it to the refs that hold the live plate
+  //  count and bed size, so every call site in this file keeps reading exactly as it did.
+  const platePos = (i) => platePosition(i, plateCountRef.current, plateBWRef.current, plateBDRef.current)
+  const plateOfXZ = (wx, wz) => plateIndexAtXZ(wx, wz, plateCountRef.current, plateBWRef.current, plateBDRef.current)
+  const plateGrid = () => ({ plateCount: plateCountRef.current, bedWidth: plateBWRef.current, bedDepth: plateBDRef.current })
+  // Objects as model_geometry.js takes them: plain data with the world matrix already up to date. WHICH objects go
+  //  in is the scene's own call (visibility, selection), so the filter stays here and the geometry work does not.
+  const geometryInput = (keep) => objectsRef.current.filter(keep).map(o => {
+    o.mesh.updateMatrixWorld(true)
+    return { id: o.id, name: o.name, extruder: o.extruder, localPos: o.localPos, paint: o.paint, matrixWorld: o.mesh.matrixWorld }
+  })
 
   useEffect(() => {
     const mount = mountRef.current
@@ -357,7 +359,7 @@ export function useThreeScene(deps) {
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
-      if (rubber) { rubber.x1 = ev.clientX; rubber.y1 = ev.clientY; drawBand(); return }
+      if (boxSelect.dragging()) { boxSelect.move(ev); return }
       if (scaleBox.dragging()) { scaleBox.move(ev); invalidate(); return }
       if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
       if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
@@ -370,60 +372,10 @@ export function useThreeScene(deps) {
       raycaster.setFromCamera(pointer, camera)
       return raycaster.ray.intersectPlane(_bedPlane, _bedHit) ? plateOfXZ(_bedHit.x, _bedHit.z) : null
     }
-    // ---- Box select (upstream's rectangle selection, GLCanvas3D.cpp:4404) --------------------------------------
-    // Shift + left-drag, exactly as upstream binds it — Alt is NOT a de-select there either (`//BBS: don't use alt
-    //  as de-select`), it switches to volume mode, which this viewer has no equivalent for.
-    // Upstream decides what is inside with a GPU picking pass over a framebuffer the size of the rectangle. That
-    //  buys per-pixel accuracy (an object hidden behind another is not caught) at the cost of a second render path.
-    //  Here each object's world bounding box is projected to screen and its 2D extent is intersected with the
-    //  rectangle instead — the same idea upstream uses for its point-based gizmos (GLSelectionRectangle::contains).
-    //  The difference is visible in one case only: a fully occluded object inside the rectangle is selected here
-    //  and would not be upstream. For picking whole objects that is the harmless direction to err in.
-    const band = document.createElement('div')
-    band.dataset.testid = 'box-select-band'
-    band.style.cssText = 'position:absolute;border:1px solid #00ae42;background:rgba(0,174,66,0.12);'
-      + 'pointer-events:none;display:none;z-index:5'
-    mount.appendChild(band)
-    let rubber = null
-    const drawBand = () => {
-      const r = renderer.domElement.getBoundingClientRect()
-      const left = Math.min(rubber.x0, rubber.x1) - r.left, top = Math.min(rubber.y0, rubber.y1) - r.top
-      band.style.left = `${left}px`; band.style.top = `${top}px`
-      band.style.width = `${Math.abs(rubber.x1 - rubber.x0)}px`
-      band.style.height = `${Math.abs(rubber.y1 - rubber.y0)}px`
-      band.style.display = 'block'
-    }
-    const _corner = new THREE.Vector3(), _box = new THREE.Box3()
-    const meshesInBand = () => {
-      const r = renderer.domElement.getBoundingClientRect()
-      const minX = Math.min(rubber.x0, rubber.x1), maxX = Math.max(rubber.x0, rubber.x1)
-      const minY = Math.min(rubber.y0, rubber.y1), maxY = Math.max(rubber.y0, rubber.y1)
-      const out = []
-      for (const o of objectsRef.current) {
-        if (o.visible === false) continue
-        o.mesh.updateMatrixWorld(true)
-        _box.setFromObject(o.mesh)
-        if (!Number.isFinite(_box.min.x)) continue
-        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
-        for (let corner = 0; corner < 8; corner++) {
-          _corner.set(corner & 1 ? _box.max.x : _box.min.x,
-                      corner & 2 ? _box.max.y : _box.min.y,
-                      corner & 4 ? _box.max.z : _box.min.z).project(camera)
-          const sx = r.left + (_corner.x * 0.5 + 0.5) * r.width
-          const sy = r.top + (-_corner.y * 0.5 + 0.5) * r.height
-          if (sx < sMinX) sMinX = sx
-          if (sx > sMaxX) sMaxX = sx
-          if (sy < sMinY) sMinY = sy
-          if (sy > sMaxY) sMaxY = sy
-        }
-        if (sMaxX >= minX && sMinX <= maxX && sMaxY >= minY && sMinY <= maxY) out.push(o.mesh)
-      }
-      return out
-    }
+    // ---- Box select (box_select.js holds the band and the projection; this is what it means here) --------------
+    const boxSelect = createBoxSelect({ camera, domElement: renderer.domElement, mount })
     const endBand = () => {
-      const picked = meshesInBand()
-      band.style.display = 'none'
-      rubber = null
+      const picked = boxSelect.end(objectsRef.current.filter(o => o.visible !== false).map(o => o.mesh))
       orbit.enabled = true
       // Additive, like upstream's Select state: a box drag adds to what was already selected rather than replacing
       //  it, which is what makes several drags in a row build one set.
@@ -456,10 +408,9 @@ export function useThreeScene(deps) {
       // Shift+drag starts a box select instead of an orbit. Upstream gates this on the painting gizmos being off
       //  (GLCanvas3D.cpp:4398) for the same reason it matters here: shift is the eraser modifier while painting.
       if (ev.shiftKey && paintModeRef.current === 'off') {
-        rubber = { x0: ev.clientX, y0: ev.clientY, x1: ev.clientX, y1: ev.clientY }
+        boxSelect.begin(ev)
         orbit.enabled = false
         renderer.domElement.setPointerCapture?.(ev.pointerId)
-        drawBand()
         return
       }
       toPointer(ev)
@@ -475,7 +426,7 @@ export function useThreeScene(deps) {
     }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
     const onUp = (ev) => {
-      if (rubber) { endBand(); return }
+      if (boxSelect.dragging()) { endBand(); return }
       // A corner drag commits the same way a gizmo drag does — re-seat on the bed, then let the component rebuild
       //  the paint/kernel coordinates the new size invalidates.
       if (scaleBox.dragging()) {
@@ -722,87 +673,10 @@ export function useThreeScene(deps) {
         o.mesh.position.set(origin.x + offsetModelX, o.mesh.position.y, origin.z - offsetModelY)
       },
       // When plateIdx != null, only objects on that plate are used and coordinates are converted to plate-local (three-x -= PX) (keeps the stage-28 contract).
-      buildMergedSTL: (plateIdx = null) => {
-        let arr = objectsRef.current.filter(o => o.visible !== false)
-        if (plateIdx != null) arr = arr.filter(o => { o.mesh.updateMatrixWorld(true); const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld); return plateOfXZ(wp.x, wp.z) === plateIdx })
-        if (!arr.length) return null
-        const sorted = [...arr].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
-        const usedExtruders = new Set(sorted.map(o => o.extruder || 1))
-        const tmp = new THREE.Vector3(); const out = []
-        // One boundary per extruder change, not just the first: with objects on T1/T2/T3 a single boundary would
-        //  fold T3's triangles into T2's group and print them with T2's material. `tools` carries the real
-        //  extruder number of each group, because assignments can skip one (T1 and T3 with nothing on T2).
-        let triCount = 0, split = 0
-        const splits = [], tools = []
-        // What the selector's facet numbering depends on: which objects are in the merge, in what order, each with
-        //  how many faces. Moving one does not appear here — which is the point, because a move must not renumber
-        //  anything and so must not cost the paint.
-        const topology = []
-        // Painting imported from a 3mf, rebased from each object's own facet numbering onto the merged one. It has to
-        //  happen HERE and not at load: which objects are merged, and in what order, is decided by this function
-        //  (visibility, plate, the extruder sort below) and the kernel's selector only ever sees the result.
-        const paintImport = { color: { facets: [], hex: [] }, supports: { facets: [], hex: [] } }
-        for (const o of sorted) {
-          const ext = o.extruder || 1
-          topology.push(`${o.id}:${ext}:${o.localPos.length / 9}`)
-          // triCount is this object's base facet index — it is only advanced at the bottom of the loop.
-          if (o.paint) for (const slot of ['color', 'supports'])
-            for (const [localTri, hex] of o.paint[slot]) {
-              paintImport[slot].facets.push(triCount + localTri)
-              paintImport[slot].hex.push(hex)
-            }
-          if (tools.length === 0) tools.push(ext - 1)
-          else if (ext - 1 !== tools[tools.length - 1]) { splits.push(triCount); tools.push(ext - 1) }
-          if (ext >= 2 && split === 0) split = triCount   // start boundary of ext2 (the pre-N-way scalar form)
-          o.mesh.updateMatrixWorld(true)
-          const M = o.mesh.matrixWorld, lp = o.localPos
-          for (let i = 0; i < lp.length; i += 3) { tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M); out.push(tmp.x, -tmp.z, tmp.y) }  // Rinv -> model (world)
-          triCount += lp.length / 9
-        }
-        // The slice frame is the PLATE, not the model. This used to subtract the content's own bbox centre, which
-        //  made the frame move whenever the model moved — and everything anchored to something else then needed a
-        //  correction nobody owned: the prime tower drifted by exactly the model's off-centre amount, and the paint
-        //  transform went stale on the first drag. Subtracting the plate origin instead gives a frame that does not
-        //  move, so a bed coordinate means the same thing to the slicer, the scene and the G-code.
-        //  (The centring was a workaround for a kernel that lost infill away from the origin — clip_util.h
-        //  infill_lines, fixed: six placements of the same cube now slice to the same 1043.9 mm.)
-        //  Upstream does the same thing with m_plate_origin.
-        const origin = platePos(plateIdx != null ? plateIdx : selectedPlateRef.current)
-        const originModelX = origin.x, originModelY = -origin.z      // three(x,z) -> model(x,y)
-        for (let i = 0; i < out.length; i += 3) { out[i] -= originModelX; out[i + 1] -= originModelY }
-        // Toolpath display offset: put the plate back where it lives. Plate 0 is the origin, so a single-plate
-        //  project slices in world coordinates and needs no offset at all.
-        const offX3 = origin.x, offZ3 = origin.z
-        const buf = new ArrayBuffer(84 + triCount * 50), dvw = new DataView(buf)
-        dvw.setUint32(80, triCount, true)
-        let off = 84, vi = 0
-        for (let t = 0; t < triCount; t++) {
-          off += 12
-          for (let k = 0; k < 3; k++) { dvw.setFloat32(off, out[vi++], true); dvw.setFloat32(off + 4, out[vi++], true); dvw.setFloat32(off + 8, out[vi++], true); off += 12 }
-          dvw.setUint16(off, 0, true); off += 2
-        }
-        // The content's own box in slice coordinates, so the slicer side can place the prime tower NEXT to the model
-        //  rather than at the bed-corner default (measured: model at the bed centre, tower 90mm away at (10,10)).
-        //  The box, not half-extents: the model is no longer centred in this frame, so where it sits matters as
-        //  much as how big it is.
-        let minX = 1e18, minY = 1e18, maxX = -1e18, maxY = -1e18
-        for (let i = 0; i < out.length; i += 3) {
-          if (out[i] < minX) minX = out[i]; if (out[i] > maxX) maxX = out[i]
-          if (out[i + 1] < minY) minY = out[i + 1]; if (out[i + 1] > maxY) maxY = out[i + 1]
-        }
-        // Ready for the kernel's selector_import_paint: a facet-index array and the matching hex strings, joined
-        //  with the newline that binding splits on. A slot with nothing painted is null, not an empty pair.
-        const paint = {}
-        for (const slot of ['color', 'supports'])
-          paint[slot] = paintImport[slot].facets.length
-            ? { facets: Int32Array.from(paintImport[slot].facets), hex: paintImport[slot].hex.join('\n') }
-            : null
-        // `plate` rides along so per-plate settings (the wipe_tower_x/y arrays) can be indexed by the plate this
-        //  merge actually cut, not by whatever is selected when the slice runs.
-        return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
-                 plate: plateIdx != null ? plateIdx : selectedPlateRef.current,
-                 topology: topology.join('|'), minX, minY, maxX, maxY, paint }
-      },
+      //  The work is model_geometry.js; this only decides WHICH objects go in (visibility is scene state) and
+      //  hands over the world matrices, which have to be current before anything reads them.
+      buildMergedSTL: (plateIdx = null) => buildMergedSTL(geometryInput(o => o.visible !== false),
+        { plateIndex: plateIdx, selectedPlate: selectedPlateRef.current, ...plateGrid() }),
       /** Stop drawing the scene while something long and non-visual runs (an export). The scene cannot change
        *  during it, so the frames would be identical — and on a large model each one is a main-thread block that
        *  delays the very worker replies the export is waiting on. Resuming redraws once. */
@@ -815,29 +689,8 @@ export function useThreeScene(deps) {
       // `selectedOnly` is upstream's `export_stl(..., selection_only, ...)`. Upstream additionally refuses anything
       //  that is not a whole object (Plater.cpp:16244 — it rejects volume-level selections); this viewer has no
       //  parts, so every selection is already a set of whole objects and there is nothing to reject.
-      exportObjects: ({ selectedOnly = false } = {}) => {
-        let visible = objectsRef.current.filter(o => o.visible !== false)
-        if (selectedOnly) visible = visible.filter(o => selection.has(o.mesh))
-        const sorted = [...visible].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
-        const tmp = new THREE.Vector3()
-        return sorted.map(o => {
-          o.mesh.updateMatrixWorld(true)
-          const M = o.mesh.matrixWorld, lp = o.localPos
-          const tris = new Float32Array(lp.length)
-          for (let i = 0; i < lp.length; i += 3) {
-            tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M)
-            tris[i] = tmp.x; tris[i + 1] = -tmp.z; tris[i + 2] = tmp.y
-          }
-          const wp = new THREE.Vector3().setFromMatrixPosition(o.mesh.matrixWorld)
-          const plate = plateOfXZ(wp.x, wp.z)
-          // The plate's own origin in MODEL coordinates, so the writer can express the object's position relative
-          //  to its plate without re-deriving this viewer's grid (it has upstream's to encode into already).
-          const origin = platePos(plate)
-          return { id: o.id, name: o.name, extruder: o.extruder || 1, plate,
-                   plateOriginX: origin.x, plateOriginY: -origin.z,
-                   tris, faceCount: lp.length / 9, paint: o.paint || null }
-        })
-      },
+      exportObjects: ({ selectedOnly = false } = {}) => exportObjects(
+        geometryInput(o => o.visible !== false && (!selectedOnly || selection.has(o.mesh))), plateGrid()),
       /** Drop the pending 3mf painting after it has been handed to the kernel — the import is one-shot, and a
        *  second one would resurrect marks the user has since erased. */
       clearPaintImport: () => { for (const o of objectsRef.current) o.paint = null },
@@ -925,18 +778,10 @@ export function useThreeScene(deps) {
         plateBWRef.current = bw; plateBDRef.current = bd; plateCountRef.current = n; selectedPlateRef.current = sel
         for (const p of (t.plateBeds || [])) for (const m of [p.gridThin, p.gridBold, p.border]) { t.scene.remove(m); m.geometry.dispose(); m.material.dispose() }
         t.plateBeds = []
-        const cols = plateCols(n), sx = plateStep(bw), sz = plateStep(bd)
-        // Grid: upstream Bed_2D rules — a rectangular grid that fits the bed rectangle exactly, cell spacing based on the shorter side
-        //  (<600mm -> 10mm, …), laid out from the corner origin with a bold line every 5 cells (main grid 50mm).
-        const minEdge = Math.min(bw, bd)
-        const cell = minEdge >= 6000 ? 100 : minEdge >= 1200 ? 50 : minEdge >= 600 ? 20 : 10
-        const thin = [], bold = []
-        const x0 = -bw / 2, z0 = -bd / 2
-        for (let i = 0, x = x0; x <= bw / 2 + 1e-6; x = x0 + ++i * cell) (i % 5 ? thin : bold).push(x, 0, z0, x, 0, bd / 2)
-        for (let j = 0, z = z0; z <= bd / 2 + 1e-6; z = z0 + ++j * cell) (j % 5 ? thin : bold).push(x0, 0, z, bw / 2, 0, z)
+        const { thin, bold } = bedGridLines(bw, bd)   // upstream Bed_2D's spacing rules — bed_grid.js
         const lineGeo = (a) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return g }
         for (let i = 0; i < n; i++) {
-          const px = (i % cols) * sx, pz = Math.floor(i / cols) * sz
+          const { x: px, z: pz } = platePos(i)   // the refs above already hold n/bw/bd, so this is the same grid
           const gt = new THREE.LineSegments(lineGeo(thin), new THREE.LineBasicMaterial({ color: 0x232a31 }))
           const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: 0x39434d }))
           gt.position.set(px, 0, pz); gb.position.set(px, 0, pz); t.scene.add(gt); t.scene.add(gb)
@@ -982,7 +827,7 @@ export function useThreeScene(deps) {
       renderer.domElement.removeEventListener('dblclick', onDblClick); renderer.domElement.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
       apiRef.current = null
-      transform.detach(); transform.dispose(); orbit.dispose(); scaleBox.dispose()
+      transform.detach(); transform.dispose(); orbit.dispose(); scaleBox.dispose(); boxSelect.dispose()
       scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose() })
       renderer.dispose()
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)

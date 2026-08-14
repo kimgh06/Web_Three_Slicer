@@ -1,7 +1,7 @@
-import { log } from './log.js'
+import { log } from '../core/log.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
-import { makeSlicerWorker } from './make_worker.js'
+import { makeSlicerWorker } from '../make_worker.js'
 
 // The kernel's stats object, reduced to what the UI reads. One place, because the per-plate path shows the same
 //  card from the same fields and the two mappings had already started to drift.

@@ -3,7 +3,7 @@
 //   Run: node packages/viewer/test_gcode_parse.mjs
 import assert from 'node:assert'
 import createSlicer from '../engine/src/slicer_core.js'
-import { parseGcode } from './src/gcode_parse.js'
+import { parseGcode } from './src/core/gcode_parse.js'
 
 const ROLE_OF = (v) => v & 15, TOOL_OF = (v) => v >>> 4
 

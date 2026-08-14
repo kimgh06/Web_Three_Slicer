@@ -1,4 +1,4 @@
-import { splitConnectedComponents } from './model_loaders.js'
+import { splitConnectedComponents } from '../scene/model_loaders.js'
 
 // Object actions (duplicate/copy/paste/delete/split + gizmo mode) — bound to the object toolbar, the
 //  context menu and the keyboard shortcuts.

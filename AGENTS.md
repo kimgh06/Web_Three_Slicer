@@ -130,7 +130,7 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   effect that re-lays the plates afterwards then slides the grid out from under everything just placed (measured:
   56mm per column, so plate 2 ended up 112mm off).
 - 3mf facet indices are per OBJECT, the selector's are per MERGED MESH. The rebasing happens in `buildMergedSTL`
-  (`use_three_scene.js`) and nowhere else — that function is what decides which objects are merged and in what
+  (`viewer/src/core/model_geometry.js`) and nowhere else — that function is what decides which objects are merged and in what
   order (visibility, plate, the extruder sort), so any other place would be guessing. It survives `bakeLocal` and
   the STL weld because both preserve triangle ORDER.
 - One facet holds one integer (see the EnforcerBlockerType note above), but a 3mf keeps material and support paint
@@ -177,12 +177,20 @@ npm i && npm run build
 # Viewer demo app (uses the committed WASM — emscripten not required)
 cd web/viewer && npm run dev
 
-# Kernel tests (120+ invariants) + the doc/SDK gates (npm test runs all three)
-node packages/wasm-core/test.mjs
-node packages/types/test_kernel_params.mjs   # the kernel-param table is current and fully classified
-node packages/engine/test_client.mjs         # worker-protocol wrapper semantics (no WASM — a fake worker)
-node packages/viewer/test_viewer_docs.mjs  # README shortcuts + features match the code
-node packages/viewer/test_preset_file.mjs   # OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
+# Everything `npm test` runs, in two halves:
+npm run test:kernel    # wasm-core invariants (120+), the kernel-param table, the worker-protocol wrapper
+npm run test:viewer    # every packages/viewer/test_*.mjs — the layer guard, the doc gates and the pure modules
+
+# The viewer half, individually (each is `node packages/viewer/test_<name>.mjs`):
+#   layers          the src/ layer boundary is real, not decorative (see Structure below)
+#   viewer_docs     README shortcuts + features + panels match the code
+#   preset_file     OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
+#   plate_layout    the plate grid the scene, the 3mf writer and the G-code injection all share
+#   merge_stl       buildMergedSTL/exportObjects — the kernel's facet numbering
+#   box_select      the Shift+drag rectangle's screen projection
+#   bed_grid        upstream Bed_2D's cell ladder
+#   tower_layout    prime-tower placement, auto and chosen
+#   bed_bounds gcode_parse history loaders overhang scale_box 3mf_export 3mf_project
 
 # Regenerate the kernel parameter reference (params.cpp/params.h -> engine/README.md). build runs this automatically
 node packages/types/gen_kernel_params.mjs
@@ -198,7 +206,7 @@ node packages/viewer/test_3mf_export.mjs
 # Uniform-scale drag ratio, the scale clamp, and layout-independent shortcut matching
 node packages/viewer/test_scale_box.mjs
 
-# Undo/redo stack semantics (branch discard, coalescing, limit)
+# Undo/redo stack semantics (branch discard, coalescing, limit) + the Ctrl+Z/Y binding
 node packages/viewer/test_history.mjs
 
 # Rebuild the kernel (needs emscripten + brew boost/eigen)
@@ -233,7 +241,20 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
 - `packages/components/` — `three-slicer/components`: the React `<SettingsPanel/>` (zero global coupling, Shadow DOM)
-- `packages/viewer/` — `three-slicer/viewer`: the `<Viewport/>` viewer component (three.js, Shadow DOM)
+- `packages/viewer/` — `three-slicer/viewer`: the `<Viewport/>` viewer component (three.js, Shadow DOM).
+  `src/` is laid out by ONE question — **can this run under node?** — because that is the only boundary that was
+  already real here: every viewer test covers something on the pure side of it, and nothing covers the other side.
+  `test_layers.mjs` enforces it, so the folders are a check rather than a convention.
+  - `src/core/` — no React, no DOM, no renderer. three.js **math** is fine (`Matrix4`/`Vector3` run under node,
+    which is what makes `model_geometry`/`scale_box` testable at all); `WebGLRenderer` and the jsm controls/loaders
+    are not. This is where anything worth an assertion belongs.
+  - `src/scene/` — the three.js/DOM shell (`use_three_scene`, the gizmo helpers, the loaders, the toolpath GPU
+    path). Untestable here by nature, so it should stay thin: peel the arithmetic out into `core/` instead.
+  - `src/actions/` — use cases. They take the shared refs plus the scene's `apiRef` and decide what happens.
+  - `src/ui/` — presentational React. Props in, markup out; it must not reach into the scene or the kernel.
+  - `src/` itself — the entry (`Viewport.jsx`), its own hooks, and `make_worker.js`/`parse_3mf.worker.js`, which
+    the **build resolves by path** (the vite lib entry and the `cp` in the package build script). Moving those two
+    breaks the published tarball rather than a test, which is why `test_layers.mjs` pins them where they are.
 - `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (923 keys) which `gen_settings_types.mjs` generates
 - `packages/wasm-core/` — the kernel C++ sources + `third_party/` (a copy of the deps, for standalone builds) — not published to npm; its output lands in `packages/engine/src/`
 - `web/viewer/` — the demo app (Vite + React) — a workspace member that references the package by name

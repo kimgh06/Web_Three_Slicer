@@ -3,10 +3,10 @@
 // The fixture is built here rather than committed because the painting encoding is the point of the test — a
 // checked-in binary would prove the parser agrees with itself, not that it agrees with upstream's format.
 import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { parse3MFProject } from './src/parse_3mf.js'
+import { parse3MFProject } from './src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams } from '../engine/src/settings.js'
 import { schema } from '../engine/src/data.js'
-import { platePlacements } from './src/model_load.js'
+import { platePlacements } from './src/actions/model_load.js'
 
 let failures = 0
 const check = (name, cond, detail = '') => {

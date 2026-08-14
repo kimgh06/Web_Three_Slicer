@@ -5,18 +5,28 @@
 // gains an entry point — so the two drift silently, and the reader finds out by pressing a key that does nothing
 // or setting a flag that turns nothing off.
 //   run: node packages/viewer/test_viewer_docs.mjs
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
 let failures = 0
+// src/ is laid out in layers (core/ scene/ actions/ ui/). Look a file up by NAME so that moving one between
+//  layers does not silently turn this gate into a crash — the gate is about content, not about paths.
+const srcFile = (name) => {
+  for (const dir of ['', 'core', 'scene', 'actions', 'ui']) {
+    const path = join(here, 'src', dir, name)
+    if (existsSync(path)) return readFileSync(path, 'utf8')
+  }
+  throw new Error(`no such source file: ${name}`)
+}
+
 const check = (label, condition, detail = '') => {
   if (condition) console.log(`  ok: ${label}`)
   else { console.log(`  FAIL: ${label}${detail ? ' — ' + detail : ''}`); failures++ }
 }
 
-const keymap = readFileSync(join(here, 'src', 'shortcut_keymap.js'), 'utf8')
+const keymap = srcFile('shortcut_keymap.js')
 const readme = readFileSync(join(here, 'README.md'), 'utf8')
 const table = readme.slice(readme.indexOf('## Keyboard and mouse'), readme.indexOf('## Undo and redo'))
 
@@ -46,8 +56,11 @@ check('Ctrl/⌘ combinations are marked as such', /Ctrl\/⌘/.test(table))
 check('Shift variants are described', /Shift/.test(table))
 // Ctrl+Z is bound to the component root rather than window, which is the fact an embedder needs: it does not
 //  reach the host app's own undo. If that binding moves, this line has to be revisited.
-const shell = readFileSync(join(here, 'src', 'Viewport.jsx'), 'utf8')
-check('undo/redo is still bound on the component root', /onShellKey/.test(shell) && /KeyZ/.test(shell))
+const shell = srcFile('Viewport.jsx')
+const historyHook = srcFile('use_viewport_history.js')
+// Bound on the shell element itself, not on window — an element listener only fires when focus is inside.
+check('undo/redo is still bound on the component root', /className="app-shell" onKeyDown={onShellKey}/.test(shell))
+check('...and the key matching is layout-independent', /KeyZ/.test(historyHook) && /KeyY/.test(historyHook))
 check('...and the table says it does not escape to the host', /never reaches your app/.test(table))
 
 console.log('\n[viewer features: declared, honoured, documented]')
@@ -59,7 +72,7 @@ const declared = (viewerTypes.match(/export type ViewportFeature =([^\n]*(?:\n\s
 check('ViewportFeature declares keys', declared.length >= 5, declared.join(' '))
 
 const sources = ['Viewport.jsx', 'use_slicer.js', 'use_three_scene.js', 'log.js']
-  .map(name => readFileSync(join(here, 'src', name), 'utf8')).join('\n')
+  .map(name => srcFile(name)).join('\n')
 const unwired = declared.filter(key => !sources.includes(`feature('${key}')`))
 check('every declared feature gates something', unwired.length === 0, unwired.join(' '))
 
@@ -70,7 +83,7 @@ console.log('\n[viewer panels: every showPanel key is declared]')
 // The same three-way agreement as the features, minus the README (the panel list is long and lives in the props
 //  section rather than a table of its own). `bedWarn` and `towerCard` reached a release undeclared because nothing
 //  compared these two lists.
-const shellSource = readFileSync(join(here, 'src', 'Viewport.jsx'), 'utf8')
+const shellSource = srcFile('Viewport.jsx')
 const used = [...new Set([...shellSource.matchAll(/showPanel\('([a-zA-Z]+)'\)/g)].map(m => m[1]))]
 const panelUnion = viewerTypes.slice(viewerTypes.indexOf('export type ViewportPanel'),
                                      viewerTypes.indexOf('export type ViewportEvent'))
@@ -97,17 +110,17 @@ check('every lockable panel is named in the README', unlisted.length === 0, unli
 console.log('\n[viewer: exports are interceptable]')
 // Every file the viewer hands to the browser goes through one helper that offers it to the host first. A second
 //  path that builds its own anchor would be a save the `onExport` prop silently cannot see.
-const exportActions = readFileSync(join(here, 'src', 'export_actions.js'), 'utf8')
+const exportActions = srcFile('export_actions.js')
 check('the download helper offers the blob to the host first',
   /export function download\([^)]*onExport\)/.test(exportActions) && /if \(onExport && onExport\(/.test(exportActions))
 const anchorSites = ['Viewport.jsx', 'export_actions.js', 'plate_actions.js', 'model_load.js', 'object_actions.js']
-  .filter(name => readFileSync(join(here, 'src', name), 'utf8').includes('document.body.appendChild'))
+  .filter(name => srcFile(name).includes('document.body.appendChild'))
 check('and it is the only place that creates one', anchorSites.join(' ') === 'export_actions.js', anchorSites.join(' '))
 
 // The interception itself runs here rather than being read: a save that silently reaches neither the host nor the
 //  download folder is the one failure mode worth a real call. Node has no URL.createObjectURL, which is exactly
 //  what makes this work — a handled export must return before touching it, so an unhandled one would throw.
-const { download } = await import('./src/export_actions.js')
+const { download } = await import('./src/actions/export_actions.js')
 {
   const seen = []
   download(new Uint8Array([1, 2, 3]), 'part.3mf', 'model/3mf', (file, name) => { seen.push([file, name]); return true })

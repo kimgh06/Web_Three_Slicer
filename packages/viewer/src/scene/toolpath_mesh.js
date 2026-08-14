@@ -1,5 +1,5 @@
 // three.js instanced mesh built from a buildSegmentData result. The only file here that touches three.
-import { SEG_VS, SEG_FS } from './toolpath_shaders.js'
+import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
 
 // Upstream SegmentTemplate.cpp:18 VERTEX_DATA (the 24 triangle indices of the 8-vertex diamond, verbatim).
 //   /1-------6\      cross-section = diamond (0=top, 3=bottom, 2/7=front/back spikes, 5/6/4/1=sides/top-bottom)

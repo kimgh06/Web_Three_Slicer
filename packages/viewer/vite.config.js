@@ -11,7 +11,7 @@ export default defineConfig({
     lib: {
       // 'parse_3mf.worker' is an entry rather than a bundled import: make_worker.js reaches it by relative URL from
       // dist/, and only dist/ is published. Keeping it an entry is what puts a file at that URL.
-      entry: { Viewport: 'src/Viewport.jsx', toolpath_gpu: 'src/toolpath_gpu.js', model_loaders: 'src/model_loaders.js', gcode_parse: 'src/gcode_parse.js', 'parse_3mf.worker': 'src/parse_3mf.worker.js' },
+      entry: { Viewport: 'src/Viewport.jsx', toolpath_gpu: 'src/scene/toolpath_gpu.js', model_loaders: 'src/scene/model_loaders.js', gcode_parse: 'src/core/gcode_parse.js', 'parse_3mf.worker': 'src/parse_3mf.worker.js' },
       formats: ['es'],
     },
     outDir: 'dist',

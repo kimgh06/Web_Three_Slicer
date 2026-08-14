@@ -1,5 +1,5 @@
 import React from 'react'
-import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../icons.js'
+import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../core/icons.js'
 
 // Object list card: print toggle, name, extruder selector, split and delete, plus the two slice toggles.
 export default function ObjectList({
