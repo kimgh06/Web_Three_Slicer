@@ -1,6 +1,7 @@
 // "Save project as" / "Export as STL" — the write half of the 3mf project support (parse_3mf.js is the read half).
 // The kernel's painting only exists inside the worker's TriangleSelector, so a 3mf save has to ASK for it and wait:
 //  that is the one asynchronous step here, and it is why this is a module rather than two lines in the toolbar.
+import { log } from './log.js'
 import { write3MFProject, writeSTL } from './write_3mf.js'
 
 // The kernel is not guaranteed to answer (an old build has no selector_export_paint binding, and a worker that is
@@ -8,8 +9,13 @@ import { write3MFProject, writeSTL } from './write_3mf.js'
 //  IMPORTED — losing the brush strokes is bad, losing the whole file because a worker was slow is worse.
 const PAINT_EXPORT_TIMEOUT_MS = 4000
 
-function download(bytes, name, type) {
-  const url = URL.createObjectURL(new Blob([bytes], { type }))
+// The host can take the bytes instead of having the browser download them — an app that saves to its own server,
+//  or through the File System Access API, has no other way in: the toolbar's save buttons are inside this
+//  component. Returning anything truthy means "handled", and the anchor is never created.
+export function download(bytes, name, type, onExport) {
+  const blob = new Blob([bytes], { type })
+  if (onExport && onExport(blob, name)) return
+  const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url; anchor.download = name; anchor.style.display = 'none'
   document.body.appendChild(anchor); anchor.click()
@@ -60,7 +66,7 @@ export function rebasePaintOntoSubset(paintExport, allObjects, subset) {
 }
 
 export function makeExportActions(deps) {
-  const { apiRef, getWorker, settingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting } = deps
+  const { apiRef, getWorker, settingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting, onExport } = deps
 
   const baseName = (objects) => {
     const first = objects?.[0]?.name ?? apiRef.current?.exportObjects?.()[0]?.name ?? 'project'
@@ -110,10 +116,10 @@ export function makeExportActions(deps) {
       //  geometry gather is per vertex, the paint fetch is a worker round trip, the write is deflate-bound), so a
       //  single total would say nothing about which one a slow save was.
       const facets = objects.reduce((sum, o) => sum + o.faceCount, 0)
-      console.info(`[vp-prof] export 3mf: ${facets} facets, gather ${(gathered - started).toFixed(0)}ms,`
+      log.info(`[vp-prof] export 3mf: ${facets} facets, gather ${(gathered - started).toFixed(0)}ms,`
         + ` paint ${(gotPaint - gathered).toFixed(0)}ms, write ${(performance.now() - gotPaint).toFixed(0)}ms`
         + ` -> ${(bytes.byteLength / 1e6).toFixed(2)}MB`)
-      download(bytes, `${baseName(objects)}.3mf`, 'model/3mf')
+      download(bytes, `${baseName(objects)}.3mf`, 'model/3mf', onExport)
       const painted = exported?.facets?.length ?? 0
       setSliceNotice?.(`Saved ${objects.length} ${selectedOnly ? 'selected ' : ''}object(s) as a 3mf project`
         + (painted ? ` with ${painted} painted facets.` : '.')
@@ -133,7 +139,7 @@ export function makeExportActions(deps) {
     const merged = new Float32Array(total)
     let at = 0
     for (const object of objects) { merged.set(object.tris, at); at += object.tris.length }
-    download(writeSTL(merged), `${baseName(objects)}.stl`, 'model/stl')
+    download(writeSTL(merged), `${baseName(objects)}.stl`, 'model/stl', onExport)
     setSliceNotice?.(`Exported ${objects.length} ${selectedOnly ? 'selected ' : ''}object(s) as STL (${(total / 9) | 0} triangles).`)
   }
 

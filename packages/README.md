@@ -31,14 +31,18 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 npm i three-slicer
 ```
 
-`react`, `react-dom`, and `three` are peer dependencies and npm installs them for you. They stay peers rather than dependencies because React and three must be single instances — a duplicate copy breaks hooks and `instanceof`.
+`react`, `react-dom`, and `three` are **optional** peer dependencies. They stay peers rather than dependencies because React and three must be single instances — a duplicate copy breaks hooks and `instanceof` — and optional because only the UI half needs them: a headless consumer installs none of the three.
 
-Only the viewer and components import them. If you use the headless engine, they are installed into `node_modules` but never enter your bundle:
+Install them yourself when you use the viewer or the settings panel:
 
-| Import path | Needs react/three at runtime |
+```bash
+npm i three-slicer react react-dom three
+```
+
+| Import path | Needs react/three |
 | --- | --- |
-| `three-slicer`, `/settings`, `/toggle`, `/worker`, `/wasm`, `/data` | no |
-| `three-slicer/viewer`, `/viewer/toolpath`, `/viewer/loaders` | yes |
+| `three-slicer`, `/settings`, `/toggle`, `/client`, `/worker`, `/wasm`, `/data` | no |
+| `three-slicer/viewer`, `/viewer/toolpath`, `/viewer/loaders`, `/viewer/gcode` | yes |
 | `three-slicer/components` | react only |
 
 ## Quick Start: Headless Slicing
@@ -66,7 +70,11 @@ console.log(result.gcode)
 slicer.dispose()
 ```
 
-`slice()` accepts a binary STL as an `ArrayBuffer` or `Uint8Array`. Parameters can be either a kernel params object or a JSON string.
+`slice()` accepts a binary STL as an `ArrayBuffer` or `Uint8Array`. Parameters can be either a kernel params object or a JSON string — every accepted parameter is listed in the [kernel parameter reference](engine/README.md#kernel-parameter-reference), which is generated from the kernel's own reader.
+
+A runnable version of the above ships with the package: `node node_modules/three-slicer/engine/examples/headless.mjs` writes a cube, slices it batch and streamed, and prints the stats.
+
+`result.error` is set instead of a result when a slice fails or is cancelled — check it before reading `gcode`.
 
 ## Streaming Layers
 
@@ -102,15 +110,22 @@ export default function App() {
   const [settings, setSettings] = useState({})
 
   return (
-    <Viewport
-      settings={settings}
-      setSettings={setSettings}
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
+      <Viewport
+        settings={settings}
+        setSettings={setSettings}
+      />
+    </div>
   )
 }
 ```
 
-The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. A `.3mf` written by a slicer is treated as a project, not just geometry: its plate layout, project settings, and support/material painting are restored on import (where a facet carries both paint kinds, material paint wins and the dropped support paint is reported). Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
+**The container is not optional.** The viewer fills its nearest *positioned* ancestor — the shadow host is
+`display: contents` and the shell inside is `position: absolute; inset: 0` — so it needs a parent with
+`position: relative` and a real height. In a plain static `<div>` it escapes to the page instead. There is no width
+or height prop.
+
+The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. Its keyboard and mouse bindings, the undo boundary, and what a host cannot drive are documented in [viewer/README.md](viewer/README.md). It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. A `.3mf` written by a slicer is treated as a project, not just geometry: its plate layout, project settings, and support/material painting are restored on import (where a facet carries both paint kinds, material paint wins and the dropped support paint is reported). Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
 
 ## Quick Start: Settings Panel
 
@@ -181,12 +196,14 @@ Available subpaths:
 | `three-slicer` | Headless WASM engine SDK |
 | `three-slicer/settings` | Schema defaults and settings-to-kernel mapping |
 | `three-slicer/toggle` | Enable/disable rule evaluation for settings UIs |
-| `three-slicer/worker` | Browser worker entry |
+| `three-slicer/worker` | Browser worker entry, and the typed message protocol |
+| `three-slicer/client` | `createSlicerClient()` — promises over that protocol |
 | `three-slicer/wasm` | Single-threaded Emscripten WASM glue |
 | `three-slicer/wasm-mt` | Multithreaded Emscripten WASM glue |
 | `three-slicer/viewer` | React `<Viewport/>` |
 | `three-slicer/viewer/toolpath` | GPU toolpath renderer utilities |
 | `three-slicer/viewer/loaders` | Model loaders |
+| `three-slicer/viewer/gcode` | `parseGcode(text)` — G-code back into the layer stream the renderer consumes |
 | `three-slicer/components` | React `<SettingsPanel/>` |
 | `three-slicer/data` | Named exports for extracted metadata |
 | `three-slicer/data/*.json` | Extracted OrcaSlicer metadata |
@@ -236,6 +253,91 @@ const result = slicer.slice(stlArrayBuffer, params)
 
 `deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel (92 today). Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
 
+## 3MF Projects
+
+A slicer-written `.3mf` is a project, not a mesh file: `Metadata/project_settings.config` holds the flattened
+preset its author sliced with. `<Viewport/>` reads all of it on import, and the two codecs behind that are exported
+for hosts doing it themselves.
+
+**Every value in that file is a string**, and reading it raw is not a cosmetic problem — a disabled option is the
+string `"0"`, and `"0"` is truthy, so a raw import turns every disabled option ON. A point is the string `"256x256"`
+while every consumer indexes it as `[x, y]`, so a raw `printable_area[1][0]` is the character `'2'`. Both are
+handled by coercing each value by its config-schema type:
+
+```js
+import { normalizeProjectSettings, serializeProjectSettings } from 'three-slicer/settings'
+
+const { settings, applied, skipped } = normalizeProjectSettings(rawConfig)
+// settings: real JS types, ready for deriveKernelParams() and <SettingsPanel/>
+// applied : how many keys survived
+// skipped : keys the config schema does not define (preset bookkeeping, version fields) — dropped, not coerced
+```
+
+Writing one back is the exact inverse, and it matters for the same reason: a raw JS `false` would be read by any
+other slicer's parser as the string `"false"`, which is truthy.
+
+```js
+const config = serializeProjectSettings(settings)   // bool -> "1"/"0", point -> "XxY", points group -> "X1xY1,X2xY2"
+```
+
+Upstream's `inherits` / `different_settings_to_system` reconciliation is deliberately not reproduced: it exists to
+rebase a stored preset onto a local vendor preset database, and `project_settings.config` is already flattened, so
+its values are taken as written.
+
+## Preset Files
+
+OrcaSlicer's "Config files" dialog imports a `.json` holding one preset — a printer (`machine`), print settings
+(`process`) or a material (`filament`) — plus the zip forms `.orca_printer` / `.orca_bundle` / `.orca_filament`.
+Both directions are supported.
+
+```js
+import { writePresetFile, readPresetFile, presetOptionKeys, printerSettings } from 'three-slicer/settings'
+
+// Write. Flattened on purpose: every option of that type, no `inherits`, so the file stands on its own.
+const file = writePresetFile(settings, { type: 'machine', name: 'My printer' })
+// -> { type: 'machine', name: 'My printer', from: 'User', printable_area: ['0x0','256x0',…], … }
+
+// Read. `resolveParent` follows `inherits`; without it a vendor file arrives incomplete (see below).
+const { settings: loaded, missingParent, skipped } = readPresetFile(file,
+  { resolveParent: (name) => printerSettings(name) })
+```
+
+`presetOptionKeys(type)` is the key set for one type — 175 for `machine`, 370 for `process`, 149 for `filament`,
+taken from upstream's own `Preset::printer_options()` and friends. It is what splits a settings map, which holds
+every type's keys at once, into the file for one of them.
+
+**A vendor preset is a diff, not a preset.** Upstream saves a derived preset as the difference against its parent
+(`Preset::save`: *"only save difference if it has parent"*), so a file off the vendor profiles carries a fraction
+of what it appears to. Read Bambu's X1C machine file without resolving `inherits` and it has no `printable_area`
+and no `printable_height` at all — the bed is in the parent. `missingParent` names the parent when it could not be
+resolved; the file's own values are still applied, because dropping the file entirely loses more than it protects.
+
+Values are written and read in upstream's own encoding — every value a string, a point as `"XxY"`, per-extruder
+options as arrays of strings — the same shape [3MF Projects](#3mf-projects) uses, since upstream writes both
+through the same serializer.
+
+The viewer adds the zip forms and a UI: the printer card's **Load** and **Save** read and write these files, and a
+save routes through [`onExport`](viewer/README.md#taking-the-saves) like every other download.
+
+## Settings UI: Enable/Disable Rules
+
+OrcaSlicer greys out options that another option makes irrelevant. Those rules are extracted, and
+`three-slicer/toggle` evaluates them against a settings map — the panel does this internally, and a custom UI can
+do the same:
+
+```js
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'
+
+const disabled = disabledKeys(makeCfg(settings))
+// setting key -> the enable_if expression that evaluated false, e.g.
+//   { outer_wall_jerk: 'false, variant_index', … }
+if (disabled.outer_wall_jerk) { /* grey the control out; the value says why */ }
+```
+
+Only rules that evaluate to an unambiguous `false` are reported — an expression referring to something the
+evaluator cannot resolve is left out rather than guessed at, so a key missing from the map means "not known to be
+disabled", not "definitely enabled".
+
 ## Materials and Multi-Material
 
 A material is a filament preset — temperatures, flow, diameter, cooling, and the retraction/z-hop overrides a material may apply on top of the machine's. Read the catalog through the facade rather than decoding the data file:
@@ -249,7 +351,22 @@ filaments.recommendedFor('Bambu Lab X1 Carbon 0.4 nozzle')   // the vendor's sho
 const material = filaments.settingsFor('Bambu PLA Basic @BBL X1C')
 ```
 
-The filament key set is disjoint from the process key set, so applying a material never clears a process pick and vice versa.
+**Clear before you apply.** A preset carries only the keys it sets, so merging one over another leaves the previous
+pick's leftovers behind — an ABS material followed by a PLA one keeps ABS's chamber temperature. Every facade
+exposes the exact key set to remove first:
+
+```js
+function applyPreset(settings, preset, keys) {
+  const next = { ...settings }
+  for (const key of keys) delete next[key]
+  return Object.assign(next, preset)
+}
+
+setSettings(s => applyPreset(s, filaments.settingsFor(name), filaments.keys))
+```
+
+The same applies to `processPresets().keys` and `printerKeys`. The filament key set is disjoint from the process key
+set, so applying a material never clears a process pick and vice versa.
 
 **One material per extruder.** OrcaSlicer stores every filament option as one entry per extruder, so a multi-material settings map writes each extruder's material at its own index:
 
@@ -283,12 +400,48 @@ Because a single enum serves both jobs, a support blocker paint and an Extruder 
 
 ## Worker Usage
 
-Use a module worker to run slicing off the browser main thread.
+Slicing blocks its thread for seconds, so in a browser it belongs in a worker. `three-slicer/client` wraps the
+worker's message protocol in promises:
+
+```js
+import { createSlicerClient } from 'three-slicer/client'
+import { deriveKernelParams } from 'three-slicer/settings'
+
+const client = createSlicerClient()          // creates and owns the worker
+await client.warmup()                        // optional: load the kernel before the first slice needs it
+
+const { gcode, stats } = await client.slice(stlArrayBuffer, deriveKernelParams(settings), {
+  onProgress: (done, total) => setProgress(done / total),
+})
+
+client.cancel()      // stops a running slice — see below
+client.terminate()
+```
+
+Pass `onLayer` to take the layers as they are produced instead of having them assembled, which is what keeps a
+large model out of memory:
+
+```js
+await client.slice(stl, params, { onLayer: ({ z, idx, gcode }) => append(gcode) })
+// the result then carries stats only
+```
+
+The same client drives painting — `prepare`, `paint`, `erase`, `clear`, `overlay`, `importPaint`, `exportPaint`.
+It deliberately leaves two things to the host: the viewer's progress weighting (measured against its own models)
+and its out-of-memory retry ladder, both of which are UI policy rather than protocol.
+
+### Driving the worker directly
+
+`createSlicerClient` is a thin wrapper; the protocol underneath is a plain message contract, fully typed in
+`three-slicer/worker`.
 
 ```js
 import { engineWorkerURL } from 'three-slicer'
+import { deriveKernelParams } from 'three-slicer/settings'
 
 const worker = new Worker(engineWorkerURL(), { type: 'module' })
+
+const chunks = []
 
 worker.onmessage = (event) => {
   const message = event.data
@@ -298,20 +451,50 @@ worker.onmessage = (event) => {
   }
 
   if (message.type === 'layer') {
-    console.log(message.idx, message.z, message.gcode)
+    chunks.push(message.gcode)          // paths/widths arrive transferred, not copied
   }
 
   if (message.type === 'done') {
-    console.log(message.stats)
+    console.log(chunks.join(''), message.result.stats)
   }
 
   if (message.type === 'error') {
     console.error(message.error)
   }
 }
+
+// A slice request carries NO `cmd` — it is the worker's default action. Every other message (paint, prepare,
+//  overlay, …) is addressed by `cmd`, so leaving it off is what selects slicing.
+// `params` must be a JSON STRING here. The direct handle's slice() also accepts an object and stringifies it for
+//  you; the worker hands its argument straight to the kernel, which parses JSON text.
+worker.postMessage({ stl: stlArrayBuffer, params: JSON.stringify(deriveKernelParams(settings)) }, [stlArrayBuffer])
 ```
 
-The worker protocol emits `progress`, `layer`, `done`, and `error` messages. For bundler-specific setups, `three-slicer/worker` exposes the worker entry directly.
+The worker replies with `progress`, `layer`, `done`, and `error` while slicing. `done` carries `{result}` — its
+`stats` when the layers were streamed, plus `gcode` and `layers` when they were not. For bundler-specific setups,
+`three-slicer/worker` exposes the worker entry directly.
+
+### Cancelling a slice
+
+Cancellation is a flag the kernel polls from inside its C++ loop, so it works even while the worker is blocked in
+WASM. It lives in a `SharedArrayBuffer`, which means it is only available on the multithreaded kernel — that is, on
+a [cross-origin isolated](#multithreaded-wasm) page. `client.cancel()` handles this and returns `false` when there
+is no flag to write. Driving the worker yourself, the address arrives once, unprompted:
+
+```js
+let cancelView = null
+
+worker.addEventListener('message', ({ data }) => {
+  if (data.type === 'supsab' && data.cancelPtr) {
+    cancelView = new Uint32Array(data.buf, data.cancelPtr, 1)
+  }
+})
+
+const cancel = () => cancelView && Atomics.store(cancelView, 0, 1)
+```
+
+Without cross-origin isolation the engine runs single-threaded, no `supsab` message arrives, and a slice in
+progress cannot be interrupted — terminate the worker instead.
 
 ## Bundler Notes
 
@@ -379,23 +562,72 @@ the layout by hand.
 
 ## API Reference
 
+### `three-slicer`
+
 | API | Description |
 | --- | --- |
 | `createSlicer()` | Loads the WASM kernel and returns a slicer handle |
 | `slicer.slice(stl, params, callbacks?)` | Slices binary STL input to G-code or streamed layers |
-| `slicer.paintPrepare(stl)` | Prepares painting against a model |
+| `slicer.paintPrepare(stl)` | Prepares painting against a model; returns the facet count |
 | `slicer.paint(args)` | Paints enforcer/blocker data (boolean pair; the state-addressed form is worker-only) |
 | `slicer.paintClear()` | Clears painting data for every state |
-| `slicer.overlay(enforcer)` | Returns painting overlay data |
-| `slicer.heapSize()` | Returns current WASM heap size |
+| `slicer.overlay(enforcer)` | The painted overlay triangles for one state, as a `Float32Array` |
+| `slicer.heapSize()` | Current WASM heap size, bytes (peak, monotonic) |
 | `slicer.dispose()` | Releases the slicer handle for garbage collection |
 | `engineWorkerURL()` | Returns a browser worker URL |
-| `deriveKernelParams(settings)` | Converts sparse OrcaSlicer settings to kernel params |
+
+### `three-slicer/settings`
+
+| API | Description |
+| --- | --- |
+| `deriveKernelParams(settings, opts?)` | Converts sparse OrcaSlicer settings to kernel params. `opts.plate` picks a plate's entry from per-plate options |
+| `schemaDefault(key)` | The config-schema default for a key |
+| `settingRaw(settings, key)` | The map's value, or the schema default |
+| `settingScalar(settings, key)` | The same, reduced to a scalar — the first set entry of a per-extruder column |
+| `normalizeProjectSettings(raw)` | A 3mf's all-strings `project_settings.config` → a typed settings map |
+| `serializeProjectSettings(settings)` | The inverse, for writing one |
+| `writePresetFile(settings, opts)` | A settings map → an OrcaSlicer preset `.json`, flattened |
+| `presetFileText(settings, opts)` | The same, stringified |
+| `readPresetFile(raw, opts)` | A preset `.json` → a settings map; follows `inherits` via `resolveParent` |
+| `presetOptionKeys(type)` | The option keys belonging to `machine` / `process` / `filament` |
+| `printersByVendor` | Vendor → profile name → entry, for building a picker |
 | `printerSettings(name)` | Settings a vendor machine profile applies |
+| `printerKeys` | Every key a printer profile can set — clear these before applying another |
+| `printerDefaultPreset(name)` | The vendor's recommended process preset for that printer |
+| `machineLimitKeys` | The schema keys the kernel's machine limits are read from |
 | `processPresets()` | Lazy facade over the print (process) preset catalog |
 | `filamentPresets()` | Lazy facade over the material preset catalog |
+
+### `three-slicer/toggle`
+
+| API | Description |
+| --- | --- |
+| `makeCfg(settings)` | Wraps a settings map for rule evaluation |
+| `disabledKeys(cfg)` | Setting key → the `enable_if` expression that evaluated false |
+| `evalEnableIf(expr, locals, cfg)` | Evaluates a single rule; `null` when it cannot be resolved |
+
+### `three-slicer/viewer` and `three-slicer/components`
+
+| API | Description |
+| --- | --- |
 | `<Viewport/>` | React slicer viewport |
 | `<SettingsPanel/>` | React settings form |
+| `loadModel(name, buffer)` | Parses STL/OBJ/3MF/AMF/PLY into objects |
+| `registerLoader(exts, fn)` | Adds a format — STEP and anything else needing a heavy dependency |
+| `SUPPORTED_EXT` / `fileExt(name)` | The known extensions, and one file's |
+| `splitConnectedComponents(pos)` | Splits a mesh into its connected components; `null` when there is only one |
+| `parseGcode(text)` | G-code text → the layer stream the renderer consumes |
+| `buildSegmentData(layers, w)` | Layers → the packed segment buffers |
+| `computeColors(data, view, ctx)` | Per-segment colours for a view type |
+| `makeToolpath(THREE, data)` | The GPU toolpath mesh handle |
+| `VIEW_TYPES` / `roleRatios(lengths)` | The preview's view types, and the per-role length split |
+
+### `three-slicer/data`
+
+| API | Description |
+| --- | --- |
+| `schema`, `uiTree`, `toggleRules`, `invalidationMap`, `printers` | The extracted metadata, import attributes already applied |
+| `loadProcesses()` / `loadFilaments()` | The two large catalogs, on demand — prefer the `settings` facades |
 
 ## Runtime Support
 

@@ -11,6 +11,9 @@ export { default as uiTree } from 'three-slicer/data/ui-tree.json' with { type: 
 export { default as toggleRules } from 'three-slicer/data/toggle-rules.json' with { type: 'json' }
 export { default as invalidationMap } from 'three-slicer/data/invalidation-map.json' with { type: 'json' }
 export { default as printers } from 'three-slicer/data/printers.json' with { type: 'json' }
+// Which option keys belong to which preset type, straight from upstream's Preset.cpp. Small (17KB) and needed by
+// anything that writes or reads a preset FILE, so it is static rather than lazy like the two big catalogs.
+export { default as presetKeys } from 'three-slicer/data/preset-keys.json' with { type: 'json' }
 // processes is the largest artifact (~800 KB) and is only needed once a printer is picked, so it stays a dynamic
 // import. It is generated as a JS module rather than JSON precisely because of the attribute problem above, in its
 // other direction: a dynamic JSON import needs the attribute in Node, and that same attribute makes browsers

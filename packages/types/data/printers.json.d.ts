@@ -7,8 +7,8 @@
 /** A positional row aligned to `keys`; `null` where the profile chain never set that option. */
 export type PrinterRow = (unknown | null)[]
 
-/** `[nozzle diameter, index into sets, model name without the nozzle suffix]` */
-export type PrinterEntry = [string, number, string]
+/** `[nozzle diameter, index into sets, model name without the nozzle suffix, default process preset]` */
+export type PrinterEntry = [string, number, string, string]
 
 export interface PrinterData {
   /** Option keys, in column order — the same keys the settings panel edits */

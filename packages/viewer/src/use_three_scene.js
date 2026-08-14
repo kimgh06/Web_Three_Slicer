@@ -27,6 +27,7 @@ export function useThreeScene(deps) {
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
     canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
+    contextMenu,   // features.contextMenu — false leaves the right-click menu unregistered
   } = deps
 
   const mountRef = useRef(null)
@@ -307,8 +308,12 @@ export function useThreeScene(deps) {
     const selectionLabel = () => (selection.size > 1 ? `${selection.size} objects`
       : selected ? selected.userData.name : '—')
     const statusText = () => objectsRef.current.length
-      ? `${objectsRef.current.length} object(s) · selected: ${selectionLabel()} | M/R/S · Ctrl+click to add · Shift+drag to box-select · ? for shortcuts`
-      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selectionLabel()} | left-drag to orbit · ? for shortcuts`
+      // The keyboard half of the hint is dropped when features.shortcuts is off — a status bar advertising a key
+      //  that has been switched off is worse than a shorter status bar.
+      ? `${objectsRef.current.length} object(s) · selected: ${selectionLabel()}`
+        + (keyRef.current ? ' | M/R/S · Ctrl+click to add · Shift+drag to box-select · ? for shortcuts' : ' | Ctrl+click to add · Shift+drag to box-select')
+      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selectionLabel()} | left-drag to orbit`
+        + (keyRef.current ? ' · ? for shortcuts' : '')
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
     // Stage 20: painting — converts the raycast hit (faceIndex + world point) into kernel coordinates and sends a paint command to the worker.
@@ -530,7 +535,7 @@ export function useThreeScene(deps) {
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerdown', onDown)
     renderer.domElement.addEventListener('pointerdown', onRmbDown)
-    renderer.domElement.addEventListener('contextmenu', onCtxMenu)
+    if (contextMenu !== false) renderer.domElement.addEventListener('contextmenu', onCtxMenu)
     renderer.domElement.addEventListener('dblclick', onDblClick)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false, capture: true })
     window.addEventListener('pointerup', onUp)

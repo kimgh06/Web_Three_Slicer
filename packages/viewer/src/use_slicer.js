@@ -1,3 +1,4 @@
+import { log } from './log.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from './make_worker.js'
@@ -24,6 +25,9 @@ export function useSlicer(deps) {
     paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
+    // features.warmup / features.logs — `quiet` rides on the worker messages because the worker is a separate
+    //  module instance and cannot see this side's logging flag.
+    warmup, quiet,
   } = deps
 
   const pendingSliceRef = useRef(null)  // promise-based slice (for the sequential all-plates run) + the stage-30 watchdog timer
@@ -41,7 +45,7 @@ export function useSlicer(deps) {
   treeSupportRef.current = deriveKernelParams(settings).support_style === 'tree'
   const stopSupPoll = () => { if (supPollRef.current) { clearInterval(supPollRef.current); supPollRef.current = 0 } }
   // G002: cancel an in-flight slice — written straight into the SAB flag (the kernel loop observes it even while the worker is blocked in wasm)
-  const cancelSlice = () => { const sab = supSabRef.current; console.info('[vp-cancel] cancelSlice, hasView=', !!sab?.cancel); if (sab?.cancel) { try { Atomics.store(sab.cancel, 0, 1) } catch { sab.cancel[0] = 1 } } }
+  const cancelSlice = () => { const sab = supSabRef.current; log.info('[vp-cancel] cancelSlice, hasView=', !!sab?.cancel); if (sab?.cancel) { try { Atomics.store(sab.cancel, 0, 1) } catch { sab.cancel[0] = 1 } } }
   const mapProgress = (done, total) => {
     const N = total > 2 ? (total - 2) / 2 : 0
     if (!N) return total ? done / total : 0
@@ -89,7 +93,7 @@ export function useSlicer(deps) {
           if (N && d.done >= N + 2) stopSupPoll()
           setProgress(mapProgress(d.done, d.total)); pnd?.note?.(d.done, d.total); pnd?.kick?.()
         }
-        else if (d.type === 'supsab') { try { supSabRef.current = { arr: new Uint32Array(d.buf, d.ptr, 1), cancel: d.cancelPtr ? new Uint32Array(d.buf, d.cancelPtr, 1) : null }; console.info('[vp-cancel] supsab cancelPtr=', d.cancelPtr) } catch (e) { console.info('[vp-cancel] supsab view fail', e) } }
+        else if (d.type === 'supsab') { try { supSabRef.current = { arr: new Uint32Array(d.buf, d.ptr, 1), cancel: d.cancelPtr ? new Uint32Array(d.buf, d.cancelPtr, 1) : null }; log.info('[vp-cancel] supsab cancelPtr=', d.cancelPtr) } catch (e) { log.info('[vp-cancel] supsab view fail', e) } }
         else if (d.type === 'layer') {   // stage-30 streaming: receive each layer immediately (transfer) -> accumulate, reset the watchdog
           pnd?.kick?.()
           const a = streamAccumRef.current
@@ -149,7 +153,13 @@ export function useSlicer(deps) {
 
   // Warmup: right after mount, create the worker and load the kernel (3.4MB parse, wasm compile, mt pthread pool) ahead of time.
   //  It finishes while the user picks and arranges models, so the first slice click no longer feels like a load.
-  useEffect(() => { try { getWorker().postMessage({ cmd: 'warmup' }) } catch { /* a load failure is reported properly on the first slice */ } }, [])
+  // Off (features.warmup === false) it is not merely deferred but never paid at all on a page that never slices —
+  //  a G-code viewer driven by the `gcode` prop runs the parser and the renderer and touches the kernel nowhere,
+  //  so warming it up downloads and compiles several megabytes of WASM for a code path that will not execute.
+  useEffect(() => {
+    if (warmup === false) return
+    try { getWorker().postMessage({ cmd: 'warmup', quiet }) } catch { /* a load failure is reported properly on the first slice */ }
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Slicing (derived from the right panel settings) — per plate (stage 29-2) + streaming/watchdog/OOM ladder (stage 30) ----
   const WATCHDOG_MS = 60000   // stage-30 hang watchdog: no progress/layer news for 60s -> declared dead
@@ -168,7 +178,7 @@ export function useSlicer(deps) {
         lastD = done; lastT = total
         const N = total > 2 ? (total - 2) / 2 : 0
         const st = !N ? '' : done < N ? 'PASS1…' : done === N ? 'PASS1-done' : done === N + 1 ? 'surf-done' : done === N + 2 ? 'support-done' : done === total ? 'emit-done' : 'emit…'
-        if (st && st !== __stage) { console.info(`[vp-prof] ${st} +${((performance.now() - __ts) / 1000).toFixed(1)}s`); __stage = st }
+        if (st && st !== __stage) { log.info(`[vp-prof] ${st} +${((performance.now() - __ts) / 1000).toFixed(1)}s`); __stage = st }
       }
       // If the last progress was inside the surface/support window (d ∈ [N, N+2), N=(t−2)/2), use the relaxed limit — silence is normal there, so
       //  the 60s watchdog would kill a healthy slice (measured: 774k tri support takes 19s+, and over 60s on slow or loaded machines).

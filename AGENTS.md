@@ -13,7 +13,26 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
 - **Never modify `slicers/`.** All development happens in `packages/` and `web/`.
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
-- Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (89 keys from an empty settings map, 93 with two extruders and a support filament), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
+- Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
+- **Omission is now the general rule, not a multi-material special case.** The kernel reads 159 parameters and
+  `deriveKernelParams` can produce 131 of them; the `PASSTHROUGH_*` lists in `settings.js` are the ones whose schema
+  key carries the same name, and every one is emitted **only when the settings map actually holds the key**. Filling
+  in a schema default would be wrong rather than merely noisy: the two defaults disagree for several keys
+  (`independent_support_layer_height` is true in the schema and false in the kernel, `printable_height` 100 vs 250),
+  so a default-filled param would silently reslice every existing caller's model. The empty-map key count is the
+  invariant that catches a violation. Two traps live in that list: `support_line_width` is `coFloatOrPercent` but is
+  read by the kernel's plain number reader, not the percent-aware `jwidth_raw` the per-feature widths get, so a
+  `"120%"` would reach `strtod` as a quoted string and resolve to 0 == auto — it is resolved against the nozzle on
+  the JS side instead; and the tree-support shape options exist upstream under two spellings (`…_organic` and
+  suffix-less), which the kernel accepts both of and prefers `_organic`, so both are passed as written.
+- **The kernel parameter reference is generated, and must stay that way** (`types/gen_kernel_params.mjs` ->
+  `engine/README.md`). Its key column comes from the `j*(j,"…")` reader call sites in `params.cpp`, which are the
+  definition of the accepted set; its *From setting* column comes from PROBING `deriveKernelParams` with one schema
+  key at a time rather than parsing it, because that mapping includes renames, rescales (`sparse_infill_density` 15
+  -> `infill_density` 0.15) and a bbox over a point list, and a regex would have to re-implement each. Hand-written
+  counts in docs drift — these ones did, from 89 to 93, before anything generated them. `test_kernel_params.mjs`
+  fails the build if the table is stale or if a parameter no setting reaches is left unclassified in the prose
+  below it.
 - One material per extruder. Upstream stores every filament option as one entry per extruder, so the kernel takes per-extruder vectors and reads them **positionally** — a hole must be filled with the value tool 0 resolved to, because the kernel cannot tell "absent" from 0. On every `T` change `slice_multimaterial` reloads the whole loaded-filament set (diameter, flow, retraction length/speed, z-hop, and `M109` when the temperatures actually disagree).
 - Support painting and material painting are **one** ported TriangleSelector, because upstream's `EnforcerBlockerType` is one enum: `ENFORCER`==Extruder1, `BLOCKER`==Extruder2, `Extruder3..16`==3..16. So a facet holds one integer, and a support BLOCKER paint is indistinguishable from an Extruder2 paint. `slice()` therefore routes a painted model to the multi-material path only when support is **off** (`slicer_core.cpp`) — `slice_multimaterial` emits no support at all, so routing a support-enabled slice there would silently drop it. Consequence to state plainly: **paint and support cannot currently produce two materials together.**
 - Painted regions come from upstream's exact per-layer segmentation, `MultiMaterialSegmentation.cpp`, ported to `packages/wasm-core/treesupport_port/libslic3r/`. Everything above its driver is upstream verbatim; the driver was rewritten because upstream's takes a `PrintObject` (nothing in this kernel has one) — it now takes the sliced contour of every layer plus the selector's painted facets, through `selector_bridge::segment_prepare` / `segment_regions`. Two consequences: `slice_mm.cpp` must slice **every** layer up front (the segmentation is a whole-object pass, and it reuses those contours so nothing is sliced twice), and a painted flat face reaches the print only through `segmentation_top_and_bottom_layers` — a horizontal facet cuts no slicing plane, so that pass is not optional. Its Voronoi/EdgeGrid/MutablePolygon dependencies were already linked for Arachne; only the one new TU was added to `build.sh`.
@@ -158,8 +177,15 @@ npm i && npm run build
 # Viewer demo app (uses the committed WASM — emscripten not required)
 cd web/viewer && npm run dev
 
-# Kernel tests (120+ invariants)
+# Kernel tests (120+ invariants) + the doc/SDK gates (npm test runs all three)
 node packages/wasm-core/test.mjs
+node packages/types/test_kernel_params.mjs   # the kernel-param table is current and fully classified
+node packages/engine/test_client.mjs         # worker-protocol wrapper semantics (no WASM — a fake worker)
+node packages/viewer/test_viewer_docs.mjs  # README shortcuts + features match the code
+node packages/viewer/test_preset_file.mjs   # OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
+
+# Regenerate the kernel parameter reference (params.cpp/params.h -> engine/README.md). build runs this automatically
+node packages/types/gen_kernel_params.mjs
 
 # 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
 node packages/wasm-core/test_paint_import.mjs

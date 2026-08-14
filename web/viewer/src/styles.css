@@ -173,3 +173,52 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
   .lp-license { align-items: flex-start; flex-direction: column; }
   .lp-foot { flex-direction: column; gap: 2px; }
 }
+
+/* ===== /testbed — the embedding-surface harness ===== */
+/* Two columns: the host's own controls, and the component in a positioned container (which is the layout contract
+   the viewer documents — position:relative with a real height, or the absolute shell escapes to the page). */
+.tb { display: flex; height: 100vh; overflow: hidden; background: #0e1216; color: #cdd6dd;
+  font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; }
+.tb-side { flex: 0 0 300px; overflow-y: auto; padding: 14px 16px; background: #12171d;
+  border-right: 1px solid #262d35; }
+.tb-main { flex: 1 1 auto; position: relative; min-width: 0; }
+
+.tb-side h1 { font-size: 15px; margin: 0 0 8px; color: #e6edf3; }
+.tb-side h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8fa0ad;
+  margin: 18px 0 6px; border-bottom: 1px solid #262d35; padding-bottom: 4px; }
+.tb-note { color: #8fa0ad; font-size: 12px; margin: 0 0 4px; }
+.tb-note code { background: #1b222a; padding: 1px 4px; border-radius: 3px; }
+.tb-dim { color: #6f7d89; font-size: 11px; }
+.tb-key { color: #cdd6dd; }
+
+.tb-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; cursor: pointer; }
+.tb-row input { margin: 0; }
+/* The panel list is long and its names are short — two columns keep it on one screen with the features. */
+.tb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.tb-grid .tb-key { font-size: 12px; }
+
+.tb-line { color: #8fa0ad; font-size: 12px; padding: 2px 0; }
+.tb-line button { margin-left: 6px; background: #20272f; border: 1px solid #2c353d; color: #cdd6dd;
+  border-radius: 4px; padding: 0 6px; cursor: pointer; font-size: 11px; }
+.tb-side > button { background: #20272f; border: 1px solid #2c353d; color: #cdd6dd; border-radius: 4px;
+  padding: 2px 8px; cursor: pointer; font-size: 11px; margin-bottom: 6px; }
+.tb-log { height: 220px; overflow-y: auto; background: #0b0f13; border: 1px solid #262d35; border-radius: 4px;
+  padding: 6px; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9fb0bd;
+  white-space: pre-wrap; word-break: break-all; }
+
+@media (max-width: 800px) { .tb { flex-direction: column; } .tb-side { flex: 0 0 auto; max-height: 45vh; } }
+
+/* Preset pickers and the three-state panel switches. */
+.tb-side select { width: 100%; margin-bottom: 4px; background: #1b222a; color: #cdd6dd;
+  border: 1px solid #2c353d; border-radius: 4px; padding: 3px 4px; font-size: 12px; }
+.tb-side select:disabled { opacity: .5; }
+.tb-line b { color: #e6edf3; }
+.tb-json { max-height: 260px; margin-top: 6px; }
+
+.tb-panel { display: flex; align-items: center; gap: 5px; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: 0; padding: 2px 0; color: #cdd6dd; font: inherit; font-size: 12px; }
+.tb-mark { font-size: 10px; width: 10px; }
+.tb-on .tb-mark { color: #00ae42; }
+.tb-readonly .tb-mark { color: #d1a34a; }
+.tb-off { color: #5a6570; }
+.tb-off .tb-mark { color: #5a6570; }

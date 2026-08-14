@@ -9,6 +9,7 @@ import { parseGcode } from './gcode_parse.js'
 import { objectTools } from './toolbar_items.js'
 import { makeKeyHandler } from './shortcut_keymap.js'
 import { createHistory } from './history.js'
+import { setLogging } from './log.js'
 import { useThreeScene } from './use_three_scene.js'
 import { useSlicer } from './use_slicer.js'
 import { makeToolpathView } from './toolpath_view.js'
@@ -16,6 +17,7 @@ import { makePlateActions } from './plate_actions.js'
 import { makeModelLoad } from './model_load.js'
 import { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
 import { makeExportActions } from './export_actions.js'
+import { makePresetActions, PRESET_ACCEPT } from './preset_actions.js'
 import { makeObjectActions } from './object_actions.js'
 import { bedOverflow, overflowText } from './bed_bounds.js'
 // Stage 27: the desktop-style shell, split into presentational components (one file per panel).
@@ -58,12 +60,33 @@ const DEFAULT_FILAMENT_COLORS = [
 //  · onSliced  — the finished slice ({plate, stats, gcode}), the one payload too big to belong on onEvent.
 export default function Viewport({
   settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null,
-  panels = null, gcode = null, defaultExtruderColors = null, defaultAutoSlice = false,
-  onEvent = null, onSliced = null,
+  panels = null, features = null, gcode = null, defaultExtruderColors = null, defaultAutoSlice = false,
+  onEvent = null, onSliced = null, onExport = null,
 }) {
   // A panel is shown unless the host explicitly said false — an unknown key is therefore visible, so a panel added
   //  later does not silently disappear for hosts that listed the ones they wanted.
   const showPanel = (name) => panels?.[name] !== false
+  // A sidebar panel can also be shown but not editable (`panels={{ printerCard: 'readonly' }}`) — the case a host
+  //  that presets printer/process/filament itself actually wants, and which hiding the card does not cover.
+  //  One inert wrapper per card, rather than a `disabled` prop threaded through five card components and every
+  //  input inside them. That also locks the host's OWN nodes (motionPanel, filamentPanel, processPanel) for free,
+  //  which is the right reading: a read-only printer card with a live motion panel inside it would be strange.
+  //  `inert=''` and not `inert={true}` — React only learned `inert` as a real boolean prop in 19, and the peer
+  //  range here starts at 18, where a boolean is dropped and the empty string is what gets through.
+  //  Only the sidebar panels are lockable (types/viewer.d.ts LockablePanel); elsewhere 'readonly' reads as visible.
+  const Panel = ({ name, children }) => (panels?.[name] === 'readonly'
+    ? <div className="vp-readonly" inert="">{children}</div>
+    : children)
+  // Opening the file dialog goes through here from all three entry points (top bar, empty hint, object toolbar),
+  //  so features.filePicker cannot be honoured in two of them and forgotten in the third.
+  const openFilePicker = () => { if (feature('filePicker')) fileInputRef.current?.click() }
+  // `features` is the same contract for BEHAVIOUR that `panels` is for visibility: opt-out only, everything on by
+  //  default, an unknown key enabled. Two axes rather than one because "is this panel drawn" and "does this
+  //  component take over the page's keyboard" are different questions, and a host usually has an opinion on one
+  //  without having one on the other.
+  const feature = (name) => features?.[name] !== false
+  // Console output is module-level (log.js) rather than threaded through every factory — see the note there.
+  useEffect(() => { setLogging(feature('logs')) }, [features])   // eslint-disable-line react-hooks/exhaustive-deps
   // Read through refs: both are called from effects and from callbacks built in other modules, which capture the
   //  props of the render they were created in. The ref is always the latest one the host passed.
   const onEventRef = useRef(onEvent); onEventRef.current = onEvent
@@ -143,6 +166,8 @@ export default function Viewport({
   const [canvasMode, setCanvasMode] = useState('prepare')   // S2: 'prepare' (model+gizmo+painting) | 'preview' (toolpaths)
   const [dragOver, setDragOver] = useState(false)           // stage 26 R4: drag-and-drop highlight
   const fileInputRef = useRef(null)
+  const presetInputRef = useRef(null)     // its own picker: the model picker's accept list is model formats
+  const settingsForPresetRef = useRef(settings); settingsForPresetRef.current = settings
   // Stage 27 S4: filament (extruder) colors — applied to object meshes and the prime tower. Defaults to T1/T2.
   const initialColors = (Array.isArray(defaultExtruderColors) && defaultExtruderColors.length)
     ? defaultExtruderColors.slice(0, MAX_PAINT_EXTRUDERS) : DEFAULT_FILAMENT_COLORS.slice(0, 2)
@@ -213,6 +238,7 @@ export default function Viewport({
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
     canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, paintOverlayRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
+    contextMenu: feature('contextMenu'),
     // Dragging the tower box is how a position becomes chosen: it writes the same wipe_tower_x/y the card edits,
     //  so the two controls are one setting seen two ways.
     //  The drop lands in world coordinates and the setting is a bed coordinate, so the plate's origin comes back
@@ -331,6 +357,7 @@ export default function Viewport({
     paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
+    warmup: feature('warmup'), quiet: !feature('logs'),
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
@@ -348,7 +375,7 @@ export default function Viewport({
     onSlicedRef,
     apiRef, selectedPlateRef, plateCountRef, placeXRef, plateResultsRef, plateOffsetsRef, plateTpRef,
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
-    settings, canvasMode, downgradeOffer,
+    settings, canvasMode, downgradeOffer, onExport,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
@@ -402,7 +429,12 @@ export default function Viewport({
   //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
   //  must use the values in effect when they FINISH, not when the button was bound.
   const settingsRef = useRef(settings); settingsRef.current = settings
+  const { exportPrinterPreset, loadPresetFile, openPresetPicker } = makePresetActions({
+    settingsRef: settingsForPresetRef, setSettings, setError, setSliceNotice, onExport,
+    fileInputRef: presetInputRef,
+  })
   const { exportProject, exportSTL, exportSelectedProject, exportSelectedSTL } = makeExportActions({
+    onExport,
     apiRef, getWorker, settingsRef, plateCountRef, bedRef: kpRef, setError, setSliceNotice, setExporting,
   })
 
@@ -533,6 +565,7 @@ export default function Viewport({
   //  Bound to the component root (see the JSX), so it never reaches the host application's own Ctrl+Z. Matched on
   //  e.code for the same reason the other shortcuts are: a Korean layout reports 'ㅋ' for the Z key.
   function onShellKey(e) {
+    if (!feature('shortcuts')) return
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return
     const target = e.nativeEvent?.composedPath ? e.nativeEvent.composedPath()[0] : e.target
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
@@ -598,7 +631,7 @@ export default function Viewport({
 
   // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
   const OBJECT_TOOLS = objectTools({
-    add: () => fileInputRef.current?.click(),
+    add: openFilePicker,
     remove: deleteSelected,
     removeAll: deleteAllObjects,
     duplicate: duplicateSelected,
@@ -609,7 +642,10 @@ export default function Viewport({
 
   // ---- Keyboard shortcuts (upstream SPECS §4 + PrusaSlicer/Cura conventions) ----
   //  Which keys are live depends on Prepare/Preview. All are ignored while an input widget has focus.
-  keyRef.current = makeKeyHandler({
+  // features.shortcuts === false leaves keyRef null. The window listener in use_three_scene calls keyRef.current?.(e),
+  //  so nothing is matched and nothing is preventDefault'd — which is the point: these bindings are global while the
+  //  viewer is mounted, and Ctrl+C in particular would otherwise swallow a host page's own copy.
+  keyRef.current = !feature('shortcuts') ? null : makeKeyHandler({
     slicing,
     isPreview: () => canvasModeRef.current === 'preview',
     slice: onSlice, copy: copySelected, paste: pasteClipboard, remove: deleteSelected, duplicate: duplicateSelected,
@@ -687,10 +723,13 @@ export default function Viewport({
     <div className="app-shell" onKeyDown={onShellKey}>
       {/* Shared hidden file input */}
       <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={e => { recordHistory(); onFiles(e) }} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
+      <input ref={presetInputRef} type="file" accept={PRESET_ACCEPT}
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadPresetFile(f) }}
+        data-testid="preset-input" style={{ display: 'none' }} />
 
       {showPanel('topBar') && (
         <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
-          previewEnabled={layerCount > 0} onOpen={() => fileInputRef.current?.click()}
+          previewEnabled={layerCount > 0} onOpen={openFilePicker}
           onSaveProject={exportProject} onExportSTL={exportSTL} canSave={objects.length > 0} exporting={exporting}
           onUndo={() => travelHistory('undo')} onRedo={() => travelHistory('redo')}
           canUndo={historyDepth.undo > 0 && canvasMode === 'prepare'}
@@ -711,14 +750,14 @@ export default function Viewport({
               the 3D view count as "inside" it. */}
           <div className={(ok ? 'vp-canvas' : 'vp-canvas fail') + (dragOver ? ' drag-over' : '')} ref={mountRef}
             tabIndex={0} onPointerDown={() => mountRef.current?.focus({ preventScroll: true })}
-            onDrop={e => { recordHistory(); onDrop(e) }} onDragOver={onDragOver} onDragLeave={onDragLeave} data-testid="drop-zone">
+            {...(feature('drop') ? { onDrop: e => { recordHistory(); onDrop(e) }, onDragOver, onDragLeave } : {})} data-testid="drop-zone">
             {!ok && <div className="vp-fallback">⚠ {status}</div>}
             {ok && objects.length === 0 && canvasMode !== 'preview' && showPanel('emptyHint') && (
               <div className="empty-hint" data-testid="empty-hint">
                 <div className="eh-icon">📦</div>
                 <div className="eh-title">Drag in a file or pick one</div>
                 <div className="eh-sub">{EXT_LABEL}</div>
-                <button className="eh-btn" onClick={() => fileInputRef.current?.click()} data-testid="empty-pick" title={`Pick a ${EXT_LABEL} file (multiple allowed)`}>Choose file</button>
+                <button className="eh-btn" onClick={openFilePicker} data-testid="empty-pick" title={`Pick a ${EXT_LABEL} file (multiple allowed)`}>Choose file</button>
               </div>
             )}
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
@@ -728,7 +767,7 @@ export default function Viewport({
                 actions={{
                   duplicate: duplicateSelected, copy: copySelected, split: splitSelected,
                   placeOnBed: () => apiRef.current?.placeOnBed(), remove: deleteSelected,
-                  openFile: () => fileInputRef.current?.click(), paste: pasteClipboard,
+                  openFile: openFilePicker, paste: pasteClipboard,
                   zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
                   exportSelectedSTL, exportSelectedProject,
                 }} />
@@ -779,20 +818,27 @@ export default function Viewport({
 
         {/* S4 right sidebar */}
         {ok && showPanel('sidebar') && (
-          <aside className="sidebar">
+          <Panel name="sidebar"><aside className="sidebar">
             <div className="sidebar-scroll">
               {showPanel('printerCard') && (
-                <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
-                  settings={settings} setSettings={setSettings} motionPanel={motionPanel} />
+                <Panel name="printerCard">
+                  <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
+                    settings={settings} setSettings={setSettings} motionPanel={motionPanel}
+                    onExportPreset={exportPrinterPreset}
+                    onImportPreset={feature('filePicker') ? openPresetPicker : null} />
+                </Panel>
               )}
 
               {showPanel('filamentCard') && (
-                <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
-                  settings={settings} setSettings={setSettings} filamentPanel={filamentPanel}
-                  paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
+                <Panel name="filamentCard">
+                  <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
+                    settings={settings} setSettings={setSettings} filamentPanel={filamentPanel}
+                    paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
+                </Panel>
               )}
 
               {objects.length > 0 && showPanel('objectList') && (
+                <Panel name="objectList">
                 <ObjectList objects={objects} extruderColors={extruderColors}
                   selectedIds={selectedIds}
                   onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
@@ -808,14 +854,17 @@ export default function Viewport({
                   onSupportFilament={v => setSettings(s => ({ ...s, support_filament: v }))}
                   supportInterfaceFilament={supportInterfaceFilament}
                   onSupportInterfaceFilament={v => setSettings(s => ({ ...s, support_interface_filament: v }))} />
-              )}
+                </Panel>
+)}
 
               {/* A prime tower only exists with a second filament, so the card appears with one. */}
               {extruderColors.length > 1 && showPanel('towerCard') && (
+                <Panel name="towerCard">
                 <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
                   wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
                   towerStats={towerStats} selectedPlate={selectedPlate} plateCount={plateCount} />
-              )}
+                </Panel>
+)}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}
               {error && <div className="slice-err side-warn" data-testid="slice-err">{error}</div>}
@@ -823,22 +872,27 @@ export default function Viewport({
 
               {/* Preview controls (view type / slider / legend) */}
               {canvasMode === 'preview' && previewControls && showPanel('previewControls') && (
+                <Panel name="previewControls">
                 <section className="side-card">
                   <div className="sc-head">🎚 Preview</div>
                   {previewControls}
                 </section>
-              )}
+                </Panel>
+)}
 
               {/* (3) Process (settings panel) */}
               {showPanel('processCard') && (
+                <Panel name="processCard">
                 <section className="side-card process-card" data-testid="process-section">
                   <div className="sc-head">⚙ Process</div>
                   {processPanel}
                 </section>
-              )}
+                </Panel>
+)}
             </div>
 
             {showPanel('sliceBar') && (
+              <Panel name="sliceBar">
               <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
@@ -848,8 +902,9 @@ export default function Viewport({
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the bed`
                     + (bedOverText ? ` by ${bedOverText}` : '')
                   : ''} />
-            )}
-          </aside>
+              </Panel>
+)}
+          </aside></Panel>
         )}
       </div>
     </div>

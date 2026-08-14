@@ -1,3 +1,4 @@
+import { log } from './log.js'
 import * as THREE from 'three'
 import { settingRaw } from 'three-slicer/settings'
 import { buildSegmentData, roleRatios } from './toolpath_segments.js'
@@ -33,7 +34,7 @@ export function makeToolpathView(deps) {
     disposePlateToolpath(idx)
     if (!layers || !layers.length) return null
     const seg = buildSegmentData(layers, lineWidthRef.current)
-    if (import.meta.env?.DEV && seg.hasNaN) console.error('[toolpath] non-finite vertex data')   // dev regression detection
+    if (import.meta.env?.DEV && seg.hasNaN) log.error('[toolpath] non-finite vertex data')   // dev regression detection
     const ctl = makeToolpath(THREE, seg)
     const off = plateOffsetsRef.current[idx] || { offX: 0, offZ: 0 }
     const group = new THREE.Group()

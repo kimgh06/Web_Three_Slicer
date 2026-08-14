@@ -9,7 +9,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "dev": "npm run dev -w three-slicer-viewer",
-    "test": "node packages/wasm-core/test.mjs"
+    "test": "node packages/wasm-core/test.mjs && node packages/types/test_kernel_params.mjs && node packages/engine/test_client.mjs && node packages/viewer/test_viewer_docs.mjs && node packages/viewer/test_preset_file.mjs"
   },
   "overrides": {
     "react": "^18.3.1",

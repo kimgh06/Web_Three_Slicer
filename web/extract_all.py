@@ -705,6 +705,54 @@ def extract_toggles():
     out.update(tab)
     return out
 
+def extract_preset_keys(schema):
+    """Which option keys belong to which preset type — upstream's own answer, not ours.
+
+    printers.json carries the 21 columns the kernel reads, which is the right thing for a picker but far too
+    few to WRITE a machine preset another slicer will accept: upstream's Preset::printer_options() is ~231 keys.
+    The three lists are plain static initializers in Preset.cpp (plus the per-extruder set, which lives in
+    PrintConfig.cpp because it is derived from the config def), so they extract the same way everything else here
+    does. Reading them from the source rather than curating a list by hand is the point — a key upstream adds to a
+    preset type shows up on the next extraction instead of being missing from an exported file forever.
+    """
+    preset = read('src/libslic3r/Preset.cpp')
+    config = read('src/libslic3r/PrintConfig.cpp')
+
+    def static_list(src, name):
+        m = re.search(r'\b' + name + r'\s*(?:=\s*)?\{(.*?)\n\s*\};', src, re.S)
+        if not m:
+            raise SystemExit(f'extract_preset_keys: {name} not found — upstream layout changed')
+        return re.findall(r'"([a-z0-9_]+)"', m.group(1))
+
+    # Preset::printer_options() = printer + machine limits + the per-extruder keys, in that order.
+    printer = static_list(preset, 's_Preset_printer_options')
+    printer += static_list(preset, 's_Preset_machine_limits_options')
+    printer += static_list(config, 'm_extruder_option_keys')
+
+    # printer_options() appends three lists that already overlap, so dedup is part of reproducing it.
+    # Keys the config schema does not define are dropped: every consumer coerces values BY schema type, so a key
+    # with no type cannot be serialized or read back — carrying it would only move the failure downstream. The
+    # names are printed rather than swallowed, because a growing list here means the schema extractor is missing
+    # options the presets actually use.
+    def clean(keys, label):
+        seen, out, unknown = set(), [], []
+        for k in keys:
+            if k in seen:
+                continue
+            seen.add(k)
+            (out if k in schema else unknown).append(k)
+        if unknown:
+            print(f'  preset-keys[{label}]: dropped {len(unknown)} key(s) absent from config-schema: '
+                  + ', '.join(unknown))
+        return out
+
+    return {
+        'printer':  clean(printer, 'printer'),
+        'process':  clean(static_list(preset, 's_Preset_print_options'), 'process'),
+        'filament': clean(static_list(preset, 's_Preset_filament_options'), 'filament'),
+    }
+
+
 # ---------------------------------------------------------------- main
 if __name__ == '__main__':
     ui = extract_ui_tree()
@@ -724,6 +772,9 @@ if __name__ == '__main__':
     pr = extract_printers(sch)
     json.dump(pr, open(os.path.join(OUT, 'printers.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
     nprinters = sum(len(v) for v in pr['byVendor'].values())
+
+    pk = extract_preset_keys(sch)
+    json.dump(pk, open(os.path.join(OUT, 'preset-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
 
     # Emitted as a JS module, not JSON: this one is dynamically imported, and a dynamic JSON import needs
     #  `with { type: 'json' }` in Node while that same attribute makes browsers reject Vite's text/javascript

@@ -1,8 +1,7 @@
 // three-slicer — browser/WASM 3D-slicing SDK (reverse-engineered from OrcaSlicer).
-// Public API. Node-safe (imports only the pure-JS WASM factory; no JSON so it loads in plain Node ESM).
+// Public API. Node-safe (loads only the pure-JS WASM factory; no JSON so it loads in plain Node ESM).
 // Schema-driven helpers (deriveKernelParams etc.) live in the "three-slicer/settings" subpath because
 // they import JSON — use them in a bundler (vite) or with Node JSON import attributes.
-import createModule from './src/slicer_core.js'
 
 const u8 = (b) => (b instanceof Uint8Array ? b : new Uint8Array(b))
 
@@ -21,7 +20,10 @@ export const engineWorkerURL = () => new URL('./src/slicer.worker.js', import.me
 //  paintPrepare/paint/paintClear/overlay: manual support enforcer/blocker painting (TriangleSelector).
 //  heapSize(): current WASM heap bytes (peak, monotonic). module: escape hatch. dispose(): drop the module.
 export async function createSlicer() {
-  const M = await createModule()
+  // Loaded here rather than at module scope so the 3.5MB emscripten glue is a separate chunk: a host that imports
+  //  this module only for engineWorkerURL() — the recommended browser path, where the kernel runs in the worker —
+  //  used to pull the whole thing into its bundle for a function that returns a URL.
+  const M = await (await import('./src/slicer_core.js')).default()
   return {
     slice(stl, params, { onProgress, onLayer } = {}) {
       const p = typeof params === 'string' ? params : JSON.stringify(params || {})
@@ -35,7 +37,10 @@ export async function createSlicer() {
       return { enf: M.selector_painted_count(true), blk: M.selector_painted_count(false) }
     },
     paintClear() { M.selector_clear() },
-    overlay(enforcer) { return Array.from(M.selector_overlay(!!enforcer)) },
+    // Returned as the kernel's own Float32Array. It is already a detached copy (bindings.cpp to_f32 slices the
+    //  memory view), and the Array.from() this used to do cost 1.1ms of a measured 3.6ms stroke on a 40k-triangle
+    //  mesh — the same conversion the worker dropped for the same reason (slicer.worker.js, 'overlay').
+    overlay(enforcer) { return M.selector_overlay(!!enforcer) },
     heapSize() { return M.heap_size() },
     module: M,
     dispose() { /* emscripten module is GC'd when dropped; no explicit teardown required */ },
