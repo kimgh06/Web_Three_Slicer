@@ -1,8 +1,8 @@
 // "Save project as" / "Export as STL" — the write half of the 3mf project support (parse_3mf.js is the read half).
 // The kernel's painting only exists inside the worker's TriangleSelector, so a 3mf save has to ASK for it and wait:
 //  that is the one asynchronous step here, and it is why this is a module rather than two lines in the toolbar.
-import { log } from './log.js'
-import { write3MFProject, writeSTL } from './write_3mf.js'
+import { log } from '../core/log.js'
+import { write3MFProject, writeSTL } from '../core/write_3mf.js'
 
 // The kernel is not guaranteed to answer (an old build has no selector_export_paint binding, and a worker that is
 //  busy slicing replies late), so the wait is bounded. On timeout the save proceeds with whatever painting was

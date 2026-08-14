@@ -2,7 +2,7 @@
 //  outside [-bed/2, bed/2] on either axis, or taller than printable_height when the profile states one.
 //   Run: node packages/viewer/test_bed_bounds.mjs
 import assert from 'node:assert'
-import { bedOverflow, overflowText } from './src/bed_bounds.js'
+import { bedOverflow, overflowText } from './src/core/bed_bounds.js'
 
 const BED_W = 200, BED_D = 200, BED_H = 250
 const origin = { x: 0, z: 0 }

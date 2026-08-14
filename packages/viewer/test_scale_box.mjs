@@ -3,8 +3,8 @@
 //   node packages/viewer/test_scale_box.mjs
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { dragRatio, clampMeshScale } from './src/scale_box.js'
-import { makeKeyHandler } from './src/shortcut_keymap.js'
+import { dragRatio, clampMeshScale } from './src/scene/scale_box.js'
+import { makeKeyHandler } from './src/core/shortcut_keymap.js'
 
 const centre = { x: 100, y: 100 }
 const at = (x, y) => ({ x, y })

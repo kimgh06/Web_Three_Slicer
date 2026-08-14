@@ -10,9 +10,9 @@
 // because a bundle exists precisely to carry the three together.
 import { readPresetFile, writePresetFile, printerSettings, printerKeys,
          presetOptionKeys } from 'three-slicer/settings'
-import { writePrinterBundle, readPresetArchive, isPresetArchive } from './preset_bundle.js'
+import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../core/preset_bundle.js'
 import { download } from './export_actions.js'
-import { log } from './log.js'
+import { log } from '../core/log.js'
 
 const nameOf = (settings, key, fallback) => {
   const value = settings?.[key]

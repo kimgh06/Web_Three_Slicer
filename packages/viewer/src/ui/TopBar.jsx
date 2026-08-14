@@ -1,5 +1,5 @@
 import React from 'react'
-import { openIcon, saveIcon } from '../icons.js'
+import { openIcon, saveIcon } from '../core/icons.js'
 
 // S1 top bar: logo + open/save buttons, the Prepare|Preview tabs, and the undo/redo placeholders.
 // Saving mirrors upstream's File menu split: a .3mf is the PROJECT (geometry + settings + plates + painting), a

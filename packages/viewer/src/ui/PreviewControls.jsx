@@ -1,6 +1,6 @@
 import React from 'react'
-import { VIEW_TYPES } from '../toolpath_views.js'
-import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from '../toolpath_palette.js'
+import { VIEW_TYPES } from '../core/toolpath_views.js'
+import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from '../core/toolpath_palette.js'
 
 const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`
 

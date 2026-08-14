@@ -8,8 +8,8 @@ import * as THREE from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { AMFLoader } from 'three/examples/jsm/loaders/AMFLoader.js'
-import { parse3MFProject } from './parse_3mf.js'
-import { makeParse3mfWorker } from './make_worker.js'
+import { parse3MFProject } from '../core/parse_3mf.js'
+import { makeParse3mfWorker } from '../make_worker.js'
 
 // ---- 3MF parsing off the main thread -------------------------------------------------------------------------
 // A slicer project is the one import big enough to be felt: 52MB compressed / 315MB of XML / 3.8M triangles takes

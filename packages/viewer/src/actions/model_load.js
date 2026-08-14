@@ -1,7 +1,7 @@
-import { log } from './log.js'
+import { log } from '../core/log.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
-import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
-import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
+import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
+import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from '../core/plate_layout.js'
 
 // Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop.
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each

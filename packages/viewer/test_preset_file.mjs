@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { writePresetFile, readPresetFile, presetOptionKeys,
          printerSettings, printerKeys } from '../engine/src/settings.js'
-import { writePrinterBundle, readPresetArchive, isPresetArchive } from './src/preset_bundle.js'
+import { writePrinterBundle, readPresetArchive, isPresetArchive } from './src/core/preset_bundle.js'
 import { schema } from '../engine/src/data.js'
 
 const schemaHasNoDefault = (key) => schema[key]?.default === undefined
