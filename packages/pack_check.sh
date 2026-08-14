@@ -57,10 +57,14 @@ console.log('  node OK —', Object.keys(schema).length, 'keys,',
   Object.values(printersByVendor).reduce((n, m) => n + Object.keys(m).length, 0), 'printers loaded')
 EOF
 node run.mjs
-# Optional peers drop out silently -> check they were installed automatically.
-[ -d node_modules/three ] || { echo "FAIL: three was not auto-installed as a peer"; exit 1; }
-[ -d node_modules/react ] || { echo "FAIL: react was not auto-installed as a peer"; exit 1; }
-echo "OK: node consumption + peer auto-install"
+# The peers are declared optional, so npm must NOT pull them in for a headless consumer — and run.mjs above
+#  having just sliced proves the engine half needs neither. The previous assertion here was the opposite (that npm
+#  auto-installed them), which is what a non-optional peer does: it made every Node consumer of the engine download
+#  react, react-dom and three to import a function that returns G-code.
+for peer in three react react-dom; do
+  if [ -d "node_modules/$peer" ]; then echo "FAIL: $peer was installed for a headless consumer"; exit 1; fi
+done
+echo "OK: node consumption with no react/three installed"
 
 echo "== types (tsc --noEmit)"
 mkdir -p "$TMP/ts/src" && cd "$TMP/ts"
@@ -85,6 +89,20 @@ import { buildSegmentData, computeColors, VIEW_TYPES } from 'three-slicer/viewer
 import { loadModel, SUPPORTED_EXT, splitConnectedComponents } from 'three-slicer/viewer/loaders'
 import { schema, uiTree } from 'three-slicer/data'
 import rawSchema from 'three-slicer/data/config-schema.json'
+// Everything below this line is here because it is USED IN THE DOCUMENTATION. A README that shows an API the
+//  declarations do not carry compiles for nobody, and that is exactly how `only` (documented in viewer.d.ts as the
+//  way to build the motion panel) and the five printer helpers reached a release undeclared: the type gate never
+//  imported them. Adding a documented example here is cheaper than discovering it from a consumer's bug report.
+import type { SettingsPanelProps } from 'three-slicer/components'
+import {
+  printerSettings, printersByVendor, printerKeys, printerDefaultPreset, machineLimitKeys,
+  normalizeProjectSettings, serializeProjectSettings, processPresets,
+  writePresetFile, readPresetFile, presetFileText, presetOptionKeys,
+  type PresetType, type ReadPresetResult,
+} from 'three-slicer/settings'
+import { presetKeys } from 'three-slicer/data'
+import { createSlicerClient, type SlicerClient } from 'three-slicer/client'
+import type { SlicerRequest, SlicerResponse } from 'three-slicer/worker'
 
 // Do the generated key types actually narrow
 const s: SlicerSettings = { layer_height: 0.2, sparse_infill_pattern: 'gyroid', spiral_mode: false }
@@ -107,7 +125,54 @@ export async function main(buf: ArrayBuffer) {
   const pages = uiTree[Object.keys(uiTree)[0]][0].groups[0].options.length
   const materials: FilamentPreset[] = (await filamentPresets()).listFor('Bambu Lab X1 Carbon 0.4 nozzle')
   const material: string = materials[0].type
-  return { n, dis, name, ext: SUPPORTED_EXT[0], cont: c.cont, pages, keys: Object.keys(schema).length, raw: Object.keys(rawSchema).length }
+
+  // --- the documented examples, type-checked ---------------------------------
+  // The motion-limits panel exactly as types/viewer.d.ts tells a host to build it.
+  const motionPanel: SettingsPanelProps = {
+    settings: s, setSettings: () => {}, embedded: true,
+    only: { builder: 'TabPrinter::build_kinematics_page' },
+  }
+  // Picking a printer, then applying a preset the way the README says to: clear the keys the previous one set
+  //  before merging the next, or the old preset's leftovers survive the switch.
+  const profile: string = Object.keys(Object.values(printersByVendor)[0])[0]
+  const machine: SlicerSettings | null = printerSettings(profile)
+  const recommended: string = printerDefaultPreset(profile)
+  const processes = await processPresets()
+  const applyPreset = (base: SlicerSettings, preset: SlicerSettings | null, keys: string[]): SlicerSettings => {
+    const next: SlicerSettings = { ...base }
+    for (const key of keys) delete next[key as keyof SlicerSettings]
+    return Object.assign(next, preset)
+  }
+  const withPreset = applyPreset(applyPreset(s, machine, printerKeys),
+                                 processes.settingsFor(recommended), processes.keys)
+  // A 3mf project's all-strings config, in and back out again.
+  const project = normalizeProjectSettings({ layer_height: '0.2', spiral_mode: '0', printable_area: '0x0' })
+  const roundTrip: Record<string, string | string[]> = serializeProjectSettings(project.settings)
+
+  // The worker client, as the README shows it. A slice request is the one message with no `cmd` and a string
+  //  `params`; the union has to keep admitting exactly that.
+  const client: SlicerClient = createSlicerClient(undefined as unknown as Worker)
+  const sliceRequest: SlicerRequest = { stl: buf, params: JSON.stringify(deriveKernelParams(s)) }
+  const paintRequest: SlicerRequest = { cmd: 'paint', facet: 0, hx: 0, hy: 0, hz: 0, cx: 0, cy: 0, cz: 1, radius: 2, state: 3 }
+  const doneReply: SlicerResponse = { type: 'done', result: { stats: { layers: 1 } as never } }
+  const canCancel: boolean = client.cancel()
+
+  // Preset files, as the README shows them: write a machine preset, read it back, follow `inherits` through the
+  //  shipped catalog. The 4 exports and `presetKeys` reached a release undeclared once already because nothing
+  //  here imported them.
+  const machineType: PresetType = 'machine'
+  const keys: string[] = presetOptionKeys(machineType)
+  const preset: Record<string, unknown> = writePresetFile(machine, { type: machineType, name: 'My printer' })
+  const text: string = presetFileText(machine, { type: machineType, name: 'My printer', complete: false })
+  const loaded: ReadPresetResult = readPresetFile(preset, { resolveParent: (name) => printerSettings(name) })
+  const parentMissing: string | null = loaded.missingParent
+  const keyLists: number = presetKeys.printer.length + presetKeys.process.length + presetKeys.filament.length
+
+  return { n, dis, name, ext: SUPPORTED_EXT[0], cont: c.cont, pages, keys: Object.keys(schema).length,
+           raw: Object.keys(rawSchema).length, material, motionPanel, withPreset,
+           applied: project.applied, roundTrip, limits: machineLimitKeys.length,
+           sliceRequest, paintRequest, doneReply, canCancel,
+           presetOptions: keys.length, presetName: preset.name, presetText: text.length, parentMissing, keyLists }
 }
 EOF
 npm i --no-audit --no-fund "${T[@]}" >/dev/null

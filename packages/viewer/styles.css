@@ -329,3 +329,8 @@
   border-radius: 4px; padding: 2px 3px; font-size: 11px; }
 .sc-num input { width: 62px; background: #1a2027; border: 1px solid #2c353d; color: #cdd6dd; border-radius: 4px;
   padding: 2px 5px; font-size: 12px; margin-left: 4px; }
+
+/* A panel shown but not editable (panels={{ printerCard: 'readonly' }}). `inert` on the wrapper already blocks
+   pointer, keyboard and focus — this only has to make that legible, or the card reads as broken rather than locked. */
+.vp-readonly { opacity: .62; cursor: default; }
+.vp-readonly * { cursor: default !important; }

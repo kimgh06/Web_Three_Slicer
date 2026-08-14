@@ -11,17 +11,24 @@
 // Automatic multithreaded kernel selection: with crossOriginIsolated (sites serving COOP/COEP) it uses mt (-pthread, PASS1
 //  layers in parallel — measured 2.2x), otherwise st (zero-config). The dynamic import makes bundlers emit both as chunks,
 //  but only one is loaded at runtime. On mt init failure (SAB blocked, …) it falls back to st.
+// Which kernel loaded is worth saying once — mt vs st is a 2x difference and the fallback is silent otherwise.
+//  A host embedding the viewer in its own product can switch it off (`<Viewport features={{ logs: false }} />`,
+//  which sets `quiet` on the messages it sends): this is a separate module instance from the viewer's log.js and
+//  cannot read a flag set over there.
+let quiet = false
+const say = (level, ...args) => { if (!quiet) console[level](...args) }
+
 const loadCore = async () => {
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
   if (isolated) {
     try {
       const M = await (await import('./slicer_core.mt.js')).default()
-      console.info('[slicer.worker] core: mt (threads)')
+      say('info', '[slicer.worker] core: mt (threads)')
       return M
-    } catch (e) { console.warn('[slicer.worker] mt load failed — falling back to st:', e) }
+    } catch (e) { say('warn', '[slicer.worker] mt load failed — falling back to st:', e) }
   }
   const M = await (await import('./slicer_core.js')).default()
-  console.info('[slicer.worker] core: st')
+  say('info', '[slicer.worker] core: st')
   return M
 }
 
@@ -108,6 +115,9 @@ const paintedReply = (Module, message, paintedState) => {
 
 self.onmessage = async (e) => {
   const d = e.data
+  // Read before the kernel loads: loadCore() below is what prints, so a `quiet` arriving with the first message
+  //  (the warmup) has to take effect before that call, not after it.
+  if (d.quiet !== undefined) quiet = !!d.quiet
   try {
     // Asking for the painting must not be what LOADS the kernel. Every other command needs it, but if this worker
     //  has never loaded it then selector_prepare has never run either, so there is no painting to report — and

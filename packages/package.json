@@ -1,6 +1,6 @@
 {
   "name": "three-slicer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), React viewer with GPU toolpath preview, and schema-driven settings UI.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -20,6 +20,10 @@
     "./worker": {
       "types": "./types/worker.d.ts",
       "default": "./engine/src/slicer.worker.js"
+    },
+    "./client": {
+      "types": "./types/client.d.ts",
+      "default": "./engine/src/client.js"
     },
     "./wasm": {
       "types": "./types/wasm.d.ts",
@@ -56,16 +60,23 @@
     "./data/*": {
       "types": "./types/data/*.d.ts",
       "default": "./data/*"
-    }
+    },
+    "./package.json": "./package.json"
   },
+  "sideEffects": false,
   "scripts": {
-    "build": "node types/gen_settings_types.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js",
+    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js",
     "check": "bash pack_check.sh"
   },
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18",
     "three": "^0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true },
+    "three": { "optional": true }
   },
   "devDependencies": {
     "typescript": "^5.6.0",
@@ -75,17 +86,15 @@
     "engine",
     "!engine/**/.omc",
     "types",
+    "!**/test_*.mjs",
+    "!types/gen_*.mjs",
     "components/dist",
     "viewer/dist",
     "viewer/styles.css",
     "components/styles.css",
-    "data/config-schema.json",
-    "data/ui-tree.json",
-    "data/toggle-rules.json",
-    "data/invalidation-map.json",
-    "data/printers.json",
-    "data/processes.js",
-    "data/filaments.js",
+    "data",
+    "!data/config-schema-builddump.json",
+    "!data/**/.omc",
     "README.md",
     "LICENSE.txt"
   ],

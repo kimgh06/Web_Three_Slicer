@@ -1,3 +1,4 @@
+import { log } from './log.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from './model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
@@ -176,7 +177,7 @@ export function makeModelLoad(deps) {
         // Each file carries its own project; applying per file means dropping two 3mfs in at once behaves the way
         //  loading them one after the other does, rather than silently keeping only the last one's presets.
         if (objs[0]?.project) applyProject(objs[0].project, loaded)
-        console.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
+        log.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
       } catch (err) { setError(`Failed to load ${f.name}: ${(err && err.message) || err}`) }
     }
     setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false })))

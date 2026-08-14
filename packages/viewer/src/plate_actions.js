@@ -1,7 +1,9 @@
+import { log } from './log.js'
 import { deriveKernelParams } from 'three-slicer/settings'
 import { roleRatios } from './toolpath_segments.js'
 import { MAX_PLATES } from './plate_layout.js'
 import { statsFromKernel } from './use_slicer.js'
+import { download } from './export_actions.js'
 
 // Per-plate slicing/caching/export (stage 29-2) + the plate tabs (add/delete/select).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -10,7 +12,7 @@ export function makePlateActions(deps) {
   const {
     apiRef, selectedPlateRef, plateCountRef, placeXRef, plateResultsRef, plateOffsetsRef, plateTpRef,
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
-    settings, canvasMode, downgradeOffer,
+    settings, canvasMode, downgradeOffer, onExport,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
@@ -52,7 +54,8 @@ export function makePlateActions(deps) {
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
   }
-  function downloadGcode(gcode, name) { const url = URL.createObjectURL(new Blob([gcode], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = name; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(url) }, 4000) }
+  // Shares the host's export hook with the 3mf/STL writers — a host that takes one save should take all of them.
+  function downloadGcode(gcode, name) { download(gcode, name, 'text/plain', onExport) }
   const _sleep = (ms) => new Promise(r => setTimeout(r, ms))
   // plateResultsRef is a ref, so the UI does not refresh on its own — mirror the count into state wherever it changes.
   function refreshSlicedCount() {
@@ -119,13 +122,13 @@ export function makePlateActions(deps) {
       const __tm0 = performance.now()   // [vp-prof] preprocessing timing (temporary)
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
-      console.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
+      log.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
       if (idx0 === selectedPlateRef.current) syncPaintSelector?.(merged)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
         const { r, economy, classicWalls, params } = await runSlice(merged)
-        if (r?.stats) console.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
+        if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
         setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
         if (economy) setSliceNotice('Memory pressure — finished in economy mode (no preview, G-code can still be downloaded)')

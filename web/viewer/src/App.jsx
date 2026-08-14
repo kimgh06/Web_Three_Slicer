@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import Viewport from 'three-slicer/viewer'
 import SettingsPanel from 'three-slicer/components'
 import Landing from './Landing.jsx'
+import TestBed from './TestBed.jsx'
 
 // The slicer screen. Viewport owns the desktop-style shell (top bar + left gizmo rail + center viewport
 // + right sidebar) and the process section embeds SettingsPanel through processPanel, so both sides
@@ -30,7 +31,11 @@ function Prepare() {
 // The landing page (/) is kept separate from the slicer (/slice). The landing page lives outside the 3D
 // shell so it renders without initializing three.js/WASM — someone who only came to read about it
 // should not load the kernel.
+// /testbed drives the embedding surface (panels, features, onEvent, onExport, gcode-only) from outside the
+// component, with the configuration in the URL. /slice cannot do that job: it is a host that already made one set
+// of choices, which is exactly what a test bed has to be able to vary.
 export const routes = [
   { path: '/', element: <Landing /> },
   { path: '/slice', element: <Prepare /> },
+  { path: '/testbed', element: <TestBed /> },
 ]

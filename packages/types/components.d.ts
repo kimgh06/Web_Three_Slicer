@@ -13,6 +13,16 @@ export interface SettingsPanelProps {
   embedded?: boolean
   /** Replace schema-driven widgets per key (e.g. `{ printable_area: MyBedEditor }`) */
   customWidgets?: Record<string, React.ComponentType<any>>
+  /**
+   * Pins the panel to one builder (optionally one page) and drops the search/group/page/mode chrome, so the form
+   * can be folded into another card. This is how `<Viewport/>`'s `motionPanel` slot is meant to be filled:
+   *
+   * ```jsx
+   * <SettingsPanel settings={settings} setSettings={setSettings} embedded
+   *                only={{ builder: 'TabPrinter::build_kinematics_page' }} />
+   * ```
+   */
+  only?: { builder: string; page?: string }
 }
 
 declare const SettingsPanel: React.FC<SettingsPanelProps>

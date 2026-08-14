@@ -22,6 +22,43 @@ const KERNEL_PATTERNS = ['rectilinear', 'grid', 'triangles', 'zigzag', 'gyroid',
   'honeycomb', '3dhoneycomb', 'crosshatch', 'concentric']
 const KERNEL_SEAMS = ['nearest', 'aligned', 'back', 'random']
 
+// ---- Pass-through kernel parameters -----------------------------------------------------------------------
+// The kernel reads 159 parameters (see the reference table in engine/README.md, generated from its own reader).
+//  These are the ones whose schema key carries the SAME name, so the mapping is the identity and the only real
+//  decision is WHEN to send them. They are sent only when the settings map actually holds the key — never filled
+//  in from the schema default — because the two defaults disagree for several of them:
+//  independent_support_layer_height is true in the schema and false in the kernel, printable_height is 100 there
+//  and 250 here. Filling one in would silently reslice every existing caller's model. This is the same omission
+//  rule the per-feature widths, the support tools and the prime tower keys already follow, and it is what keeps
+//  deriveKernelParams({}) producing exactly the parameter set it produced before these keys were mapped.
+const PASSTHROUGH_NUM = [
+  // Real (organic) tree support shape. Upstream keeps an _organic spelling and a suffix-less one for most of
+  //  these, and the kernel accepts both — preferring _organic — so both are passed as written rather than
+  //  reconciled here. Before this, none of the organic tree support could be tuned from a settings map at all.
+  'tree_support_branch_angle', 'tree_support_branch_angle_organic',
+  'tree_support_branch_diameter', 'tree_support_branch_diameter_organic',
+  'tree_support_branch_distance', 'tree_support_branch_distance_organic',
+  'tree_support_branch_diameter_angle', 'tree_support_angle_slow', 'tree_support_tip_diameter',
+  'tree_support_top_rate', 'tree_support_wall_count',
+  'support_object_first_layer_gap',
+  // The tree support's build-volume ceiling. Distinct from bed_height above — that one is the kernel's own
+  //  off-the-bed check — but both come from this single schema key, because upstream has one option for both jobs.
+  'printable_height',
+  // Upstream's *_filament_id family: a 1-based filament index per feature, 0 meaning "whatever tool the region
+  //  already prints with". slice_mm.cpp honours the wall and sparse-infill ids and reports the rest in the G-code
+  //  rather than silently dropping them.
+  'outer_wall_filament_id', 'inner_wall_filament_id', 'sparse_infill_filament_id',
+  'top_surface_filament_id', 'bottom_surface_filament_id', 'internal_solid_filament_id',
+]
+const PASSTHROUGH_BOOL = ['independent_support_layer_height']
+// Per-filament vectors, one entry per filament, passed positionally like every other per-extruder array.
+//  filament_map is which physical extruder each filament sits in; density and cost turn extruded millimetres into
+//  the grams and currency the G-code footer reports.
+const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost']
+// Material identity. The kernel needs the type for the two decisions upstream makes by material name (PETG's
+//  extra unretract, TPU on the first layer) and the settings id for the footer.
+const PASSTHROUGH_STR_VECTOR = ['filament_type', 'filament_settings_id']
+
 // Machine limits (the "Motion ability" printer page) -> kernel time-estimate parameters.
 //  Declarative on purpose: the kernel collapses X/Y into one axis, so the mapping cannot be a plain pass-through,
 //  but adding a limit stays a data row instead of code. The fallback is the kernel's own default, so an unedited
@@ -353,6 +390,38 @@ export function deriveKernelParams(settings, opts) {
     if (prime > 0) towerSettings.prime_volume = prime
   }
 
+  // Pass-through parameters (see PASSTHROUGH_* above). `present` reads the settings MAP, not settingRaw, because
+  //  settingRaw's schema fallback is exactly what must not happen here — an unedited key has to stay absent.
+  const passthrough = {}
+  {
+    const present = (key) => settings != null && key in settings && settings[key] != null && settings[key] !== ''
+    for (const key of PASSTHROUGH_NUM) {
+      if (!present(key)) continue
+      const value = Number(S(key))
+      if (Number.isFinite(value)) passthrough[key] = value
+    }
+    for (const key of PASSTHROUGH_BOOL) if (present(key)) passthrough[key] = bool(key, false)
+    for (const key of PASSTHROUGH_NUM_VECTOR) {
+      if (!present(key)) continue
+      const raw = settings[key]
+      passthrough[key] = (Array.isArray(raw) ? raw : [raw]).map(entry => { const n = Number(entry); return Number.isFinite(n) ? n : 0 })
+    }
+    for (const key of PASSTHROUGH_STR_VECTOR) {
+      if (!present(key)) continue
+      const raw = settings[key]
+      passthrough[key] = (Array.isArray(raw) ? raw : [raw]).map(entry => String(entry ?? ''))
+    }
+    // support_line_width is coFloatOrPercent, but the kernel reads it with the plain number reader rather than the
+    //  percent-aware jwidth_raw the per-feature widths get. A "120%" would reach strtod as a quoted string and
+    //  parse to 0 == auto — the setting silently ignored. Resolved here against the nozzle, which is the same
+    //  thing jwidth_raw does for the widths that do get the percent-aware reader.
+    if (present('support_line_width')) {
+      const text = String(settingScalar(settings, 'support_line_width')).trim()
+      const width = text.endsWith('%') ? (parseFloat(text) / 100) * num('nozzle_diameter', 0.4) : Number(text)
+      if (Number.isFinite(width) && width > 0) passthrough.support_line_width = width
+    }
+  }
+
   const perExtruder = {}
   for (const [param, key, scalar] of [
     ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature', 200)],
@@ -374,6 +443,7 @@ export function deriveKernelParams(settings, opts) {
   return {
     ...widths,
     ...machine,
+    ...passthrough,     // present only for keys the settings map actually holds (see PASSTHROUGH_* above)
     layer_height: num('layer_height', 0.2),
     first_layer_height: num('initial_layer_print_height', 0.2),
     line_width,
@@ -463,3 +533,8 @@ export function deriveKernelParams(settings, opts) {
     // support_density has no matching schema key, so the kernel default (0.15) is used; scarf_length likewise uses the kernel default (10mm)
   }
 }
+
+// ---- Preset files (the .json OrcaSlicer imports/exports) ----------------------------------------------------
+// Re-exported here rather than given their own subpath: they are settings-map transforms like the 3mf project
+//  codecs above, and a consumer that has one hand on `settings` should not need a second import path for them.
+export { writePresetFile, readPresetFile, presetFileText, presetOptionKeys } from './preset_file.js'

@@ -21,8 +21,32 @@ export interface ViewportProps {
   /**
    * Per-panel visibility. Every panel is visible unless its key is explicitly `false`, so a host only opts out —
    * and a panel added in a later version does not disappear for hosts that listed the ones they wanted.
+   *
+   * A {@link LockablePanel} also accepts `'readonly'`: the panel is drawn but nothing inside it can be clicked,
+   * typed into or tabbed to — including any node the host passed into it. That is the shape a host wants when it
+   * presets the printer, process and filament itself and does not want the user changing them.
+   *
+   * Note what it locks: the UI path, not the value. `settings` is still the host's own prop, and other paths
+   * inside the viewer still write it — importing a 3mf project applies that project's settings either way.
    */
-  panels?: Partial<Record<ViewportPanel, boolean>>
+  panels?: Partial<Record<ViewportPanel, boolean>> & Partial<Record<LockablePanel, boolean | 'readonly'>>
+  /**
+   * Behaviour switches, following the same opt-out rule as {@link ViewportProps.panels}: everything is on unless
+   * its key is explicitly `false`. These are the things the component does *outside* its own box — take the page's
+   * keyboard, load the WASM kernel, write to the console — which a host embedding it in a larger app may already
+   * be doing itself. See {@link ViewportFeature}.
+   */
+  features?: Partial<Record<ViewportFeature, boolean>>
+  /**
+   * Intercepts every file the viewer would otherwise hand to the browser as a download — the 3mf project, the STL,
+   * and each plate's G-code. Return anything truthy to say it is handled and suppress the download; return nothing
+   * to let it proceed as well. This is the only way in: the save buttons live inside the component.
+   *
+   * ```jsx
+   * <Viewport onExport={(blob, filename) => { upload(blob, filename); return true }} />
+   * ```
+   */
+  onExport?: (file: Blob, filename: string) => boolean | void
   /**
    * G-code text to render instead of a slice result. Parsed into the same layer stream the kernel produces and
    * shown on the selected plate; the kernel is never started. While it is set, auto re-slice leaves that plate alone.
@@ -41,10 +65,42 @@ export interface ViewportProps {
   onSliced?: (result: { plate: number; stats: Record<string, unknown>; gcode: string }) => void
 }
 
+/**
+ * Behaviour keys accepted by {@link ViewportProps.features}. All default to enabled.
+ *
+ * - `shortcuts` — the keyboard bindings. They are installed on `window`, so while the viewer is mounted they fire
+ *   wherever focus is (except inside inputs) and `Ctrl+C` in particular preventDefaults. Turn them off when the
+ *   host page has its own.
+ * - `warmup` — loading the WASM kernel on mount, ahead of the first slice. Off, nothing is downloaded or compiled
+ *   until something actually slices — which for a `gcode`-only viewer is never.
+ * - `drop` — drag and drop onto the canvas.
+ * - `filePicker` — the file dialog, from every button that opens it.
+ * - `contextMenu` — the right-click menu. Note that the browser's own menu stays suppressed over the canvas either
+ *   way: OrbitControls preventDefaults `contextmenu` itself.
+ * - `logs` — console diagnostics, from the component and from the slice worker.
+ */
+export type ViewportFeature = 'shortcuts' | 'warmup' | 'drop' | 'filePicker' | 'contextMenu' | 'logs'
+
+/**
+ * The panels that accept `'readonly'` as well as `true`/`false` — the right column and the cards in it. Everything
+ * else takes a boolean only: locking the gizmo rail or the plate tabs is what `features` and `panels: false` are
+ * for, and pretending otherwise would mean a `'readonly'` that silently does nothing on half the keys.
+ *
+ * `sidebar: 'readonly'` locks the whole column in one go, so the per-card keys are for mixing — a locked printer
+ * card above a live object list, say.
+ */
+export type LockablePanel =
+  | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'towerCard'
+  | 'previewControls' | 'processCard' | 'sliceBar'
+
 /** Panel keys accepted by {@link ViewportProps.panels}. `sidebar: false` hides the whole right column at once. */
 export type ViewportPanel =
   | 'topBar' | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
   | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'previewControls' | 'processCard' | 'sliceBar'
+  /** The over-the-bed warning, shown in Prepare when something leaves the printable area. */
+  | 'bedWarn'
+  /** The prime tower card. Only rendered anyway once a second filament exists. */
+  | 'towerCard'
 
 /** Value changes reported through {@link ViewportProps.onEvent}. Not fired for the initial values. */
 export type ViewportEvent =

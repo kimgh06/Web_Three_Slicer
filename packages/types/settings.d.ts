@@ -1,6 +1,7 @@
 // three-slicer/settings
 import type { SlicerSettings, SettingKey, Point } from './settings-keys.d.ts'
-export type { SlicerSettings, SettingKey, Point }
+import type { PrinterEntry } from './data/printers.json.d.ts'
+export type { SlicerSettings, SettingKey, Point, PrinterEntry }
 
 /** The config-schema default value (undefined for unknown keys) */
 export function schemaDefault(key: string): unknown
@@ -36,6 +37,86 @@ export function normalizeProjectSettings(raw: Record<string, unknown> | null | u
  * reads what it expects. Keys the config schema does not define are dropped.
  */
 export function serializeProjectSettings(settings: SlicerSettings | null | undefined): Record<string, string | string[]>
+
+// ---- Preset files -----------------------------------------------------------
+// The `.json` OrcaSlicer's "Config files" dialog imports and its "Export preset" writes. One file, one preset,
+// one type. The value encoding is the same all-strings shape `project_settings.config` uses — same writer
+// upstream (ConfigBase::save_to_json) — so these reuse the coercion above rather than repeating it.
+
+/** Upstream's own `type` field: machine = printer, process = print settings, filament = material. */
+export type PresetType = 'machine' | 'process' | 'filament'
+
+/** The option keys that belong in a preset of this type, from upstream's `Preset::printer_options()` and friends. */
+export function presetOptionKeys(type: PresetType): string[]
+
+export interface WritePresetOptions {
+  /** Defaults to `'machine'`. */
+  type?: PresetType
+  /** Goes in the file's `name` field, and is what an importer shows. Defaults to `'Custom'`. */
+  name?: string
+  /**
+   * `true` (the default) writes every option of that type, filling unset ones from the config-schema default, so
+   * the file stands on its own. `false` writes only what the settings map holds — a diff-shaped file, readable
+   * only next to whatever it was derived from.
+   */
+  complete?: boolean
+  version?: string
+}
+
+/**
+ * A settings map -> the object a preset `.json` holds. Written **without `inherits`**: upstream saves a derived
+ * preset as the diff against its parent, which only means something beside the vendor database it came from.
+ */
+export function writePresetFile(settings: SlicerSettings | null | undefined, options?: WritePresetOptions): Record<string, unknown>
+
+/** The same, already stringified — what an export actually writes to disk. */
+export function presetFileText(settings: SlicerSettings | null | undefined, options?: WritePresetOptions): string
+
+export interface ReadPresetResult {
+  /** The parent's values with the file's own on top, since the file is the diff. */
+  settings: SlicerSettings
+  type: PresetType
+  name: string
+  /** The parent named by the file, or `null`. */
+  inherits: string | null
+  /**
+   * Set to the parent's name when it was named but could not be resolved. The file's own values are still
+   * applied — a vendor preset without its parent still carries most of itself, and the caller decides whether
+   * that is good enough. Watch for it: the Bambu X1C machine file never states its own bed, so read alone it
+   * yields a printer with no `printable_area` at all.
+   */
+  missingParent: string | null
+  applied: number
+  skipped: string[]
+}
+
+/**
+ * A parsed preset `.json` -> a settings map. Pass `resolveParent` to follow `inherits`; `printerSettings` covers
+ * the machine case for the keys this package carries.
+ */
+export function readPresetFile(raw: Record<string, unknown> | null | undefined,
+  options?: { resolveParent?: (name: string, type: PresetType) => SlicerSettings | null }): ReadPresetResult
+
+// ---- Printer profiles -------------------------------------------------------
+// printers.json is column-oriented; these hide that layout so no consumer decodes it by hand.
+
+/**
+ * Every option key a printer profile can set. Delete these from the settings map before applying a different
+ * printer — a profile only carries the keys it sets, so without the clear the previous machine's values survive.
+ */
+export const printerKeys: string[]
+
+/** Vendor -> profile name -> entry, straight from the data. For building a picker. */
+export const printersByVendor: Record<string, Record<string, PrinterEntry>>
+
+/** The settings a printer profile applies, ready to merge. `null` when the name is unknown. */
+export function printerSettings(profileName: string): SlicerSettings | null
+
+/** The vendor's recommended process preset for that printer, or `''` when the profile names none. */
+export function printerDefaultPreset(profileName: string): string
+
+/** The schema keys the kernel's machine limits are read from — for UI that shows which ones are in play. */
+export const machineLimitKeys: string[]
 
 // ---- Lazily loaded presets --------------------------------------------------
 // Both facades hide the column layout of the artifact they wrap; the promise is created once and reused.
