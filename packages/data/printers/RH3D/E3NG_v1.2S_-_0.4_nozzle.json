@@ -1,0 +1,81 @@
+{
+ "type": "machine",
+ "name": "E3NG v1.2S - 0.4 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "default_print_profile": "0.20mm Standard @E3NG v1.2S",
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "140",
+ "extruder_clearance_height_to_rod": "36",
+ "extruder_clearance_radius": "65",
+ "gcode_flavor": "klipper",
+ "machine_max_acceleration_e": [
+  "7500",
+  "7500"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_travel": [
+  "10000",
+  "10000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_z": [
+  "500",
+  "500"
+ ],
+ "machine_max_speed_e": [
+  "25",
+  "25"
+ ],
+ "machine_max_speed_x": [
+  "400",
+  "400"
+ ],
+ "machine_max_speed_y": [
+  "400",
+  "400"
+ ],
+ "machine_max_speed_z": [
+  "12",
+  "12"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "printable_area": [
+  "0x0",
+  "232x0",
+  "232x232",
+  "0x232"
+ ],
+ "printable_height": "245",
+ "printer_model": "E3NG v1.2S",
+ "printer_notes": [
+  "Design by RH3D"
+ ],
+ "printer_variant": "0.4",
+ "retract_before_wipe": "80%",
+ "retract_length_toolchange": "0",
+ "retract_lift_below": "240",
+ "retraction_minimum_travel": "1.5",
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "travel_slope": "1"
+}

@@ -1,0 +1,139 @@
+{
+ "type": "machine",
+ "name": "Z-Bolt S400 0.4 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "default_filament_profile": [
+  "Generic PLA @Z-Bolt 0.4 nozzle"
+ ],
+ "default_print_profile": "0.20mm Standard @Z-Bolt S400",
+ "deretraction_speed": [
+  "30"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "200",
+ "extruder_clearance_height_to_rod": "70",
+ "extruder_clearance_radius": "65",
+ "extruder_colour": [
+  "#018001"
+ ],
+ "gcode_flavor": "klipper",
+ "machine_end_gcode": "END_PRINT T_BED=[bed_temperature] T_CHAMBER=[chamber_temperature] COOLDOWN_TIME=120",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_travel": [
+  "9000",
+  "9000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_z": [
+  "50",
+  "50"
+ ],
+ "machine_max_jerk_e": [
+  "2.5",
+  "2.5"
+ ],
+ "machine_max_jerk_x": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_y": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_z": [
+  "3",
+  "3"
+ ],
+ "machine_max_speed_e": [
+  "30",
+  "30"
+ ],
+ "machine_max_speed_x": [
+  "500",
+  "200"
+ ],
+ "machine_max_speed_y": [
+  "500",
+  "200"
+ ],
+ "machine_max_speed_z": [
+  "20",
+  "20"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "PAUSE",
+ "machine_start_gcode": "START_PRINT T_BED=[bed_temperature_initial_layer] T_EXTRUDER=[nozzle_temperature_initial_layer] T_CHAMBER=[chamber_temperature]",
+ "manual_filament_change": "0",
+ "max_layer_height": [
+  "0.28"
+ ],
+ "min_layer_height": [
+  "0.08"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_type": "hardened_steel",
+ "printable_area": [
+  "0x0",
+  "400x0",
+  "400x400",
+  "0x400"
+ ],
+ "printable_height": "700",
+ "printer_model": "Z-Bolt S400",
+ "printer_structure": "corexy",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "0%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retraction_length": [
+  "0.6"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "30"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "0",
+ "support_chamber_temp_control": "1",
+ "z_hop": [
+  "0.4"
+ ],
+ "z_hop_types": "Normal Lift"
+}

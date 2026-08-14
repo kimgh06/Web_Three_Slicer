@@ -1,0 +1,80 @@
+{
+ "type": "machine",
+ "name": "re3D GigabotX 2 XLT 0.8 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\nG92 E0\n",
+ "change_filament_gcode": "M600",
+ "default_filament_profile": [
+  "re3D Greengate rPETG @0.8 nozzle"
+ ],
+ "default_print_profile": "0.6 Standard",
+ "deretraction_speed": [
+  "30"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "enable_filament_ramming": "0",
+ "gcode_flavor": "klipper",
+ "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
+ "machine_end_gcode": "M104 S0 T0\nM104 S0 T1\nM104 S0 T2\nM140 S0\n\nG28 X Y\nM18\nM107\n",
+ "machine_pause_gcode": "PAUSE",
+ "machine_start_gcode": "M220 S100\nM221 S100\nG28\nG92 E0\nG1 Z0.3 F200\n",
+ "max_layer_height": [
+  "0.6"
+ ],
+ "min_layer_height": [
+  "0.3"
+ ],
+ "nozzle_diameter": [
+  "0.8"
+ ],
+ "nozzle_type": "undefine",
+ "printable_area": [
+  "0x0",
+  "552x0",
+  "552x740",
+  "0x740"
+ ],
+ "printable_height": "470",
+ "printer_model": "re3D GigabotX 2 XLT",
+ "printer_technology": "FFF",
+ "printer_variant": "0.8",
+ "purge_in_prime_tower": "0",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "0"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "0"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "40"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "0",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0"
+ ],
+ "z_hop_types": "Normal Lift"
+}

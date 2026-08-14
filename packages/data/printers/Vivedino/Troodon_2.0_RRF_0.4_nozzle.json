@@ -1,0 +1,149 @@
+{
+ "type": "machine",
+ "name": "Troodon 2.0 RRF 0.4 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\nG92 E0\n",
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Generic ABS @System"
+ ],
+ "default_print_profile": "0.20mm Standard @Troodon2",
+ "deretraction_speed": [
+  "30"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "140",
+ "extruder_clearance_height_to_rod": "36",
+ "extruder_clearance_radius": "65",
+ "gcode_flavor": "reprapfirmware",
+ "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
+ "machine_end_gcode": "M0",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_travel": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_x": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_y": [
+  "20000",
+  "20000"
+ ],
+ "machine_max_acceleration_z": [
+  "500",
+  "200"
+ ],
+ "machine_max_jerk_e": [
+  "2.5",
+  "2.5"
+ ],
+ "machine_max_jerk_x": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_y": [
+  "9",
+  "9"
+ ],
+ "machine_max_jerk_z": [
+  "0.2",
+  "0.4"
+ ],
+ "machine_max_speed_e": [
+  "25",
+  "25"
+ ],
+ "machine_max_speed_x": [
+  "500",
+  "200"
+ ],
+ "machine_max_speed_y": [
+  "500",
+  "200"
+ ],
+ "machine_max_speed_z": [
+  "12",
+  "12"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "PAUSE\n",
+ "machine_start_gcode": "M104 S0\nM190 S0\nM98 P\"start_print.g\" A[first_layer_bed_temperature] B\"[filament_type]\" C[first_layer_temperature] D[nozzle_diameter] E{first_layer_print_min[0]} F{first_layer_print_max[0]} H{first_layer_print_min[1]} J{first_layer_print_max[1]}",
+ "max_layer_height": [
+  "0.32"
+ ],
+ "min_layer_height": [
+  "0.08"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_type": "undefine",
+ "printable_area": [
+  "0x0",
+  "350x0",
+  "350x350",
+  "0x350"
+ ],
+ "printable_height": "330",
+ "printer_model": "Troodon 2.0 - RRF",
+ "printer_technology": "FFF",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "0.8"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "30"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0.4"
+ ],
+ "z_hop_types": "Normal Lift"
+}

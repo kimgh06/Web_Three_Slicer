@@ -1,0 +1,137 @@
+{
+ "type": "machine",
+ "name": "VS30MK2 (0.4 nozzle)",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "before_layer_change_gcode": "G92 E0",
+ "change_filament_gcode": "M600",
+ "default_filament_profile": [
+  "Volumic UNIVERSAL Ultra"
+ ],
+ "default_print_profile": "Compatible speed - 0.15mm",
+ "deretraction_speed": [
+  "25"
+ ],
+ "emit_machine_limits_to_gcode": [
+  "0"
+ ],
+ "gcode_flavor": "marlin",
+ "machine_end_gcode": "M107\nM104 S0\nM140 S0\nG0 X1 Y299 F5000\nM84\nM300",
+ "machine_max_acceleration_e": [
+  "0",
+  "0"
+ ],
+ "machine_max_acceleration_extruding": [
+  "0",
+  "0"
+ ],
+ "machine_max_acceleration_retracting": [
+  "0",
+  "0"
+ ],
+ "machine_max_acceleration_travel": [
+  "0",
+  "0"
+ ],
+ "machine_max_acceleration_x": [
+  "2000"
+ ],
+ "machine_max_acceleration_y": [
+  "2000"
+ ],
+ "machine_max_acceleration_z": [
+  "50"
+ ],
+ "machine_max_jerk_e": [
+  "0",
+  "0"
+ ],
+ "machine_max_jerk_x": [
+  "0",
+  "0"
+ ],
+ "machine_max_jerk_y": [
+  "0",
+  "0"
+ ],
+ "machine_max_jerk_z": [
+  "0",
+  "0"
+ ],
+ "machine_max_speed_e": [
+  "0",
+  "0"
+ ],
+ "machine_max_speed_x": [
+  "0",
+  "0"
+ ],
+ "machine_max_speed_y": [
+  "0",
+  "0"
+ ],
+ "machine_max_speed_z": [
+  "0",
+  "0"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "M601",
+ "machine_start_gcode": "M117 Demarrage\nM106 S0\nM140 S[first_layer_bed_temperature]\nM104 T0 S[first_layer_temperature]\nG28\nG90\nM82\nG92 E0\nG1 Z5 F600\nG1 X1 Y299 F6000\nM109 T0 S[first_layer_temperature]\nM300 P350\nG92 E0\nM117 Impression",
+ "max_layer_height": [
+  "0.275"
+ ],
+ "min_layer_height": [
+  "0.05"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_type": "undefine",
+ "printable_area": [
+  "0x0",
+  "300x0",
+  "300x200",
+  "0x200"
+ ],
+ "printable_height": "300",
+ "printer_model": "VS30MK2",
+ "printer_technology": "FFF",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "6"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "2"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "25"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0"
+ ]
+}

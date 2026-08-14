@@ -1,0 +1,66 @@
+{
+ "type": "machine",
+ "name": "Qidi X-Smart 3 0.8 nozzle",
+ "from": "system",
+ "auxiliary_fan": "1",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Qidi Generic PLA"
+ ],
+ "default_print_profile": "0.40mm Standard @Qidi XSmart3 0.8 nozzle",
+ "deretraction_speed": [
+  "0"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "gcode_flavor": "klipper",
+ "machine_end_gcode": "M141 S0\nM104 S0\nM140 S0\nG1 E-3 F1800\nG0 Z{min(max_print_height, max_layer_z + 3)} F600\nG0 X0 Y0 F12000\n{if max_layer_z < max_print_height / 2}G1 Z{max_print_height / 2 + 10} F600{else}G1 Z{min(max_print_height, max_layer_z + 3)}{endif}",
+ "machine_pause_gcode": "PAUSE",
+ "machine_start_gcode": "PRINT_START\nG28\nM141 S0\nG0 Z50 F600\nM190 S[hot_plate_temp_initial_layer]\nG28 Z\nG29; mesh bed leveling ,comment this code to close it\nG0 X0 Y0 Z50 F6000\nM141 S{overall_chamber_temperature}\nM109 S[nozzle_temperature_initial_layer]\nM106 P3 S255\nM83\nG4 P3000\nG0 X{max((min(print_bed_max[0], first_layer_print_min[0] + 80) - 85),0)} Y{max((min(print_bed_max[1], first_layer_print_min[1] + 80) - 85),0)} Z5 F6000\nG0 Z[initial_layer_print_height] F600\nG1 E3 F1800\nG1 X{(min(print_bed_max[0], first_layer_print_min[0] + 80))} E{85 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 Y{max((min(print_bed_max[1], first_layer_print_min[1] + 80) - 85),0) + 2} E{2 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 X{max((min(print_bed_max[0], first_layer_print_min[0] + 80) - 85),0)} E{85 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 Y{max((min(print_bed_max[1], first_layer_print_min[1] + 80) - 85),0) + 85} E{83 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 X{max((min(print_bed_max[0], first_layer_print_min[0] + 80) - 85),0) + 2} E{2 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 Y{max((min(print_bed_max[1], first_layer_print_min[1] + 80) - 85),0) + 3} E{82 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 X{max((min(print_bed_max[0], first_layer_print_min[0] + 80) - 85),0) + 12} E{-10 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\nG1 E{10 * 0.5 * initial_layer_print_height * nozzle_diameter[0]} F3000\n",
+ "max_layer_height": [
+  "0.56"
+ ],
+ "min_layer_height": [
+  "0.16"
+ ],
+ "nozzle_diameter": [
+  "0.8"
+ ],
+ "nozzle_type": "hardened_steel",
+ "printable_area": [
+  "0x0",
+  "175x0",
+  "175x180",
+  "0x180"
+ ],
+ "printable_height": "170",
+ "printer_model": "Qidi X-Smart 3",
+ "printer_variant": "0.8",
+ "retract_length_toolchange": [
+  "3"
+ ],
+ "retraction_length": [
+  "3"
+ ],
+ "retraction_minimum_travel": [
+  "1"
+ ],
+ "retraction_speed": [
+  "30"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "support_chamber_temp_control": "1",
+ "thumbnails": [
+  "205x205/COLPIC",
+  "140x140/COLPIC",
+  "110x110/PNG"
+ ],
+ "wipe_tower_type": "type1",
+ "z_hop": [
+  "0.4"
+ ]
+}

@@ -138,6 +138,15 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   support paint is reported as dropped — half-applying it would be worse than not applying it.
 - The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0.
 - `web/extract_all.py` derives the kernel key list by regex-scanning `packages/engine/src/settings.js` for single-quoted lowercase strings and keeping the ones that are schema keys — **it does not strip comments**. Measured: appending only the comment `// note: the 'interface_shells' option is not wired up yet` takes the list from 92 keys to 93 and adds that column to every extracted preset. Never write a schema key name in quotes in a comment in that file.
+- **`packages/data/printers/` is in the repo but NOT in the tarball**, and that is a trap with a delay on it.
+  `extract_printer_profiles` writes one flattened machine preset per printer (921 files, 63 vendor folders,
+  filenames underscored so no path needs quoting) for finding and editing a profile as a file; `printers.json`
+  stays the 21-column picker catalog. Nothing loads the directory yet, so `package.json` excludes it with
+  `!data/printers/**`. Whoever wires the loading must delete that line in the same change — otherwise the code
+  reads profiles that are present locally and absent from every install, which looks fine in this repo and breaks
+  only for consumers. The reason it is not shipped yet is that the loading question is unsettled: 175 keys is
+  4.2MB, per-vendor splitting is badly skewed (BBL 1535KB against a 15KB median), and — measured — "lazy" means
+  nothing if a card calls it on mount, which is exactly what `FilamentCard` does to the 782KB filament catalog.
 - **The transform gizmo is deliberately not the stock one.** Three edits to `TransformControls`, each measured, each
   easy to mistake for superstition and delete: (1) `showY` is false in **translate** mode only — a part prints off
   the bed, so up/down is not a move (it also takes the XY/YZ plane handles, leaving X/Z/XZ). Set per mode, and

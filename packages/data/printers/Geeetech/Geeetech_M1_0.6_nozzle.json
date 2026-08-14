@@ -1,0 +1,154 @@
+{
+ "type": "machine",
+ "name": "Geeetech M1 0.6 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Generic PLA @System"
+ ],
+ "default_print_profile": "0.30mm Standard @Geeetech M1 0.6 nozzle",
+ "deretraction_speed": [
+  "40"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "34",
+ "extruder_clearance_height_to_rod": "34",
+ "extruder_type": [
+  "Direct Drive"
+ ],
+ "gcode_flavor": "marlin",
+ "layer_change_gcode": ";------------------------------------\n;layer No: [layer_num] ———>Print Height: [layer_z] mm\n;------------------------------------",
+ "machine_end_gcode": "{if max_layer_z < printable_height}G1 Z{z_offset+min(max_layer_z+2, printable_height)} F600 ; Move print head up{endif}\nG1 X5 Y{print_bed_max[1]*0.8} F{travel_speed*60} ; present print\n{if max_layer_z < printable_height-10}G1 Z{z_offset+min(max_layer_z+70, printable_height-10)} F600 ; Move print head further up{endif}\n{if max_layer_z < max_print_height*0.6}G1 Z{printable_height*0.6} F600 ; Move print head further up{endif}\nM140 S0 ; turn off heatbed\nM104 S0 ; turn off temperature\nM107 ; turn off fan\nM84 X Y E ; disable motors\nM221 S100;Slicer Flow recovery 100%\nM220 S100 ;Set Feedrate recovery 100%\nM204 P3000.00 R3000.00 T3000.00",
+ "machine_max_acceleration_e": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_retracting": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_travel": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_x": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_y": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_z": [
+  "500",
+  "500"
+ ],
+ "machine_max_jerk_e": [
+  "10",
+  "10"
+ ],
+ "machine_max_jerk_x": [
+  "10",
+  "10"
+ ],
+ "machine_max_jerk_y": [
+  "10",
+  "10"
+ ],
+ "machine_max_jerk_z": [
+  "3",
+  "3"
+ ],
+ "machine_max_speed_e": [
+  "60",
+  "60"
+ ],
+ "machine_max_speed_x": [
+  "300",
+  "300"
+ ],
+ "machine_max_speed_y": [
+  "300",
+  "300"
+ ],
+ "machine_max_speed_z": [
+  "25",
+  "25"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "M25 ;pause print",
+ "machine_start_gcode": ";Geeetech M1 official wiki URL: https://www.geeetech.com/wiki/index.php/Geeetech_M1_3D_printer \nM104 S[first_layer_temperature] ; Set Hotend Temperature\nM140 S[first_layer_bed_temperature] ; set Bed Temperature\nM190 S[first_layer_bed_temperature] ; Wait for Bed Temperature\nM109 S[first_layer_temperature] ; wait for Hotend Temperature\nM220 S100 ;Reset Feedrate\nM221 S100 ;Reset Flowrate\nG92 E0 ; Reset Extruder\nG28 ; Home all axes\nM107 ;Off Main Fan\nM300 S2500 P1000 ;Play a short tune\nG1 Z0.28 ;Move Z Axis up little to prevent scratching of Heat Bed\nG92 E0 ;Reset Extruder\nG1 Y3 F2400 ;Move to start position\nG1 X75 E40 F500 ;Draw a filament line\nG92 E0 ;Reset Extruder\n;G1 E-0.2 F3000 ;Retract a little\nG1 Z2.0 F3000 ;Move Z Axis up little to prevent scratching of Heat Bed\nG1 X70 Y3 Z0.27 F3000 ;Quickly wipe away from the filament line\nG92 E0 ;Reset Extruder",
+ "max_layer_height": [
+  "0.42"
+ ],
+ "min_layer_height": [
+  "0.12"
+ ],
+ "nozzle_diameter": [
+  "0.6"
+ ],
+ "nozzle_type": "brass",
+ "printable_area": [
+  "0x0",
+  "105x0",
+  "105x105",
+  "0x105"
+ ],
+ "printable_height": "95",
+ "printer_model": "Geeetech M1",
+ "printer_technology": "FFF",
+ "printer_variant": "0.6",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_lift_below": [
+  "95"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "1"
+ ],
+ "retraction_minimum_travel": [
+  "2"
+ ],
+ "retraction_speed": [
+  "40"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "support_multi_bed_types": "1",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0"
+ ],
+ "z_hop_types": "Normal Lift"
+}

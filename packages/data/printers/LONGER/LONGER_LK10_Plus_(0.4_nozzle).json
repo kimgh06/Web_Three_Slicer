@@ -1,0 +1,38 @@
+{
+ "type": "machine",
+ "name": "LONGER LK10 Plus (0.4 nozzle)",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "default_filament_profile": [
+  "Generic PLA @System"
+ ],
+ "default_print_profile": "0.20mm Standard @LONGER LK10 Plus (0.4 nozzle)",
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "380",
+ "gcode_flavor": "klipper",
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_hrc": "0",
+ "nozzle_type": "brass",
+ "nozzle_volume": "0",
+ "printable_area": [
+  "0x0",
+  "320x0",
+  "320x320",
+  "0x320"
+ ],
+ "printable_height": "400",
+ "printer_model": "LONGER LK10 Plus",
+ "printer_notes": "",
+ "printer_variant": "0.4",
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "thumbnails": [
+  "300x300"
+ ],
+ "thumbnails_format": "PNG"
+}

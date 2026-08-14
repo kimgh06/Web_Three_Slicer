@@ -95,6 +95,7 @@
     "data",
     "!data/config-schema-builddump.json",
     "!data/**/.omc",
+    "!data/printers/**",
     "README.md",
     "LICENSE.txt"
   ],

@@ -1,0 +1,147 @@
+{
+ "type": "machine",
+ "name": "Folgertech FT-5 0.4 nozzle",
+ "from": "system",
+ "auxiliary_fan": "0",
+ "bed_exclude_area": [
+  "0x0"
+ ],
+ "change_filament_gcode": "",
+ "default_filament_profile": [
+  "Generic PLA @System"
+ ],
+ "default_print_profile": "0.20mm Standard @FT",
+ "deretraction_speed": [
+  "40"
+ ],
+ "emit_machine_limits_to_gcode": "0",
+ "extruder_clearance_height_to_lid": "34",
+ "extruder_clearance_height_to_rod": "34",
+ "extruder_clearance_radius": "47",
+ "gcode_flavor": "marlin",
+ "layer_change_gcode": "",
+ "machine_end_gcode": "M140 S0 ; turn off heatbed\nM104 S0 ; turn off temperature\nM107 ; turn off fan\nG28 X Y ; Home X and Y axis\nM84 X Y E ; disable motors",
+ "machine_max_acceleration_e": [
+  "5000",
+  "5000"
+ ],
+ "machine_max_acceleration_extruding": [
+  "500",
+  "500"
+ ],
+ "machine_max_acceleration_retracting": [
+  "1000",
+  "1000"
+ ],
+ "machine_max_acceleration_travel": [
+  "500",
+  "500"
+ ],
+ "machine_max_acceleration_x": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_y": [
+  "3000",
+  "3000"
+ ],
+ "machine_max_acceleration_z": [
+  "100",
+  "100"
+ ],
+ "machine_max_jerk_e": [
+  "5",
+  "5"
+ ],
+ "machine_max_jerk_x": [
+  "8",
+  "8"
+ ],
+ "machine_max_jerk_y": [
+  "8",
+  "8"
+ ],
+ "machine_max_jerk_z": [
+  "0.4",
+  "0.4"
+ ],
+ "machine_max_speed_e": [
+  "60",
+  "60"
+ ],
+ "machine_max_speed_x": [
+  "500",
+  "500"
+ ],
+ "machine_max_speed_y": [
+  "500",
+  "500"
+ ],
+ "machine_max_speed_z": [
+  "10",
+  "10"
+ ],
+ "machine_min_extruding_rate": [
+  "0",
+  "0"
+ ],
+ "machine_min_travel_rate": [
+  "0",
+  "0"
+ ],
+ "machine_pause_gcode": "M25 ;pause print",
+ "machine_start_gcode": "G28 ; Home all axis\nG1 X0 Y5 Z0.2 F3000 ; Get ready to prime\nG92 E0 ; Reset extrusion distance\nG1 X250 E20 F600 ; Prime nozzle",
+ "max_layer_height": [
+  "0.32"
+ ],
+ "min_layer_height": [
+  "0.08"
+ ],
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "nozzle_type": "undefine",
+ "printable_area": [
+  "0x0",
+  "300x0",
+  "300x300",
+  "0x300"
+ ],
+ "printable_height": "400",
+ "printer_model": "Folgertech FT-5",
+ "printer_technology": "FFF",
+ "printer_variant": "0.4",
+ "retract_before_wipe": [
+  "70%"
+ ],
+ "retract_length_toolchange": [
+  "2"
+ ],
+ "retract_restart_extra": [
+  "0"
+ ],
+ "retract_restart_extra_toolchange": [
+  "0"
+ ],
+ "retract_when_changing_layer": [
+  "1"
+ ],
+ "retraction_length": [
+  "4.5"
+ ],
+ "retraction_minimum_travel": [
+  "2"
+ ],
+ "retraction_speed": [
+  "40"
+ ],
+ "scan_first_layer": "0",
+ "silent_mode": "0",
+ "single_extruder_multi_material": "1",
+ "wipe": [
+  "1"
+ ],
+ "z_hop": [
+  "0.4"
+ ]
+}
