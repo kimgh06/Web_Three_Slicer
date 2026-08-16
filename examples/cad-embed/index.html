@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bracket Designer — three-slicer demo</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="topbar-title">three-slicer demo / cad-embed</span>
+      <a class="topbar-link" href="https://github.com/kimgh06/web3d_slicer/tree/main/examples/cad-embed">View source</a>
+    </header>
+
+    <main class="split">
+      <section class="design" aria-labelledby="design-heading">
+        <h2 id="design-heading">Design</h2>
+        <canvas id="design"></canvas>
+
+        <div class="params">
+          <p class="param">
+            <label for="width">Width</label>
+            <input id="width" type="range" />
+            <output id="width-value">—</output>
+          </p>
+          <p class="param">
+            <label for="height">Height</label>
+            <input id="height" type="range" />
+            <output id="height-value">—</output>
+          </p>
+          <p class="param">
+            <label for="thickness">Thickness</label>
+            <input id="thickness" type="range" />
+            <output id="thickness-value">—</output>
+          </p>
+          <p class="param">
+            <label for="holeDiameter">Hole</label>
+            <input id="holeDiameter" type="range" />
+            <output id="holeDiameter-value">—</output>
+          </p>
+        </div>
+        <p id="triangles" class="muted">—</p>
+      </section>
+
+      <section id="feedback" class="feedback" aria-labelledby="feedback-heading">
+        <h2 id="feedback-heading">Print feedback</h2>
+
+        <dl class="numbers">
+          <div>
+            <dt>Print time</dt>
+            <dd id="time">—</dd>
+          </div>
+          <div>
+            <dt>Material</dt>
+            <dd id="material">—</dd>
+          </div>
+          <div>
+            <dt>Layers</dt>
+            <dd id="layers">—</dd>
+          </div>
+        </dl>
+
+        <p id="delta" class="delta" aria-live="polite"></p>
+        <p id="status" class="status" role="status">Starting…</p>
+        <button id="cancel" type="button">Cancel slice</button>
+
+        <p id="profile" class="muted profile">—</p>
+        <p class="muted">
+          No export, no file dialog: the design goes straight to the kernel every time you stop moving a slider.
+        </p>
+      </section>
+    </main>
+
+    <section id="toolpath" class="toolpath" aria-labelledby="toolpath-heading">
+      <h2 id="toolpath-heading">What the slicer produced</h2>
+      <canvas id="toolpath-canvas"></canvas>
+      <div class="toolpath-controls">
+        <p class="param param-wide">
+          <label for="layer-range">Layers</label>
+          <input id="layer-range" type="range" min="1" max="1" value="1" />
+          <output id="layer-readout">—</output>
+        </p>
+        <label class="check"><input id="show-travel" type="checkbox" checked /> Travel moves</label>
+      </div>
+      <p class="legend"><span id="toolpath-segments" class="segments"></span></p>
+      <p id="toolpath-legend" class="legend"></p>
+      <p class="muted">
+        Drag to orbit. This is the toolpath the numbers above were computed from — it is rebuilt on every
+        re-slice, so moving a slider changes what you see here too.
+      </p>
+    </section>
+
+    <footer class="footer">
+      Powered by <code>three-slicer/client</code>, <code>three-slicer/settings</code>, <code>three-slicer/toggle</code>
+    </footer>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -222,3 +222,85 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 .tb-readonly .tb-mark { color: #d1a34a; }
 .tb-off { color: #5a6570; }
 .tb-off .tb-mark { color: #5a6570; }
+
+/* ---- /demos ------------------------------------------------------------------------------------ */
+.demos-head { padding-bottom: 32px; }
+
+.demos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+}
+.demos-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  text-align: left;
+  background: var(--lp-panel);
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  color: var(--lp-body);
+  font: inherit;
+  cursor: pointer;
+}
+.demos-card:hover { background: var(--lp-panel-hover); }
+.demos-card.is-active { border-color: var(--lp-accent); background: var(--lp-accent-soft); }
+.demos-card.is-missing { opacity: .5; cursor: not-allowed; }
+.demos-card-sells { color: var(--lp-accent); font-size: 12px; font-weight: 700; }
+.demos-card strong { color: var(--lp-text); font-size: 15px; }
+.demos-card-blurb { color: var(--lp-muted); font-size: 13px; word-break: keep-all; }
+.demos-card-surfaces { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.demos-card-surfaces code { color: var(--lp-code); font-size: 11.5px; }
+.demos-card-missing { color: var(--lp-subtle); font-size: 11.5px; }
+
+.demos-frame-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.demos-frame-head .lp-section-head { margin-bottom: 0; }
+.demos-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.demos-actions a {
+  padding: 7px 12px;
+  border: 1px solid var(--lp-border);
+  border-radius: 6px;
+  color: var(--lp-body);
+  font-size: 13px;
+  text-decoration: none;
+}
+.demos-actions a:hover { border-color: var(--lp-accent); color: var(--lp-text); }
+
+.demos-frame {
+  width: 100%;
+  height: min(78vh, 760px);
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  background: var(--lp-panel);
+}
+
+.demos-source,
+.demos-empty pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--lp-panel);
+  border: 1px solid var(--lp-border);
+  border-radius: 8px;
+  color: var(--lp-body);
+  font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+}
+.demos-note { margin: 10px 0 0; color: var(--lp-muted); font-size: 13px; word-break: keep-all; }
+.demos .lp-foot code { color: var(--lp-code); }
+
+/* The lazy-route fallback. Matches slice/index.html's pre-render block so the static HTML and the first
+   React frame do not disagree while a multi-MB chunk downloads. */
+.route-loading {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: #101418; color: #c9d3de; font: 16px/1.6 system-ui, sans-serif;
+}
