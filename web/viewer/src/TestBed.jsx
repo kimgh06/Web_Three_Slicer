@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import Viewport from 'three-slicer/viewer'
 import SettingsPanel from 'three-slicer/components'
+import './step_loader.js'   // registers the .step/.stp loader — see Prepare.jsx; main.jsx no longer holds it
 import {
   printersByVendor, printerSettings, printerKeys, printerDefaultPreset,
   processPresets, filamentPresets, deriveKernelParams,
