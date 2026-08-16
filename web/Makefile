@@ -34,7 +34,11 @@ dev: pkg demos  ## vite dev server (DEV_PORT) with /demos ready; kills whatever 
 	@echo "==> http://localhost:$(DEV_PORT)/  ·  demos at /demos"
 	cd viewer && npx vite --port $(DEV_PORT) --strictPort
 
-up:    ## start with docker compose (UP_PORT)
+# The image builds the workspaces itself (`npm ci && npm run build` at the repo root), but examples/* are
+# NOT workspaces — they install three-slicer from npm — so `npm ci` never reaches them. Building them here
+# and letting the image copy viewer/public/demos keeps the Dockerfile unchanged and the image free of four
+# extra npm installs. Built directly with `docker compose build`, the /demos page just says "not built".
+up: demos  ## start with docker compose (UP_PORT), demos included
 	@$(MAKE) --no-print-directory kill PORT=$(UP_PORT)
 	docker compose up -d --build
 
