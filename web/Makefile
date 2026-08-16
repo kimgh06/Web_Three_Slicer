@@ -5,13 +5,33 @@ export
 DEV_PORT ?= 5173
 UP_PORT  ?= 8080
 
-.PHONY: dev up down logs kill pkg
+EXAMPLES := ../examples
+DEMOS    := instant-quote printer-showcase cad-embed farm-dashboard
+
+.PHONY: dev up down logs kill pkg demos demos-install demos-clean
 
 pkg:   ## rebuild the three-slicer package dist (viewer/components bundles)
 	cd .. && npm run build -w three-slicer
 
-dev: pkg  ## vite dev server (DEV_PORT; kills whatever holds the port first)
+# The demos under examples/ are standalone projects: they install three-slicer from npm, so they have
+# their own node_modules and are NOT part of this repo's workspaces. Hence the explicit install.
+demos-install:  ## npm i in each examples/* that has never been installed
+	@for d in $(DEMOS); do \
+	  if [ ! -d $(EXAMPLES)/$$d/node_modules ]; then \
+	    echo "==> npm i in examples/$$d"; \
+	    (cd $(EXAMPLES)/$$d && npm i --no-audit --no-fund) || exit 1; \
+	  fi; \
+	done
+
+demos: demos-install  ## build examples/* into viewer/public/demos (incremental; FORCE=1 rebuilds all)
+	@cd viewer && node scripts/build_demos.mjs $(if $(FORCE),--force,)
+
+demos-clean:  ## drop the copied demo builds
+	rm -rf viewer/public/demos
+
+dev: pkg demos  ## vite dev server (DEV_PORT) with /demos ready; kills whatever holds the port first
 	@$(MAKE) --no-print-directory kill PORT=$(DEV_PORT)
+	@echo "==> http://localhost:$(DEV_PORT)/  ·  demos at /demos"
 	cd viewer && npx vite --port $(DEV_PORT) --strictPort
 
 up:    ## start with docker compose (UP_PORT)
