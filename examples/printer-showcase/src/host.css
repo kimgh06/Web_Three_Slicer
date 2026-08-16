@@ -1,0 +1,71 @@
+/* The host page's own CSS. Two jobs: dress the fake product page, and be hostile to anything embedded. */
+
+/* --- deliberately hostile global rules -------------------------------------------------------
+   A real marketing site is full of blanket element selectors like these. The viewer and the
+   settings panel live in a Shadow DOM, so none of this reaches them — that is the claim this
+   demo exists to check. Delete a rule here and the embed must not change.                     */
+button { border-radius: 0 !important; text-transform: uppercase; letter-spacing: .08em; }
+canvas { max-width: 300px !important; filter: sepia(1); }
+input, select { font-size: 24px !important; border: 4px dashed magenta !important; }
+aside { display: none !important; }
+svg { transform: rotate(180deg); }
+/* -------------------------------------------------------------------------------------------- */
+
+:root { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #0d1016;
+  color: #e8eaf0;
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #222833;
+  position: sticky;
+  top: 0;
+  background: #0d1016ee;
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+.brand { font-weight: 700; letter-spacing: .04em; }
+.nav nav { display: flex; gap: 16px; margin-right: auto; }
+.nav a { color: #97a1b2; text-decoration: none; font-size: 14px; }
+.nav a:hover { color: #e8eaf0; }
+
+.buy { background: #4c8dff; color: #06101f; border: 0; padding: 10px 16px; font: inherit; font-weight: 700; cursor: pointer; }
+.buy-lg { padding: 14px 28px; font-size: 17px; }
+
+main { max-width: 900px; margin: 0 auto; padding: 0 24px 72px; }
+
+.hero { padding: 56px 0 40px; border-bottom: 1px solid #222833; }
+.hero h1 { font-size: 44px; margin: 0 0 8px; }
+.hero p { margin: 0 0 8px; color: #c3cad6; font-size: 19px; }
+.hero-meta { color: #97a1b2 !important; font-size: 14px !important; margin-bottom: 24px !important; }
+
+.try { padding: 40px 0; }
+.try h2, .specs h2 { font-size: 22px; margin: 0 0 8px; }
+.try-lede { color: #97a1b2; margin: 0 0 20px; font-size: 15px; }
+.sample { color: #97a1b2; font-size: 13px; margin-top: 14px; }
+.sample a { color: #4c8dff; }
+
+.specs { padding: 24px 0; border-top: 1px solid #222833; }
+.specs dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 12px 0 0; }
+.specs dt { color: #97a1b2; font-size: 13px; }
+.specs dd { margin: 2px 0 0; }
+
+.foot { border-top: 1px solid #222833; padding: 24px; color: #6f7a8b; font-size: 13px; text-align: center; }
+.foot p { margin: 4px 0; }
+.foot code { color: #97a1b2; }
+
+@media (max-width: 520px) {
+  .nav nav { display: none; }
+  .hero h1 { font-size: 32px; }
+  main { padding: 0 16px 48px; }
+}
