@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Print Farm — three-slicer demo</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="topbar-title">three-slicer demo / farm-dashboard</span>
+      <span class="conn">no server · everything runs in this tab</span>
+    </header>
+
+    <main class="page">
+      <h1>Print Farm</h1>
+      <p id="summary" class="summary">—</p>
+
+      <section class="panel" aria-labelledby="add-heading">
+        <h2 id="add-heading">Add job</h2>
+        <div class="add-row">
+          <input id="file" type="file" accept=".stl,.obj,.3mf,.amf,.ply" />
+          <button id="sample" type="button">Use sample cube</button>
+          <select id="printer-select" aria-label="Target printer"></select>
+          <button id="add" type="button" class="primary" disabled>Slice &amp; queue</button>
+        </div>
+        <p id="add-status" class="muted" role="status">Pick a model. Slicing happens here, in this browser.</p>
+      </section>
+
+      <section aria-labelledby="printers-heading">
+        <h2 id="printers-heading">Printers</h2>
+        <div id="printers" class="printers"></div>
+      </section>
+
+      <section aria-labelledby="queue-heading">
+        <h2 id="queue-heading">Queue</h2>
+        <ul id="queue" class="queue"></ul>
+        <p id="queue-empty" class="muted">
+          Empty. Nothing here was pre-made: a job only exists once something slices a model, and the only
+          thing that can slice is this browser.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="preview-heading">
+        <h2 id="preview-heading">Toolpath</h2>
+        <p id="preview-title" class="preview-title">Select a job</p>
+        <canvas id="preview"></canvas>
+        <div class="toolpath-controls">
+          <p class="field-range">
+            <label for="layer-range">Layers</label>
+            <input id="layer-range" type="range" min="1" max="1" value="1" />
+            <output id="layer-readout">—</output>
+          </p>
+          <label class="check"><input id="show-travel" type="checkbox" checked /> Travel moves</label>
+          <label class="check"><input id="follow-progress" type="checkbox" /> Follow print progress</label>
+        </div>
+        <p id="preview-legend" class="legend"></p>
+        <p id="preview-meta" class="muted">G-code is fetched from the server and parsed here. Drag to orbit.</p>
+        <p class="muted">
+          Colours are approximate: this kernel's G-code carries no <code>;TYPE:</code> role comments, so a
+          re-parse recovers geometry exactly but has to guess roles. The demos that render the slicer's own
+          layer stream (instant-quote, cad-embed) show the real breakdown.
+        </p>
+      </section>
+
+      <section id="wire" class="panel wire" aria-labelledby="wire-heading" hidden>
+        <h2 id="wire-heading">What a queue server would receive</h2>
+        <p id="wire-size" class="muted"></p>
+        <pre id="wire-json" class="wire-json"></pre>
+        <p class="muted">
+          This page has no backend — the queue lives in <code>src/farm_store.js</code>. But the payload above is
+          built by the same function that would post it (<code>prepareJob()</code>), so it is exactly what would
+          go over the network: G-code text and three numbers. The model, its vertex buffer and its filename
+          never leave the tab.
+        </p>
+      </section>
+
+      <section class="panel arch" aria-labelledby="arch-heading">
+        <h2 id="arch-heading">Where the compute is</h2>
+        <dl>
+          <div><dt>This browser</dt><dd>Jobs sliced: <strong id="sliced-here">0</strong></dd></div>
+          <div><dt>A backend, if you added one</dt><dd>Slices it would perform: <strong>0</strong></dd></div>
+        </dl>
+        <p class="muted">
+          That is the architecture this demo argues for: the backend is a control plane — queue, printer state,
+          file storage — and never a compute plane. Add printers and it does not get busier. Here it is a 130-line
+          module in the page; swap it for a server and every call site is already shaped like an HTTP request.
+        </p>
+      </section>
+
+      <footer class="footer">
+        Powered by <code>three-slicer/client</code>, <code>three-slicer/settings</code>,
+        <code>three-slicer/viewer/loaders</code>, <code>three-slicer/viewer/gcode</code>,
+        <code>three-slicer/viewer/toolpath</code>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
