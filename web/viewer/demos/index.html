@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embed a 3D Printing Slicer in a Web App — Integration Demos | Three Slicer</title>
+    <meta name="description" content="Working examples of the three-slicer npm package embedded in a web app: an instant print-quote form, a printer showcase and a CAD page that slices in the browser." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/demos" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#101418" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Three Slicer" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/demos" />
+    <meta property="og:title" content="Embed a 3D Printing Slicer in a Web App — Three Slicer Demos" />
+    <meta property="og:description" content="An instant print-quote form, a printer showcase and a CAD page, each slicing in the browser through the three-slicer npm package." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+  </head>
+  <body>
+    <!-- Pre-render fallback — see index.html for why this content is inside #root. -->
+    <div id="root">
+      <h1>Embedding the slicer in your own web app</h1>
+      <p>
+        Three Slicer is published to npm as
+        <a href="https://www.npmjs.com/package/three-slicer">three-slicer</a>: a WebAssembly slicing
+        kernel that runs headless in Node or the browser, with an optional React viewer and a settings
+        panel on top. These demos are separate applications built against the published package, each
+        embedded here in an iframe, so what they show is the package's own surface rather than this
+        site's wiring.
+      </p>
+      <ul>
+        <li><strong>Instant quote</strong> — a customer drops in a model and the page slices it to get
+          filament usage and print time, then prices the job from those numbers. No server round trip.</li>
+        <li><strong>Printer showcase</strong> — the same model sliced against several machine profiles,
+          comparing print time and material use per printer.</li>
+        <li><strong>CAD embed</strong> — a design page that slices the model it is already showing,
+          reusing the viewer component inside an existing 3D interface.</li>
+      </ul>
+      <p>
+        The engine is AGPL-3.0-or-later and the source, including these examples, is on
+        <a href="https://github.com/kimgh06/Web_Three_Slicer">GitHub</a>.
+        You can also <a href="/slice">use the slicer directly</a> or
+        <a href="/">read what it does</a>.
+      </p>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

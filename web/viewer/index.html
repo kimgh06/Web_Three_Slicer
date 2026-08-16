@@ -3,26 +3,155 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Free online 3D printing slicer that runs entirely in your browser. Slice STL, STEP and 3MF models to G-code with WebAssembly — no install, no upload, powered by the three-slicer npm package." />
+    <title>Online 3D Printing Slicer in Your Browser — STL to G-code | Three Slicer</title>
+    <meta name="description" content="Free online slicer for 3D printing. Convert STL, OBJ, 3MF and STEP models to G-code in your browser — an OrcaSlicer WebAssembly kernel, no install and no upload." />
     <link rel="canonical" href="https://slicer.kimgh06.com/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Three Slicer — Online STL to G-code Slicer in the Browser (WASM)</title>
+    <meta name="theme-color" content="#101418" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Three Slicer" />
     <meta property="og:url" content="https://slicer.kimgh06.com/" />
     <meta property="og:title" content="Three Slicer — Online STL to G-code Slicer in the Browser" />
-    <meta property="og:description" content="Slice STL, STEP and 3MF models to G-code entirely in your browser with WebAssembly. No install, no upload." />
+    <meta property="og:description" content="Slice STL, OBJ, 3MF and STEP models to G-code entirely in your browser with WebAssembly. No install, no upload." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="A sliced Benchy in the Three Slicer preview tab, with tree supports and per-feature toolpath colors" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <!-- One @graph rather than three <script> blocks: the FAQ answers and the app description describe the
+         same entity, and splitting them makes the site look like three unrelated things to a parser. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://slicer.kimgh06.com/#website",
+          "url": "https://slicer.kimgh06.com/",
+          "name": "Three Slicer",
+          "description": "An online 3D printing slicer that runs entirely in the browser."
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://slicer.kimgh06.com/#app",
+          "name": "Three Slicer",
+          "alternateName": "Web Three Slicer",
+          "url": "https://slicer.kimgh06.com/",
+          "applicationCategory": "DesignApplication",
+          "applicationSubCategory": "3D printing slicer",
+          "operatingSystem": "Any — runs in a web browser",
+          "browserRequirements": "Requires JavaScript and WebAssembly",
+          "isAccessibleForFree": true,
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+          "softwareHelp": "https://github.com/kimgh06/Web_Three_Slicer",
+          "screenshot": "https://slicer.kimgh06.com/og-cover.png",
+          "description": "A browser-based 3D printing slicer built on a WebAssembly port of the OrcaSlicer kernel. It converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code locally, without uploading anything to a server.",
+          "featureList": [
+            "STL, OBJ, 3MF, AMF, PLY and STEP model import",
+            "3MF project import with plate layout, settings and painting",
+            "Arachne variable-width walls",
+            "Gyroid, honeycomb and crosshatch infill",
+            "Tree and grid supports, with support painting",
+            "Multi-material printing with a prime tower",
+            "Toolpath preview by feature, speed, layer height, width, fan and temperature",
+            "G-code export with print time and filament usage estimates"
+          ],
+          "sameAs": [
+            "https://github.com/kimgh06/Web_Three_Slicer",
+            "https://www.npmjs.com/package/three-slicer"
+          ]
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://slicer.kimgh06.com/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "Do my models get uploaded anywhere?",
+              "acceptedAnswer": { "@type": "Answer", "text": "No. The slicing kernel is compiled to WebAssembly and runs inside the browser tab, so the model file never leaves the machine it was opened on." }
+            },
+            {
+              "@type": "Question",
+              "name": "Which file formats can it slice?",
+              "acceptedAnswer": { "@type": "Answer", "text": "STL, OBJ, 3MF, AMF and PLY are read directly, and STEP is read through a loader that only downloads when a STEP file is actually opened. The output is G-code." }
+            },
+            {
+              "@type": "Question",
+              "name": "Is it based on a real slicer?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The kernel is a port of OrcaSlicer, which is itself a PrusaSlicer/Slic3r descendant. Arachne wall generation, tree supports, multi-material segmentation and the prime tower are ported from that source rather than reimplemented." }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I use the slicer in my own site or app?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The same engine is published to npm as three-slicer under AGPL-3.0-or-later: a headless slicing kernel for Node or the browser, plus an optional React viewer and settings panel." }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
-    <noscript>
-      <h1>Three Slicer — online 3D printing slicer</h1>
+    <!-- ponytail: the content below is the pre-render fallback, not a second copy of the landing page.
+         createRoot().render() clears #root on mount, so a visitor never sees it — but a crawler that
+         does not run the 1.7MB bundle does, and without it the raw HTML carries 54 words and no links.
+         Keep it in sync with the JSON-LD above: contradicting the structured data is worse than omitting it. -->
+    <div id="root">
+      <h1>Three Slicer — an online 3D printing slicer that runs in your browser</h1>
       <p>
-        Three Slicer slices STL, STEP and 3MF models into G-code directly in the browser using a
-        WebAssembly build of the OrcaSlicer kernel. Nothing is uploaded to a server. JavaScript is
-        required to run the slicer.
+        Three Slicer converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code directly in the
+        browser, using a WebAssembly build of the OrcaSlicer kernel. There is nothing to install and
+        nothing is uploaded to a server — the slicing runs on your own machine, in the tab.
+        <a href="/slice">Open the slicer</a>.
       </p>
-    </noscript>
+
+      <h2>What it does</h2>
+      <ul>
+        <li><strong>Import</strong> — STL, OBJ, 3MF, AMF and PLY, plus STEP through a loader that only
+          downloads when a STEP file is opened. Drag and drop, several models at once.</li>
+        <li><strong>Arrange</strong> — move, rotate, scale, duplicate, split to objects, place on bed,
+          and lay work out across multiple plates.</li>
+        <li><strong>Slice</strong> — Arachne variable-width walls, gyroid / honeycomb / crosshatch
+          infill, tree and grid supports, support painting and material painting, skirt, brim, raft,
+          ironing, arc fitting, and multi-material printing with a real prime tower.</li>
+        <li><strong>Preview</strong> — a layer slider and single-layer view, travel moves, and toolpath
+          colouring by feature, speed, layer height, extrusion width, fan speed or temperature.</li>
+        <li><strong>Export</strong> — G-code with print-time and filament-usage estimates, or a
+          <code>.3mf</code> project that keeps the plate layout, settings and painting.</li>
+        <li><strong>Settings</strong> — the full OrcaSlicer option set, 923 options, with search and a
+          simple/advanced/expert filter.</li>
+      </ul>
+
+      <h2>Questions</h2>
+      <h3>Do my models get uploaded anywhere?</h3>
+      <p>
+        No. The slicing kernel is compiled to WebAssembly and runs inside the browser tab, so the model
+        file never leaves the machine it was opened on. There is no account and no server-side queue.
+      </p>
+      <h3>Which file formats can it slice?</h3>
+      <p>
+        STL, OBJ, 3MF, AMF and PLY are read directly, and STEP is read through a loader that is only
+        fetched when a STEP file is actually opened. The output is G-code for FDM printers.
+      </p>
+      <h3>Is it based on a real slicer?</h3>
+      <p>
+        Yes. The kernel is a port of <a href="https://github.com/OrcaSlicer/OrcaSlicer">OrcaSlicer</a>,
+        itself a PrusaSlicer and Slic3r descendant. Arachne wall generation, tree supports,
+        multi-material segmentation and the prime tower are ported from that source rather than
+        reimplemented, so the toolpaths come from the same code a desktop slicer runs.
+      </p>
+      <h3>Can I use the slicer in my own site or app?</h3>
+      <p>
+        Yes. The same engine is published to npm as
+        <a href="https://www.npmjs.com/package/three-slicer">three-slicer</a> under
+        AGPL-3.0-or-later — a headless slicing kernel for Node or the browser, plus an optional React
+        viewer and settings panel. The <a href="/demos">integration demos</a> show it embedded in an
+        instant-quote form, a printer showcase and a CAD page, and the source is on
+        <a href="https://github.com/kimgh06/Web_Three_Slicer">GitHub</a>.
+      </p>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
