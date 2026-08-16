@@ -9,6 +9,8 @@ A 3D-printing slicer that runs entirely in the browser — reverse-engineered fr
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
 - npm package: [three-slicer](https://www.npmjs.com/package/three-slicer)
 - Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer)
+- Integration example specs: [examples/DEMOS.md](examples/DEMOS.md)
+- Community: [questions, ideas, or a print you sliced with it](https://github.com/kimgh06/Web_Three_Slicer/discussions) — bug reports go to [Issues](https://github.com/kimgh06/Web_Three_Slicer/issues)
 
 ## Package (`packages/`, npm workspace)
 

@@ -256,8 +256,9 @@ const result = slicer.slice(stlArrayBuffer, params)
 ## 3MF Projects
 
 A slicer-written `.3mf` is a project, not a mesh file: `Metadata/project_settings.config` holds the flattened
-preset its author sliced with. `<Viewport/>` reads all of it on import, and the two codecs behind that are exported
-for hosts doing it themselves.
+preset its author sliced with. `<Viewport/>` reads all of it on import. The project parser/writer currently remain
+viewer internals; there is no `three-slicer/viewer/project` public export yet. Hosts can normalize or serialize a
+raw project settings object with the public settings helpers below, but should not import viewer source files.
 
 **Every value in that file is a string**, and reading it raw is not a cosmetic problem — a disabled option is the
 string `"0"`, and `"0"` is truthy, so a raw import turns every disabled option ON. A point is the string `"256x256"`
