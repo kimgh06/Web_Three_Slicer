@@ -1,12 +1,15 @@
 import React from 'react'
 import { Link } from 'react-router'
-import schema from 'three-slicer/data/config-schema.json'
 
-const OPTION_COUNT = Object.keys(schema).length
+// Written out rather than imported: `Object.keys(config-schema.json).length` pulled all 382KB of the schema
+// into the landing chunk to produce one integer, on the one page that has no other use for it.
+// The generator of record is packages/types/gen_settings_types.mjs — it prints the same count.
+const OPTION_COUNT = 923
 
 const LINKS = [
   ['npm', 'https://www.npmjs.com/package/three-slicer', 'package'],
   ['GitHub', 'https://github.com/kimgh06/Web_Three_Slicer', 'source'],
+  ['Community', 'https://github.com/kimgh06/Web_Three_Slicer/discussions', 'questions · ideas · show and tell'],
   ['Demo', 'https://slicer.kimgh06.com/', 'deployment'],
 ]
 
@@ -41,6 +44,7 @@ export default function Landing() {
         <p>An OrcaSlicer-based WASM slicing engine, React viewer and settings panel, shipped as a single npm package.</p>
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
+          <Link className="lp-btn" to="/demos">Demos</Link>
           <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
           <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">
             GitHub
@@ -116,12 +120,14 @@ export default function Landing() {
         <section className="lp-section lp-license" aria-label="License">
           <p>AGPL-3.0-or-later · based on OrcaSlicer · runs in the browser or Node with no server</p>
           <Link to="/slice">Start slicing</Link>
+          <Link to="/demos">See the demos</Link>
         </section>
       </main>
 
       <footer className="lp-foot">
         <span>Source</span>
         <a href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">kimgh06/Web_Three_Slicer</a>
+        <a href="https://github.com/kimgh06/Web_Three_Slicer/discussions" target="_blank" rel="noreferrer">Community</a>
       </footer>
     </div>
   )
