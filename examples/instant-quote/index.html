@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Instant Quote — three-slicer demo</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="topbar-title">three-slicer demo / instant-quote</span>
+      <a class="topbar-link" href="https://github.com/kimgh06/web3d_slicer/tree/main/examples/instant-quote">View source</a>
+    </header>
+
+    <main class="page">
+      <h1>Get an instant FDM quote</h1>
+
+      <section class="card" aria-labelledby="model-heading">
+        <h2 id="model-heading" class="visually-hidden">Model</h2>
+
+        <div id="dropzone" class="dropzone">
+          <input id="file-input" class="visually-hidden" type="file" accept=".stl,.obj,.3mf,.amf,.ply" />
+          <label class="dropzone-label" for="file-input">Drop STL or 3MF — or choose a file</label>
+          <button id="sample-button" class="link-button" type="button">Use the sample cube</button>
+          <p class="privacy">Your model never leaves this browser.</p>
+        </div>
+
+        <dl id="model-facts" class="facts" hidden>
+          <div><dt>File</dt><dd id="fact-name">—</dd></div>
+          <div><dt>Size</dt><dd id="fact-size">—</dd></div>
+          <div><dt>Triangles</dt><dd id="fact-triangles">—</dd></div>
+        </dl>
+      </section>
+
+      <section class="card" aria-labelledby="options-heading">
+        <h2 id="options-heading">Options</h2>
+        <div class="options">
+          <p class="field">
+            <label for="printer">Printer</label>
+            <select id="printer"></select>
+          </p>
+          <p class="field">
+            <label for="material">Material</label>
+            <select id="material"></select>
+          </p>
+          <p class="field">
+            <label for="process">Quality</label>
+            <select id="process"></select>
+          </p>
+          <p class="field">
+            <label for="quantity">Quantity</label>
+            <input id="quantity" type="number" min="1" step="1" value="1" />
+          </p>
+        </div>
+
+        <div class="actions">
+          <button id="calculate" type="button" class="primary" disabled>Calculate quote</button>
+          <button id="cancel" type="button" hidden>Cancel</button>
+        </div>
+
+        <div id="progress-row" class="progress-row" hidden>
+          <div
+            id="progress"
+            class="progress"
+            role="progressbar"
+            aria-label="Slicing progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <span id="progress-fill" class="progress-fill"></span>
+          </div>
+          <p id="progress-text" class="progress-text">Slicing locally… no model data is being uploaded.</p>
+        </div>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <section id="result" class="card result" aria-labelledby="result-heading" hidden>
+        <h2 id="result-heading">Estimated price</h2>
+        <p id="price" class="price">—</p>
+        <dl class="facts">
+          <div><dt>Print time</dt><dd id="fact-time">—</dd></div>
+          <div><dt>Filament</dt><dd id="fact-filament">—</dd></div>
+          <div><dt>Layers</dt><dd id="fact-layers">—</dd></div>
+          <div><dt>Material cost</dt><dd id="fact-material-cost">—</dd></div>
+          <div><dt>Machine time</dt><dd id="fact-machine-cost">—</dd></div>
+          <div><dt>Base handling</dt><dd id="fact-handling">—</dd></div>
+          <div><dt>Margin</dt><dd id="fact-margin">—</dd></div>
+        </dl>
+        <p class="disclaimer">Demo pricing formula — not a commercial quote.</p>
+      </section>
+
+      <section id="toolpath" class="card" aria-labelledby="toolpath-heading" hidden>
+        <h2 id="toolpath-heading">What was sliced</h2>
+        <canvas id="toolpath-canvas"></canvas>
+        <div class="toolpath-controls">
+          <p class="field field-wide">
+            <label for="layer-range">Layers <output id="layer-readout">—</output></label>
+            <input id="layer-range" type="range" min="1" max="1" value="1" />
+          </p>
+          <p class="field">
+            <label for="show-travel">
+              <input id="show-travel" type="checkbox" checked /> Travel moves
+            </label>
+          </p>
+        </div>
+        <p id="toolpath-legend" class="legend"></p>
+        <p class="disclaimer">Drag to orbit. These are the real extrusion paths this quote was priced from.</p>
+      </section>
+
+      <footer class="footer">
+        <p>Powered by <code>three-slicer/client</code>, <code>three-slicer/settings</code>, <code>three-slicer/viewer/loaders</code></p>
+        <p id="timings" class="timings"></p>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
