@@ -27,6 +27,8 @@ node_modules/
 
 # ── web/ (the demo app) + packages/ (the npm workspaces) ──
 web/**/dist/
+examples/**/dist/
+web/viewer/public/demos/
 web/**/*.gcode
 web/**/*.tsbuildinfo
 packages/**/dist/
