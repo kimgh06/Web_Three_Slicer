@@ -19,6 +19,27 @@ export function settingScalar(settings: SlicerSettings | null | undefined, key: 
  */
 export function deriveKernelParams(settings: SlicerSettings | null | undefined, opts?: { plate?: number }): Record<string, unknown>
 
+/** Which slicing technology the settings map's printer profile declares. Defaults to FFF. */
+export function printerTechnology(settings: SlicerSettings | null | undefined): 'FFF' | 'SLA'
+
+/**
+ * Settings map -> SLA (resin) slice params for the pure-JS contour slicer + the display geometry the SL1 raster
+ * export needs. Separate from deriveKernelParams — that one feeds the WASM kernel and its key set is pinned.
+ */
+export function deriveSlaParams(settings: SlicerSettings | null | undefined): {
+  layer_height: number
+  initial_layer_height: number
+  exposure_time: number
+  initial_exposure_time: number
+  faded_layers: number
+  display_width: number
+  display_height: number
+  display_pixels_x: number
+  display_pixels_y: number
+  supports_enable: boolean
+  pad_enable: boolean
+}
+
 /**
  * A 3mf project's raw `Metadata/project_settings.config` -> a settings map this API accepts.
  * Upstream writes every option as a string ("0"/"1" for a bool, "0.2" for a float, one entry per extruder for a
@@ -108,6 +129,19 @@ export const printerKeys: string[]
 
 /** Vendor -> profile name -> entry, straight from the data. For building a picker. */
 export const printersByVendor: Record<string, Record<string, PrinterEntry>>
+
+/** Vendor -> slicing technology. Absent means FFF; only the resin vendor bundles are marked. */
+export const printerTechByVendor: Record<string, 'SLA' | 'FFF'>
+
+/** The resin material catalog (SLA vendor bundles, inherits flattened). `layerHeight` is the preset's
+ *  compatibility condition reduced to a number. */
+export const resinCatalog: Array<{
+  name: string; bundle: string; type: string; vendor: string; colour: string
+  exposure_time?: number; initial_exposure_time?: number; initial_layer_height?: number; layerHeight?: number
+}>
+
+/** The settings a resin material applies (exposure family + the remembered pick). `null` when unknown. */
+export function resinSettingsFor(name: string): SlicerSettings | null
 
 /** The settings a printer profile applies, ready to merge. `null` when the name is unknown. */
 export function printerSettings(profileName: string): SlicerSettings | null

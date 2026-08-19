@@ -1,8 +1,11 @@
 // three-slicer/client — promise wrapper over the worker protocol in three-slicer/worker.
 import type { SliceLayer, SliceResult } from '../engine/index.d.ts'
 import type { BrushArgs, PaintState, PaintTool } from './worker.d.ts'
+import type { SlaJob } from './sla.d.ts'
 
 export type { BrushArgs, PaintState, PaintTool }
+export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla.d.ts'
+export type * from './sla.d.ts'
 
 export interface ClientSliceCallbacks {
   onProgress?: (done: number, total: number) => void
@@ -36,6 +39,16 @@ export interface SlicerClient {
 
   /** `params` may be an object; it is stringified for you, which the raw protocol does not do. */
   slice(stl: ArrayBuffer | Uint8Array, params: object | string, cb?: ClientSliceCallbacks): Promise<SliceResult>
+
+  /**
+   * Legacy single-object SLA (resin) slice. The JS fallback is contour-only and returns a typed error instead of
+   * silently dropping requested supports or pads. Stats carry `sla: true`, `resin_ml` and `time_estimate` instead of
+   * filament/G-code figures, and no G-code is produced.
+   */
+  sliceSla(stl: ArrayBuffer | Uint8Array, params: object | string, cb?: ClientSliceCallbacks): Promise<SliceResult>
+
+  /** Object-aware SLA job. Objects retain their order, instances and support context for the WASM job bridge. */
+  sliceSlaJob(job: SlaJob, cb?: ClientSliceCallbacks): Promise<SliceResult>
 
   /** Register a mesh for painting. `keepPaint` carries existing marks across a move; `kept` says whether they survived. */
   prepare(stl: ArrayBuffer | Uint8Array, opts?: { keepPaint?: boolean }): Promise<{ facets: number; kept: boolean }>

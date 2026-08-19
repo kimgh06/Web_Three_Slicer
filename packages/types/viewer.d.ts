@@ -101,6 +101,8 @@ export type ViewportPanel =
   | 'bedWarn'
   /** The prime tower card. Only rendered anyway once a second filament exists. */
   | 'towerCard'
+  /** The resin (SLA) card. Takes the filament card's place when the printer profile declares SLA. */
+  | 'resinCard'
 
 /** Value changes reported through {@link ViewportProps.onEvent}. Not fired for the initial values. */
 export type ViewportEvent =
