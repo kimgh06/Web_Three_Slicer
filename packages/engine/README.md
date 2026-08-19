@@ -355,6 +355,26 @@ Two consequences worth knowing before you build on this:
 
 Results carry the split: `stats.filament_mm_by_tool` (indexed by tool number, one slot per extruder, sums to `filament_mm`) and `stats.filament_mm_purge` (the prime/wipe tower share, already included in the per-tool figures). In the streamed toolpath, `paths[k+3]` encodes `role + tool * 16` — mask with `& 15` for the role and `>>> 4` for the tool.
 
+## SLA parameters
+
+The table above is the FFF kernel's reader. The SLA entry (`slice_sla`) reads its own parameter set, produced
+by `deriveSlaParams(settings)` — unlike `deriveKernelParams` it always emits every key (49 today), filling
+schema/reference-machine defaults, because the SLA keys are not shared with another technology whose defaults
+could disagree. The groups:
+
+| Group | Keys |
+| --- | --- |
+| Layers and exposure | `layer_height`, `initial_layer_height`, `exposure_time`, `initial_exposure_time`, `faded_layers` |
+| Display (doubles as the bed) | `display_width/height`, `display_pixels_x/y`, `display_orientation` (portrait default), `display_mirror_x/y`, `bed_width/depth` |
+| Archive identity (config.ini) | `printer_model`, `printer_variant`, `printer_settings_id`, `sla_print_settings_id`, `sla_material_settings_id`, `material_print_speed` |
+| Supports (upstream `SupportTreeConfig`) | `supports_enable`, `support_tree_type`, `support_pillar_diameter`, `support_head_*`, `support_points_density_relative`, `support_critical_angle`, `support_max_bridge_length`, `support_max_pillar_link_distance`, `support_base_*`, `support_small_pillar_diameter_percent`, `support_pillar_widening_factor`, `support_max_bridges_on_pillar`, `support_max_weight_on_model`, `support_object_elevation`, `support_pillar_connection_mode`, `support_buildplate_only`, `slice_closing_radius` |
+| Pad (upstream `PadConfig`) | `pad_enable`, `pad_brim_size`, `pad_wall_thickness`, `pad_wall_height`, `pad_wall_slope`, `pad_max_merge_distance`, `pad_around_object` (typed error) |
+| Capability gate | `hollowing_enable` — `true` is refused with `SLA_UNSUPPORTED_HOLLOWING`, never sliced solid |
+
+The result has no G-code: `stats.sla` is `true`, layers carry the same stride-8 segment stream, `support_mesh`
+and `pad_mesh` are triangle soups for the preview, and `stats.lift_layers` (pad + elevation) is what a preview
+must lift the model by.
+
 ## License
 
 AGPL-3.0-or-later (derived from OrcaSlicer). A web app embedding this package must comply with AGPL — including offering its source to network users.
