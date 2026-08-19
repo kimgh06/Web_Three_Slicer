@@ -98,7 +98,9 @@ console.log('\n[viewer panels: every lockable panel is actually wrapped]')
 const lockable = (viewerTypes.match(/export type LockablePanel =([^\n]*(?:\n\s*\|[^\n]*)*)/)?.[1] ?? '')
   .match(/'([a-zA-Z]+)'/g)?.map(s => s.replace(/'/g, '')) ?? []
 check('LockablePanel declares keys', lockable.length >= 5, lockable.join(' '))
-const unwrapped = lockable.filter(key => !shellSource.includes(`<Panel name="${key}">`))
+// The wrapper takes `panels` explicitly because it lives at module scope — an inner component would be a new
+//  type every render and React would remount the subtree (measured: the layer slider died mid-drag).
+const unwrapped = lockable.filter(key => !shellSource.includes(`<Panel panels={panels} name="${key}">`))
 check('every lockable panel is wrapped in <Panel>', unwrapped.length === 0, unwrapped.join(' '))
 check('every lockable panel is a real panel', lockable.every(key => used.includes(key)),
   lockable.filter(key => !used.includes(key)).join(' '))

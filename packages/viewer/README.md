@@ -63,7 +63,10 @@ Every panel can be switched off, and the values the component owns can be seeded
 - **`panels`** — `{name: false}` hides one. Everything is visible by default, so a host only ever opts out and a
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
   the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
-  `emptyHint`, `status`, `printerCard`, `filamentCard`, `objectList`, `previewControls`, `processCard`, `sliceBar`.
+  `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `objectList`, `previewControls`, `processCard`,
+  `sliceBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
+  `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
+  resin card, and slicing routes to the pure-JS contour slicer with an `.sl1` export instead of G-code.
 - **`gcode`** — G-code text drawn on the selected plate instead of a slice result. `parseGcode` recovers roles from
   `;TYPE:` (OrcaSlicer/PrusaSlicer/Cura), from `;_EXTRUSION_ROLE:` tags and from this kernel's own feature comments;
   bead width comes from `;WIDTH:` or, absent that, from E. What the file never states cannot be recovered: an
