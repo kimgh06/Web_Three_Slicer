@@ -1,0 +1,13 @@
+{
+  "schema": "three-slicer.sla-fixture.v1",
+  "name": "cube-support-off-pad-off",
+  "mesh": { "kind": "box", "origin": [-5, -5, 0], "size": [10, 10, 10] },
+  "settings": {
+    "printer_model": "SL1",
+    "printer_preset": "Original Prusa SL1",
+    "sla_archive_format": "SL1",
+    "layer_height": 0.05,
+    "supports_enable": false,
+    "pad_enable": false
+  }
+}

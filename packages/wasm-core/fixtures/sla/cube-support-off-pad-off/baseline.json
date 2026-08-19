@@ -1,0 +1,12 @@
+{
+  "schema": "three-slicer.sla-feature-disabled-baseline.v1",
+  "fixture": "cube-support-off-pad-off",
+  "source": "PrusaSlicer 2.9.6 native oracle required for parity observables",
+  "observable": {
+    "supportPoints": 0,
+    "role5Paths": 0,
+    "role6Paths": 0,
+    "supportMeshBounds": null,
+    "padMeshBounds": null
+  }
+}
