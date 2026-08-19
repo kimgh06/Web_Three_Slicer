@@ -31,6 +31,12 @@ export async function createSlicer() {
       try { return M.slice(u8(stl), p, onProgress || (() => {})) }
       finally { if (onLayer) M.clear_layer_sink() }
     },
+    // SLA (resin) slice: no G-code — layers carry the mask segment stream, support_mesh/pad_mesh the preview
+    //  soups, stats the resin figures and lift_layers. Same params-object-or-string contract as slice().
+    sliceSla(stl, params, onProgress) {
+      const p = typeof params === 'string' ? params : JSON.stringify(params || {})
+      return M.slice_sla(u8(stl), p, onProgress || (() => {}))
+    },
     paintPrepare(stl) { M.selector_prepare(u8(stl)); return M.selector_facet_count() },
     paint(a) {
       M.selector_paint(a.facet, a.hx, a.hy, a.hz, a.cx, a.cy, a.cz, a.radius, a.enforcer)

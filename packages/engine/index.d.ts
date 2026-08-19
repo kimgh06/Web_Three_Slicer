@@ -86,6 +86,9 @@ export interface PaintArgs {
 }
 export interface Slicer {
   slice(stl: ArrayBuffer | Uint8Array, params: object | string, cb?: SliceCallbacks): SliceResult
+  /** SLA (resin) slice — no G-code: mask segment streams per layer, support/pad meshes, resin stats.
+   *  Params from deriveSlaParams(); a refused capability (e.g. hollowing) sets `error` to its typed code. */
+  sliceSla(stl: ArrayBuffer | Uint8Array, params: object | string, onProgress?: (done: number, total: number) => void): SliceResult
   paintPrepare(stl: ArrayBuffer | Uint8Array): number
   paint(args: PaintArgs): { enf: number; blk: number }
   paintClear(): void
