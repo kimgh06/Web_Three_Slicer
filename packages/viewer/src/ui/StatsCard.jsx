@@ -38,7 +38,9 @@ export default function StatsCard({ stats, overBed, overBedText, overBedModel = 
   return (
     <>
       <div><b>{stats.layers}</b> layers · <b>{stats.segments}</b> segments</div>
-      <div>Filament <b>{stats.filament.toFixed(1)}</b> mm</div>
+      {stats.sla
+        ? <div data-testid="resin-total">Resin <b>{(stats.resinMl ?? 0).toFixed(1)}</b> ml</div>
+        : <div>Filament <b>{stats.filament.toFixed(1)}</b> mm</div>}
       {showBreakdown && perTool.map((millimetres, index) => (
         Number.isFinite(millimetres) && millimetres > 0 ? (
           <div className="stat-tool" key={index} data-testid={`filament-tool-${index}`}>

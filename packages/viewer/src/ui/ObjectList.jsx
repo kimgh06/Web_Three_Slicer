@@ -5,7 +5,7 @@ import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../core/icons.js'
 export default function ObjectList({
   objects, extruderColors, onToggleVisible, onExtruder, onSplit, onRemove,
   selectedIds, onSelect,
-  supportOn, onToggleSupport,
+  supportOn, onToggleSupport, fffSupport = true,
   overhangOn, onToggleOverhang, overhangAngle, paintMode, onTogglePaint,
   supportStyle, supportStyles, onSupportStyle,
   supportFilament, onSupportFilament, supportInterfaceFilament, onSupportInterfaceFilament,
@@ -65,6 +65,9 @@ export default function ObjectList({
           </li>
         ))}
       </ul>
+      {/* The whole block below is FFF support (enable_support and friends). A resin slice generates its own
+          supports through the Resin card's switch, so under SLA this section is absent rather than inert. */}
+      {fffSupport && (<>
       <label className="slice-support"><input type="checkbox" checked={supportOn} onChange={onToggleSupport} title="Generate support structures under overhangs (same as enable_support in the settings panel)" data-testid="support-toggle" /> Generate support</label>
       {/* The two things you actually do about support — see where it is needed, and brush it — used to live only
           on the left gizmo rail, with nothing here to hint they existed. */}
@@ -117,6 +120,7 @@ export default function ObjectList({
           </button>
         </div>
       )}
+      </>)}
     </section>
   )
 }
