@@ -14,14 +14,19 @@
 // replies exactly once, so a FIFO of pending requests is enough to match a reply to its caller — the protocol
 // carries no request ids and does not need them.
 import { engineWorkerURL } from '../index.js'
+import { parseSlaJob, SlaRequestError } from './sla_request.js'
+
+export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla_request.js'
 
 // Which reply type ends which command. A slice has no cmd (that is what selects slicing) and ends on 'done'.
 const REPLY_OF = {
   warmup: 'warm', prepare: 'prepared', paint: 'painted', erase: 'painted', clear: 'painted',
-  importPaint: 'painted', exportPaint: 'paintExport', overlay: 'overlay', slice: 'done',
+  importPaint: 'painted', exportPaint: 'paintExport', overlay: 'overlay', slice: 'done', sla: 'done',
 }
 
 const asBuffer = (data) => (data instanceof ArrayBuffer ? data : data?.buffer ?? data)
+const slaTransferables = (job) => job.objects.flatMap(object => [object, ...(object.modifierVolumes ?? [])])
+  .map(record => asBuffer(record.stl)).filter(buffer => buffer instanceof ArrayBuffer)
 
 /**
  * @param {Worker} [worker] an existing worker to drive. Omit to create one — which only works in a browser,
@@ -49,7 +54,9 @@ export function createSlicerClient(worker = new Worker(engineWorkerURL(), { type
       return
     }
     pending.shift()
-    if (data.type === 'error') { head.reject(new Error(data.error)); return }
+    if (data.type === 'error') {
+      head.reject(data.code ? new SlaRequestError(data.code, data.error) : new Error(data.error)); return
+    }
     if (data.type !== head.expect) { head.reject(new Error(`expected '${head.expect}', got '${data.type}'`)); return }
     // What the layer messages accumulated, if this caller did not take them itself.
     if (data.type === 'done' && head.layers.length) data.assembled = { gcode: head.chunks.join(''), layers: head.layers }
@@ -90,6 +97,28 @@ export function createSlicerClient(worker = new Worker(engineWorkerURL(), { type
       //  took those itself, hand back the same shape a batch slice produces.
       if (!reply.assembled) return result
       return { ...result, gcode: reply.assembled.gcode, layers: reply.assembled.layers }
+    },
+
+    /**
+     * Legacy single-object SLA slice: per-layer closed contours instead of toolpaths. It uses WASM when available;
+     * its contour-only JS fallback rejects requested supports and pads. Same streaming shape as slice(): `onLayer` hands you the layers and the result
+     * carries stats only; without it they are assembled onto the result.
+     */
+    async sliceSla(stl, params, { onProgress, onLayer } = {}) {
+      const buffer = asBuffer(stl)
+      const entry = { cmd: 'sla', stl: buffer, params: typeof params === 'string' ? params : JSON.stringify(params ?? {}) }
+      const reply = await send(entry, { transfer: [buffer], onProgress, onLayer })
+      const result = reply.result ?? {}
+      if (!reply.assembled) return result
+      return { ...result, layers: reply.assembled.layers }
+    },
+
+    async sliceSlaJob(job, { onProgress, onLayer } = {}) {
+      const parsed = parseSlaJob(job)
+      const reply = await send({ cmd: 'slaJob', job: parsed }, { transfer: slaTransferables(parsed), onProgress, onLayer })
+      const result = reply.result ?? {}
+      if (!reply.assembled) return result
+      return { ...result, layers: reply.assembled.layers }
     },
 
     /** Register a mesh for painting. `keepPaint` carries existing marks across a move. */

@@ -15,6 +15,8 @@
 //  A host embedding the viewer in its own product can switch it off (`<Viewport features={{ logs: false }} />`,
 //  which sets `quiet` on the messages it sends): this is a separate module instance from the viewer's log.js and
 //  cannot read a flag set over there.
+import { assertLegacySlaFallback, parseSlaJob } from './sla_request.js'
+
 let quiet = false
 const say = (level, ...args) => { if (!quiet) console[level](...args) }
 
@@ -124,6 +126,66 @@ self.onmessage = async (e) => {
     //  making a save wait on a 4MB WASM load before the first slice is seconds of nothing, for an empty answer.
     if (d.cmd === 'exportPaint' && !modPromise) {
       self.postMessage({ type: 'paintExport', supported: false, facets: [], hex: '' }); return
+    }
+    if (d.cmd === 'slaJob') {
+      const job = parseSlaJob(d.job)
+      if (!modPromise) modPromise = loadCore()
+      const Kernel = await modPromise
+      const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
+      if (Kernel.slice_sla_job) {
+        Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
+          const transfer = []
+          if (paths?.buffer) transfer.push(paths.buffer)
+          if (widths?.buffer) transfer.push(widths.buffer)
+          self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
+        })
+        let r
+        try { r = Kernel.slice_sla_job(job, onProgress) }
+        finally { Kernel.clear_layer_sink() }
+        if (r?.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
+        self.postMessage({ type: 'done', result: r }); return
+      }
+      self.postMessage({ type: 'error', code: 'SLA_UNSUPPORTED_OBJECT_AWARE',
+                        error: 'Object-aware SLA slicing requires WASM kernel support' })
+      return
+    }
+    // SLA slicing runs in the WASM kernel (slice_sla — contours + generated supports, C++ Clipper speed), through
+    //  the same layer-sink streaming a kernel slice uses. The pure-JS contour slicer (sla_core.js) stays as the
+    //  fallback for a loaded kernel that predates the binding — it produces the same stream, minus the supports.
+    if (d.cmd === 'sla') {
+      const params = typeof d.params === 'string' ? d.params : JSON.stringify(d.params ?? {})
+      if (!modPromise) modPromise = loadCore()
+      const Kernel = await modPromise
+      const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
+      if (Kernel.slice_sla) {
+        Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
+          const transfer = []
+          if (paths && paths.buffer) transfer.push(paths.buffer)
+          if (widths && widths.buffer) transfer.push(widths.buffer)
+          self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
+        })
+        let r
+        try { r = Kernel.slice_sla(new Uint8Array(d.stl), params, onProgress) }
+        finally { Kernel.clear_layer_sink() }
+        if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
+        self.postMessage({ type: 'done', result: r })
+        return
+      }
+      const { sliceSla } = await import('./sla_core.js')
+      const fallbackParams = JSON.parse(params)
+      assertLegacySlaFallback(fallbackParams)
+      const r = sliceSla(new Uint8Array(d.stl), fallbackParams, {
+        onProgress,
+        onLayer: (L) => {
+          const transfer = []
+          if (L.paths?.buffer) transfer.push(L.paths.buffer)
+          if (L.widths?.buffer) transfer.push(L.widths.buffer)
+          self.postMessage({ type: 'layer', z: L.z, idx: L.idx, gcode: '', paths: L.paths, widths: L.widths }, transfer)
+        },
+      })
+      if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
+      self.postMessage({ type: 'done', result: r })
+      return
     }
     if (!modPromise) modPromise = loadCore()
     const Module = await modPromise
@@ -247,6 +309,6 @@ self.onmessage = async (e) => {
     self.postMessage({ type: 'done', result: r })
   } catch (err) {
     // Includes the WASM abort("memory access out of bounds") — the main thread's OOM ladder decides on re-creation / economy retry.
-    self.postMessage({ type: 'error', error: String((err && err.message) || err) })
+    self.postMessage({ type: 'error', error: String((err && err.message) || err), ...(err?.code ? { code: err.code } : {}) })
   }
 }
