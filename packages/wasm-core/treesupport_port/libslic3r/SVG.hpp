@@ -10,6 +10,7 @@ class SVG {
 public:
     template <class... A> SVG(A&&...) {}
     template <class... A> void draw(A&&...) {}
+    template <class... A> void draw_original(A&&...) {}  // (SLA port) SupportIslands debug helpers reference it
     template <class... A> void draw_outline(A&&...) {}
     template <class... A> void draw_text(A&&...) {}
     template <class... A> void draw_legend(A&&...) {}

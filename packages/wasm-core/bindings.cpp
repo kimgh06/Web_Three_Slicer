@@ -149,6 +149,8 @@ static em::val selector_project_counts(em::val zsVal, bool enforcer) {
 
 EMSCRIPTEN_BINDINGS(slicer) {
   em::function("slice", &slice);
+  em::function("slice_sla", &slice_sla);                     // SLA (resin): contours + generated supports, no G-code
+
   em::function("set_layer_sink", &set_layer_sink);           // stage 30: register cb(z,idx,gcodeChunk,pathsF32,widthsF32) -> streaming
   em::function("clear_layer_sink", &clear_layer_sink);       //  unregister it (the next slice runs in batch mode)
   em::function("heap_size", &heap_size);                     // stage 30: for measuring the WASM heap peak (bytes)
