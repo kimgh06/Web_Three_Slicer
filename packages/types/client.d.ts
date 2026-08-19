@@ -4,7 +4,8 @@ import type { BrushArgs, PaintState, PaintTool } from './worker.d.ts'
 import type { SlaJob } from './sla.d.ts'
 
 export type { BrushArgs, PaintState, PaintTool }
-export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla.d.ts'
+// Value re-exports must not name the .d.ts directly (TS2846) — the .js specifier resolves to sla.d.ts.
+export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla.js'
 export type * from './sla.d.ts'
 
 export interface ClientSliceCallbacks {
