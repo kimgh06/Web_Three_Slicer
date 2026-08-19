@@ -1277,5 +1277,347 @@
     }
    ]
   }
+ ],
+ "TabPrinter::build_sla": [
+  {
+   "page": "General",
+   "icon": "printer",
+   "line": 3016,
+   "groups": [
+    {
+     "group": "Size and coordinates",
+     "line": 3017,
+     "options": [
+      "max_print_height"
+     ]
+    },
+    {
+     "group": "Display",
+     "line": 3024,
+     "options": [
+      "display_width",
+      "display_height",
+      "<custom-widget line:3032>",
+      "display_orientation",
+      "display_mirror_x",
+      "display_mirror_y"
+     ]
+    },
+    {
+     "group": "Tilt",
+     "line": 3039,
+     "options": [
+      "<custom-widget line:3044>"
+     ]
+    },
+    {
+     "group": "Corrections",
+     "line": 3046,
+     "options": [
+      "<custom-widget line:3053>",
+      "absolute_correction",
+      "elefant_foot_compensation",
+      "elefant_foot_min_width",
+      "gamma_correction"
+     ]
+    },
+    {
+     "group": "Exposure",
+     "line": 3059,
+     "options": [
+      "min_exposure_time",
+      "max_exposure_time",
+      "min_initial_exposure_time",
+      "max_initial_exposure_time"
+     ]
+    },
+    {
+     "group": "Output",
+     "line": 3066,
+     "options": [
+      "sla_archive_format",
+      "sla_output_precision"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Notes",
+   "icon": "note",
+   "line": 3074,
+   "groups": [
+    {
+     "group": "Notes",
+     "line": 3075,
+     "options": []
+    }
+   ]
+  },
+  {
+   "page": "Dependencies",
+   "icon": "wrench",
+   "line": 3081,
+   "groups": [
+    {
+     "group": "Profile dependencies",
+     "line": 3082,
+     "options": []
+    }
+   ]
+  }
+ ],
+ "TabSLAMaterial::build": [
+  {
+   "page": "Material",
+   "icon": "resin",
+   "line": 5437,
+   "groups": [
+    {
+     "group": "Material",
+     "line": 5439,
+     "options": [
+      "material_colour",
+      "bottle_cost",
+      "bottle_volume",
+      "bottle_weight",
+      "material_density"
+     ]
+    },
+    {
+     "group": "Layers",
+     "line": 5478,
+     "options": [
+      "initial_layer_height"
+     ]
+    },
+    {
+     "group": "Exposure",
+     "line": 5481,
+     "options": [
+      "exposure_time",
+      "initial_exposure_time"
+     ]
+    },
+    {
+     "group": "Corrections",
+     "line": 5485,
+     "options": [
+      "<custom-widget line:5492>",
+      "zcorrection_layers",
+      "<custom-widget line:5502>"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Notes",
+   "icon": "note",
+   "line": 5506,
+   "groups": [
+    {
+     "group": "Notes",
+     "line": 5507,
+     "options": []
+    }
+   ]
+  },
+  {
+   "page": "Dependencies",
+   "icon": "wrench",
+   "line": 5514,
+   "groups": [
+    {
+     "group": "Profile dependencies",
+     "line": 5515,
+     "options": []
+    }
+   ]
+  },
+  {
+   "page": "Material printing profile",
+   "icon": "note",
+   "line": 5535,
+   "groups": [
+    {
+     "group": "Material printing profile",
+     "line": 5537,
+     "options": [
+      "material_print_speed"
+     ]
+    },
+    {
+     "group": "Tilt",
+     "line": 5540,
+     "options": [
+      "area_fill"
+     ]
+    },
+    {
+     "group": "Temperature",
+     "line": 5543,
+     "options": [
+      "<custom-widget line:5560>",
+      "<custom-widget line:5590>"
+     ]
+    }
+   ]
+  }
+ ],
+ "TabSLAPrint::build": [
+  {
+   "page": "Layers and perimeters",
+   "icon": "layers",
+   "line": 6066,
+   "groups": [
+    {
+     "group": "Layers",
+     "line": 6068,
+     "options": [
+      "layer_height",
+      "faded_layers"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Supports",
+   "icon": "support",
+   "line": 6072,
+   "groups": [
+    {
+     "group": "Supports",
+     "line": 6074,
+     "options": [
+      "supports_enable",
+      "support_tree_type",
+      "support_enforcers_only"
+     ]
+    },
+    {
+     "group": "Automatic generation",
+     "line": 6081,
+     "options": [
+      "support_points_density_relative"
+     ]
+    },
+    {
+     "group": "Support head",
+     "line": 5864,
+     "options": [
+      "support_head_front_diameter",
+      "support_head_penetration",
+      "support_head_width"
+     ]
+    },
+    {
+     "group": "Support pillar",
+     "line": 5869,
+     "options": [
+      "support_pillar_diameter",
+      "support_small_pillar_diameter_percent",
+      "support_max_bridges_on_pillar",
+      "support_pillar_connection_mode",
+      "support_buildplate_only",
+      "support_pillar_widening_factor",
+      "support_max_weight_on_model",
+      "support_base_diameter",
+      "support_base_height",
+      "support_base_safety_distance",
+      "support_object_elevation",
+      "<custom-widget line:5890>"
+     ]
+    },
+    {
+     "group": "Connection of the support sticks and junctions",
+     "line": 5892,
+     "options": [
+      "support_critical_angle",
+      "support_max_bridge_length",
+      "support_max_pillar_link_distance"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Pad",
+   "icon": "pad",
+   "line": 6084,
+   "groups": [
+    {
+     "group": "Pad",
+     "line": 6085,
+     "options": [
+      "pad_enable",
+      "pad_wall_thickness",
+      "pad_wall_height",
+      "pad_brim_size",
+      "pad_max_merge_distance",
+      "pad_wall_slope",
+      "pad_around_object",
+      "pad_around_object_everywhere",
+      "pad_object_gap",
+      "pad_object_connector_stride",
+      "pad_object_connector_width",
+      "pad_object_connector_penetration"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Hollowing",
+   "icon": "hollowing",
+   "line": 6102,
+   "groups": [
+    {
+     "group": "Hollowing",
+     "line": 6103,
+     "options": [
+      "hollowing_enable",
+      "hollowing_min_thickness",
+      "hollowing_quality",
+      "hollowing_closing_distance"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Advanced",
+   "icon": "wrench",
+   "line": 6109,
+   "groups": [
+    {
+     "group": "Slicing",
+     "line": 6110,
+     "options": [
+      "slice_closing_radius",
+      "slicing_mode"
+     ]
+    }
+   ]
+  },
+  {
+   "page": "Output options",
+   "icon": "output+page_white",
+   "line": 6114,
+   "groups": [
+    {
+     "group": "Output file",
+     "line": 6115,
+     "options": []
+    }
+   ]
+  },
+  {
+   "page": "Dependencies",
+   "icon": "wrench",
+   "line": 6120,
+   "groups": [
+    {
+     "group": "Profile dependencies",
+     "line": 6121,
+     "options": []
+    }
+   ]
+  }
  ]
 }

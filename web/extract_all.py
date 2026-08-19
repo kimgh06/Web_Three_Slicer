@@ -14,9 +14,21 @@ os.makedirs(OUT, exist_ok=True)
 def read(p):
     return open(os.path.join(SRC, p), encoding='utf-8', errors='replace').read()
 
+# PrusaSlicer checkout — the SLA (resin) reference. Orca dropped the SLA pipeline, so the resin option
+#  definitions and the resin tabs can only come from here. The pass is optional: without the checkout the
+#  committed artifacts simply keep whatever SLA entries they already carry.
+PRUSA = os.path.join(REPO, 'slicers', 'PrusaSlicer')
+
+def read_prusa(p):
+    return open(os.path.join(PRUSA, p), encoding='utf-8', errors='replace').read()
+
 # ---------------------------------------------------------------- ui-tree
-def extract_ui_tree():
-    src = read('src/slic3r/GUI/Tab.cpp')
+def extract_ui_tree(src=None, implicit_pages=False):
+    # implicit_pages: PrusaSlicer's TabSLAPrint::build_sla_support_params builds groups onto a page it receives
+    #  as an argument, so there is no add_options_page call to open one — a synthesized unnamed page keeps those
+    #  groups instead of dropping them. Off for the Orca pass, so its output stays byte-identical.
+    if src is None:
+        src = read('src/slic3r/GUI/Tab.cpp')
     lines = src.split('\n')
     # Function boundaries: every Tab-family member function
     funcs = []  # (name, start_line_idx)
@@ -53,10 +65,19 @@ def extract_ui_tree():
                 cur_page = {'page': m.group(1), 'icon': m.group(2) or '', 'line': ln + 1, 'groups': []}
                 pages.append(cur_page); cur_group = None; continue
             m = re.search(r'new_optgroup\(L\("([^"]*)"\)', l)
-            if m and cur_page is not None:
+            if m:
+                if cur_page is None:
+                    if not implicit_pages: continue
+                    cur_page = {'page': '', 'icon': '', 'line': ln + 1, 'groups': []}
+                    pages.append(cur_page)
                 cur_group = {'group': m.group(1), 'line': ln + 1, 'options': []}
                 cur_page['groups'].append(cur_group); continue
             m = re.search(r'append_single_option_line\("([^"]+)"(?:\s*,\s*"([^"]*)")?', l)
+            if m and cur_group is not None:
+                cur_group['options'].append(m.group(1)); continue
+            # PrusaSlicer's SLA support page appends one line holding an option per prefix column
+            #  (add_options_into_line(optgroup, prefixes, "key")); the plain spelling names the line.
+            m = re.search(r'add_options_into_line\(\s*optgroup\s*,\s*\w+\s*,\s*"([^"]+)"', l)
             if m and cur_group is not None:
                 cur_group['options'].append(m.group(1)); continue
             # Free helper `append_option_line(optgroup, <expr>, ...)` — the key is the 2nd argument and may be built from a loop variable
@@ -149,14 +170,25 @@ def _parse_list_items(raw, macros):
 
 def extract_schema():
     src = read('src/libslic3r/PrintConfig.cpp')
-    macros = _parse_macros()
+    options = _options_from_src(src, _parse_macros())
+    options.update(_parse_axis_limits(src))
+    options.update(_parse_filament_overrides(src, options))
+    return options
+
+# The `def = this->add("key", coType)` statement grammar. The SLA pass widens it: PrusaSlicer registers the
+#  support options through a prefix argument (one plain and one 'branching' spelling per option) and a few tilt
+#  options through add_nullable.
+ADD_RE = r'(?:auto (?P<name>\w+) = )?def ?= ?this->add\(\s*"(?P<key>[^"]+)"\s*,\s*(?P<ctype>co\w+)\s*\)'
+SLA_ADD_RE = r'(?:auto (?P<name>\w+) = )?def ?= ?this->add(?:_nullable)?\(\s*(?P<prefix>prefix \+ )?"(?P<key>[^"]+)"\s*,\s*(?P<ctype>co\w+)\s*\)'
+FUNC_RE = r'void\s+(?:\w+)ConfigDef::(\w+)\(\)'
+SLA_FUNC_RE = r'void\s+(?:\w+)ConfigDef::(\w+)\([^)]*\)'
+
+def _options_from_src(src, macros, add_re=ADD_RE, func_re=FUNC_RE):
     ident2key, enum_keys_maps, per_enum_maps = _parse_enum_maps(src)
     # Comment stripping happens in the tokenizer, which recognizes strings (protecting https:// inside tooltips)
     # Offset map used to track which function (init_common_params, …) a statement belongs to
-    func_marks = [(m.start(), m.group(1)) for m in
-                  re.finditer(r'void\s+\w+ConfigDef::(\w+)\(\)|(?:^|\n)(\w+ConfigDef)::\1?\(\)', src)]
     func_marks = [(m.start(), m.group(1) or 'ctor') for m in
-                  re.finditer(r'void\s+(?:\w+)ConfigDef::(\w+)\(\)', src)]
+                  re.finditer(func_re, src)]
     def func_of(pos):
         name = 'unknown'
         for p, n in func_marks:
@@ -204,14 +236,16 @@ def extract_schema():
     BOOL_FIELDS = ['multiline', 'full_width', 'is_code', 'readonly', 'nullable']
     for pos, st in stmts:
         st_flat = ' '.join(st.split()).lstrip('{} ')  # drop leftover opening/closing braces of a block
-        m = re.match(r'(?:auto (\w+) = )?def ?= ?this->add\(\s*"([^"]+)"\s*,\s*(co\w+)\s*\)', st_flat)
+        m = re.match(add_re, st_flat)
         if m:
-            key, ctype = m.group(2), m.group(3)
+            key, ctype = m.group('key'), m.group('ctype')
             # With no mode given, the C++ default is comSimple (Config.hpp ConfigOptionDef)
             cur = {'type': ctype, 'mode': 'simple', 'defined_in': func_of(pos), 'line': line_of(pos)}
+            if m.groupdict().get('prefix'):     # registered under a prefix argument -> both spellings exist
+                cur['prefixed'] = True
             options[key] = cur
-            if m.group(1):                      # auto def_x = def = this->add(...)
-                named_defs[m.group(1)] = cur
+            if m.group('name'):                 # auto def_x = def = this->add(...)
+                named_defs[m.group('name')] = cur
             continue
         if cur is None:
             continue
@@ -299,9 +333,47 @@ def extract_schema():
         if et and et in enum_keys_maps and not o.get('enum_values'):
             o['enum_values'] = list(enum_keys_maps[et])
             o['enum_values_from'] = 'keys_map'
-    options.update(_parse_axis_limits(src))
-    options.update(_parse_filament_overrides(src, options))
     return options
+
+# ---------------------------------------------------------------- SLA pass (PrusaSlicer sources)
+def extract_sla_schema():
+    """PrusaSlicer's resin option definitions (init_sla_params / init_sla_support_params / init_sla_tilt_params).
+    Only these functions are taken — the FFF half of that file is Orca's job. A prefixed option is emitted under
+    both its plain and its 'branching' spelling, mirroring the two init_sla_support_params registrations."""
+    try:
+        src = read_prusa('src/libslic3r/PrintConfig.cpp')
+    except FileNotFoundError:
+        return {}
+    opts = _options_from_src(src, {}, add_re=SLA_ADD_RE, func_re=SLA_FUNC_RE)
+    sla_funcs = {'init_sla_params', 'init_sla_support_params', 'init_sla_tilt_params'}
+    out = {}
+    for key, o in opts.items():
+        if o.get('defined_in') not in sla_funcs:
+            continue
+        if o.pop('prefixed', False):
+            out[key] = o
+            out['branching' + key] = dict(o)
+        else:
+            out[key] = o
+    return out
+
+def extract_sla_ui():
+    """PrusaSlicer's resin tabs, under upstream's own builder names — the same keying the Orca tree uses, which is
+    what lets a settings panel pick builders by printer technology. The support-parameter groups live in a helper
+    that receives its page as an argument; they are spliced back into the Supports page the way upstream calls it."""
+    try:
+        src = read_prusa('src/slic3r/GUI/Tab.cpp')
+    except FileNotFoundError:
+        return {}
+    tree = extract_ui_tree(src, implicit_pages=True)
+    support_params = tree.get('TabSLAPrint::build_sla_support_params')
+    main = tree.get('TabSLAPrint::build')
+    if main and support_params:
+        target = next((p for p in main if p['page'] == 'Supports'), None)
+        if target:
+            target['groups'].extend(g for p in support_params for g in p['groups'])
+    keep = ('TabSLAPrint::build', 'TabSLAMaterial::build', 'TabPrinter::build_sla')
+    return {k: v for k, v in tree.items() if k in keep and v}
 
 def _parse_filament_overrides(src, options):
     """The `filament_*` retraction overrides (PrintConfig.cpp ~7864) are generated by a loop over
@@ -626,6 +698,139 @@ def extract_printers(schema):
         by_vendor.setdefault(vendor, {})[name] = [nozzle, index[sig], model, default_preset]
     return {'keys': PRINTER_KEYS, 'sets': sets, 'byVendor': by_vendor}
 
+# ---------------------------------------------------------------- SLA printers (PrusaSlicer vendor bundles)
+# The keys an SLA machine sets on top of the shared geometry keys. Appended to printers.json `keys`; the FFF
+#  rows stay short and every reader already skips missing tail cells.
+SLA_PRINTER_KEYS = ['printer_technology', 'display_width', 'display_height', 'display_pixels_x', 'display_pixels_y',
+    # The machine's default sla_print preset rides on the same row until a resin preset picker exists —
+    #  upstream keeps these in the sla_print PRESET ('0.05 Normal'), not in the printer, and without them the
+    #  support tree ran on the vestigial schema defaults (zigzag became dynamic, head necks a third the length).
+    'layer_height', 'supports_enable', 'support_head_front_diameter', 'support_head_penetration',
+    'support_head_width', 'support_pillar_diameter', 'support_pillar_connection_mode',
+    'support_base_diameter', 'support_base_height', 'support_critical_angle', 'support_max_bridge_length',
+    'support_object_elevation', 'support_points_density_relative', 'pad_enable',
+    # The machine's default resin MATERIAL (printer_model default_materials) rides along the same way — the
+    #  exposure family lives in the sla_material preset in upstream's layering.
+    'exposure_time', 'initial_exposure_time', 'initial_layer_height', 'sla_material_settings_id']
+
+def _parse_ini_sections(text):
+    sections, cur = {}, None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'): continue
+        if line.startswith('[') and line.endswith(']'):
+            cur = {}; sections[line[1:-1]] = cur; continue
+        if cur is None or '=' not in line: continue
+        k, _, v = line.partition('=')
+        cur[k.strip()] = v.strip()
+    return sections
+
+def extract_sla_printers(sch_ref):
+    """PrusaSlicer's SLA vendor bundles (INI, inherits-chained) -> the column layout extract_printers builds.
+    Orca ships no SLA machines at all, so this is the only source the resin printer picker can have."""
+    base = os.path.join(PRUSA, 'resources', 'profiles')
+    if not os.path.isdir(base): return None
+    all_keys = PRINTER_KEYS + SLA_PRINTER_KEYS
+    sets, index, by_vendor, tech_by_vendor, resins = [], {}, {}, {}, []
+    for fname in sorted(os.listdir(base)):
+        if not fname.endswith('.ini'): continue
+        try: text = open(os.path.join(base, fname), encoding='utf-8', errors='replace').read()
+        except OSError: continue
+        if 'printer_technology = SLA' not in text: continue
+        vendor = fname[:-4]
+        sections = _parse_ini_sections(text)
+        printers = {name.split(':', 1)[1]: kv for name, kv in sections.items() if name.startswith('printer:')}
+        def resolve(name, depth=0):
+            kv = printers.get(name)
+            if kv is None or depth > 10: return {}
+            out = {}
+            for parent in [s.strip() for s in kv.get('inherits', '').split(';') if s.strip()]:
+                out.update(resolve(parent, depth + 1))
+            out.update({k: v for k, v in kv.items() if k != 'inherits'})
+            return out
+        sla_prints = {name.split(':', 1)[1]: kv for name, kv in sections.items() if name.startswith('sla_print:')}
+        sla_models = {name.split(':', 1)[1]: kv for name, kv in sections.items() if name.startswith('printer_model:')}
+        sla_mats = {name.split(':', 1)[1]: kv for name, kv in sections.items() if name.startswith('sla_material:')}
+        def resolve_mat(name, depth=0):
+            kv = sla_mats.get(name)
+            if kv is None or depth > 10: return {}
+            out = {}
+            for parent in [s.strip() for s in kv.get('inherits', '').split(';') if s.strip()]:
+                out.update(resolve_mat(parent, depth + 1))
+            out.update({k: v for k, v in kv.items() if k != 'inherits'})
+            return out
+        # Material catalog for the picker: every concrete material, inherits flattened. The layer-height
+        #  compatibility condition becomes a plain number so the card can filter without an expression engine.
+        for name in sorted(sla_mats):
+            if name.startswith('*'): continue
+            m = resolve_mat(name)
+            entry = {'name': name, 'bundle': vendor,
+                     'type': m.get('material_type', ''), 'vendor': m.get('material_vendor', ''),
+                     'colour': m.get('material_colour', '')}
+            for key in ('exposure_time', 'initial_exposure_time', 'initial_layer_height'):
+                try: entry[key] = float(m[key])
+                except (KeyError, ValueError): pass
+            lh_m = re.search(r'layer_height\s*==\s*([0-9.]+)', m.get('compatible_prints_condition', ''))
+            if lh_m: entry['layerHeight'] = float(lh_m.group(1))
+            resins.append(entry)
+        def resolve_print(name, depth=0):
+            kv = sla_prints.get(name)
+            if kv is None or depth > 10: return {}
+            out = {}
+            for parent in [s.strip() for s in kv.get('inherits', '').split(';') if s.strip()]:
+                out.update(resolve_print(parent, depth + 1))
+            out.update({k: v for k, v in kv.items() if k != 'inherits'})
+            return out
+        for name in sorted(printers):
+            if name.startswith('*'): continue
+            vals = resolve(name)
+            if vals.get('printer_technology') != 'SLA': continue
+            # Merge the machine's default resin print preset (support/pad values) into the applied row.
+            preset = resolve_print(vals.get('default_sla_print_profile', ''))
+            for key, raw in preset.items():
+                if key in SLA_PRINTER_KEYS and key not in vals:
+                    vals[key] = raw
+            # ...and the default MATERIAL's exposure family. The printer section's default_sla_material_profile
+            #  is a stale pre-rename pointer in the current bundles — printer_model.default_materials is live.
+            model_kv = sla_models.get(vals.get('printer_model', ''), {})
+            default_mat = model_kv.get('default_materials', '') or vals.get('default_sla_material_profile', '')
+            mat = resolve_mat(default_mat)
+            if mat:
+                vals.setdefault('sla_material_settings_id', default_mat)
+                for key in ('exposure_time', 'initial_exposure_time', 'initial_layer_height'):
+                    if key in mat and key not in vals:
+                        vals[key] = mat[key]
+            row_vals = {'printer_technology': 'SLA'}
+            for key in SLA_PRINTER_KEYS[5:]:
+                if key not in vals: continue
+                coerced = _coerce(vals[key], (sch_ref.get(key) or {}).get('type', ''))
+                if coerced is not None: row_vals[key] = coerced
+            for key in ('display_width', 'display_height'):
+                try: row_vals[key] = float(vals[key])
+                except (KeyError, ValueError): pass
+            for key in ('display_pixels_x', 'display_pixels_y'):
+                try: row_vals[key] = int(float(vals[key]))
+                except (KeyError, ValueError): pass
+            try: row_vals['printable_height'] = float(vals['max_print_height'])
+            except (KeyError, ValueError): pass
+            if 'bed_shape' in vals:   # "0x0,120.96x0,…" -> [[x, y], …], the pair list every printable_area consumer indexes
+                pts = []
+                for entry in vals['bed_shape'].split(','):
+                    xy = entry.split('x')
+                    if len(xy) == 2:
+                        try: pts.append([float(xy[0]), float(xy[1])])
+                        except ValueError: pass
+                if len(pts) >= 3: row_vals['printable_area'] = pts
+            row = [row_vals.get(k) for k in all_keys]
+            sig = json.dumps(row, sort_keys=True)
+            if sig not in index:
+                index[sig] = len(sets); sets.append(row)
+            model = vals.get('printer_model', name)
+            by_vendor.setdefault(vendor, {})[name] = ['', index[sig], model, vals.get('default_sla_print_profile', '')]
+        if vendor in by_vendor: tech_by_vendor[vendor] = 'SLA'
+    if not by_vendor: return None
+    return {'keys': all_keys, 'sets': sets, 'byVendor': by_vendor, 'techByVendor': tech_by_vendor, 'resins': resins}
+
 # ---------------------------------------------------------------- invalidation
 def extract_invalidation():
     def parse(path, fn_sig):
@@ -756,11 +961,26 @@ def extract_preset_keys(schema):
 # ---------------------------------------------------------------- main
 if __name__ == '__main__':
     ui = extract_ui_tree()
+    sch = extract_schema()
+
+    # SLA pass: resin tabs + resin option definitions from the PrusaSlicer checkout. Schema keys Orca already
+    #  defines are kept as Orca defined them (its vestigial SLA entries are what the committed artifacts and the
+    #  derive defaults were measured against); only the missing ones are added.
+    sla_ui = extract_sla_ui()
+    sla_sch = extract_sla_schema()
+    sla_added = [k for k in sla_sch if k not in sch]
+    for k in sla_added:
+        sch[k] = sla_sch[k]
+    ui.update(sla_ui)
+    if sla_ui or sla_added:
+        print(f"sla: +{len(sla_added)} schema keys, +{len(sla_ui)} builders (PrusaSlicer pass)")
+    else:
+        print("sla: PrusaSlicer checkout absent — SLA pass skipped, committed entries kept")
+
     json.dump(ui, open(os.path.join(OUT, 'ui-tree.json'), 'w'), ensure_ascii=False, indent=1)
     npages = sum(len(v) for v in ui.values())
     nopts = sum(len(g['options']) for v in ui.values() for p in v for g in p['groups'])
 
-    sch = extract_schema()
     json.dump(sch, open(os.path.join(OUT, 'config-schema.json'), 'w'), ensure_ascii=False, indent=1)
 
     inv = extract_invalidation()
@@ -770,6 +990,18 @@ if __name__ == '__main__':
     json.dump(tog, open(os.path.join(OUT, 'toggle-rules.json'), 'w'), ensure_ascii=False, indent=1)
 
     pr = extract_printers(sch)
+    # SLA machines ride in the same artifact: keys appended (FFF rows stay short), set rows offset, new vendors,
+    #  plus the per-vendor technology map the printer picker filters on.
+    sla_pr = extract_sla_printers(sch)
+    if sla_pr:
+        base_sets = len(pr['sets'])
+        pr['keys'] = pr['keys'] + SLA_PRINTER_KEYS
+        pr['sets'].extend(sla_pr['sets'])
+        for vendor, models in sla_pr['byVendor'].items():
+            pr['byVendor'][vendor] = {name: [e[0], e[1] + base_sets, e[2], e[3]] for name, e in models.items()}
+        pr['techByVendor'] = sla_pr['techByVendor']
+        pr['resins'] = sla_pr['resins']
+        print(f"sla printers: +{sum(len(v) for v in sla_pr['byVendor'].values())} across {len(sla_pr['byVendor'])} vendors; {len(sla_pr['resins'])} resin materials")
     json.dump(pr, open(os.path.join(OUT, 'printers.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
     nprinters = sum(len(v) for v in pr['byVendor'].values())
 
