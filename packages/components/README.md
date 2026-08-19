@@ -6,6 +6,8 @@ Reusable React components for the browser slicer. Props-driven — no global sta
 
 An OrcaSlicer-style settings form generated from `three-slicer/data` (schema + UI tree + toggle rules): tab/page/group navigation, mode filter (simple/advanced/expert), search across 923 options, dirty markers with per-option reset, and enable/disable rules evaluation.
 
+The tab set follows the printer profile's technology: a settings map whose `printer_technology` says SLA swaps the FFF tabs for the SLA ones (print/material/printer builders carry the technology in their upstream builder name, which is what the filter reads). No prop needed — change the profile in the shared settings map and the panel follows.
+
 ```bash
 npm i three-slicer     # react is a peer dependency — npm installs it for you
 ```
