@@ -51,3 +51,5 @@ packages/wasm-core/compare_*.mjs
 slicer/
 # ...and the multi-slicer reference checkout beside it (OrcaSlicer + PrusaSlicer clones, 2.3GB, each its own repo)
 slicers/
+blogs/
+.omo/
