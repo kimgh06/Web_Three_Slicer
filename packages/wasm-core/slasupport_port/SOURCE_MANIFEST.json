@@ -1,0 +1,406 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "project": "PrusaSlicer",
+    "revision": "b028299c770b8380ee81c921a2867d522f288123"
+  },
+  "build": {
+    "compileFlags": [
+      "-O2",
+      "-std=c++17",
+      "-DNDEBUG",
+      "-DCGAL_DISABLE_ROUNDING_MATH_CHECK",
+      "-DCGAL_DISABLE_GMP=1"
+    ],
+    "forbiddenFlags": [
+      "-flto",
+      "-ffast-math",
+      "-Ofast"
+    ],
+    "sourceOrder": [
+      "slasupport_bridge_validate.cpp",
+      "slasupport_slicer_fallback.cpp",
+      "slasupport_bridge.cpp",
+      "slasupport_port/libslic3r/AABBMesh.cpp",
+      "slasupport_port/libslic3r/MeshNormals.cpp",
+      "slasupport_port/libslic3r/SLA/SpatIndex.cpp",
+      "slasupport_port/libslic3r/SLA/Clustering.cpp",
+      "slasupport_port/libslic3r/SLA/SupportTreeMesher.cpp",
+      "slasupport_port/libslic3r/SLA/SupportTreeBuilder.cpp",
+      "slasupport_port/libslic3r/SLA/DefaultSupportTree.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/EvaluateNeighbor.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/ExpandNeighbor.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/LineUtils.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/ParabolaUtils.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/PointUtils.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/PolygonUtils.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/PostProcessNeighbor.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/PostProcessNeighbors.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/SampleConfigFactory.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/SupportIslandPoint.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/UniformSupportIsland.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/VoronoiDiagramCGAL.cpp",
+      "slasupport_port/libslic3r/SLA/SupportIslands/VoronoiGraphUtils.cpp",
+      "slasupport_port/libslic3r/SLA/SupportPointGenerator.cpp",
+      "slasupport_port/libslic3r/Tesselate.cpp",
+      "slasupport_port/libslic3r/SLA/ConcaveHull.cpp",
+      "slasupport_port/libslic3r/SLA/Pad.cpp"
+    ]
+  },
+  "translationUnits": [
+    {
+      "localPath": "slasupport_bridge_validate.cpp",
+      "kind": "bridge",
+      "localSha256": "19a65f20edd1598897d730e3ea131965b481af87918e9277514b69d194e64c22",
+      "dependencyProbe": {
+        "sourceOrder": 0,
+        "includeUniverse": "plain-data bridge",
+        "forbiddenPrefixes": [
+          "slicers/",
+          "slasupport_port/"
+        ]
+      }
+    },
+    {
+      "localPath": "slasupport_slicer_fallback.cpp",
+      "kind": "bridge-fallback",
+      "localSha256": "eac99671bff25798f130f4a24589bba996a3f0532ab923d2d6ad89c46b8a193b",
+      "dependencyProbe": {
+        "sourceOrder": 1,
+        "includeUniverse": "plain-data bridge",
+        "forbiddenPrefixes": [
+          "slicers/",
+          "slasupport_port/"
+        ]
+      }
+    },
+    {
+      "localPath": "slasupport_bridge.cpp",
+      "kind": "bridge",
+      "localSha256": "235d3033af61a48e75626cebea3dc61be83728acf20ddc1603df0f86f4468b69",
+      "dependencyProbe": {
+        "sourceOrder": 2,
+        "includeUniverse": "Prusa SLA plus plain-data bridge",
+        "forbiddenPrefixes": [
+          "slicers/"
+        ]
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/AABBMesh.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/AABBMesh.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "103e51c94a47a156ecbc31e7a705988e1d2119c70cbe188bf388da21911ee0d9",
+      "localSha256": "103e51c94a47a156ecbc31e7a705988e1d2119c70cbe188bf388da21911ee0d9",
+      "dependencyProbe": {
+        "sourceOrder": 3,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/MeshNormals.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/MeshNormals.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "430ea95282900f97cab8e3aa038390f874b20cc60abf2329134d5153d9d90aa3",
+      "localSha256": "430ea95282900f97cab8e3aa038390f874b20cc60abf2329134d5153d9d90aa3",
+      "dependencyProbe": {
+        "sourceOrder": 4,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SpatIndex.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SpatIndex.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "946bebbc183cc2133e8186e4b5e666de292b67c075032e0c3edb4a99d2825462",
+      "localSha256": "946bebbc183cc2133e8186e4b5e666de292b67c075032e0c3edb4a99d2825462",
+      "dependencyProbe": {
+        "sourceOrder": 5,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/Clustering.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/Clustering.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "70af8f0ebe9de627ce5b472e05687b5f99195776e21b651b04123ab0f2edbc39",
+      "localSha256": "70af8f0ebe9de627ce5b472e05687b5f99195776e21b651b04123ab0f2edbc39",
+      "dependencyProbe": {
+        "sourceOrder": 6,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportTreeMesher.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportTreeMesher.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "a887284e8b92edcc56a180afad2838694a3e45052d14a7aae3266a73ae4e27f0",
+      "localSha256": "a887284e8b92edcc56a180afad2838694a3e45052d14a7aae3266a73ae4e27f0",
+      "dependencyProbe": {
+        "sourceOrder": 7,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportTreeBuilder.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportTreeBuilder.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "ee6e60ce66618108614dc107a4cf1461074c25c471b7a5eab1871a2ea9ea0bcb",
+      "localSha256": "ee6e60ce66618108614dc107a4cf1461074c25c471b7a5eab1871a2ea9ea0bcb",
+      "dependencyProbe": {
+        "sourceOrder": 8,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/DefaultSupportTree.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/DefaultSupportTree.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "87ba75b58fea052833b7ab5edb20c4fec910b7f8d2afe327f844a448ffc4ffbd",
+      "localSha256": "87ba75b58fea052833b7ab5edb20c4fec910b7f8d2afe327f844a448ffc4ffbd",
+      "dependencyProbe": {
+        "sourceOrder": 9,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/EvaluateNeighbor.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/EvaluateNeighbor.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "0eb9daa34726ada62adcff43392d31b4708385033a49bcefe8548375e25aa52b",
+      "localSha256": "0eb9daa34726ada62adcff43392d31b4708385033a49bcefe8548375e25aa52b",
+      "dependencyProbe": {
+        "sourceOrder": 10,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/ExpandNeighbor.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/ExpandNeighbor.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "ad12cd2a29178957463d3ad3fbcbc17280ed8b26e5ea9a45d66f6dc655002569",
+      "localSha256": "ad12cd2a29178957463d3ad3fbcbc17280ed8b26e5ea9a45d66f6dc655002569",
+      "dependencyProbe": {
+        "sourceOrder": 11,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/LineUtils.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/LineUtils.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "e9ddd600da62d7ad120af6616790a48f9f04fc7359461996b17dc5df345d5b49",
+      "localSha256": "e9ddd600da62d7ad120af6616790a48f9f04fc7359461996b17dc5df345d5b49",
+      "dependencyProbe": {
+        "sourceOrder": 12,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/ParabolaUtils.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/ParabolaUtils.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "37ac8e9ac211952f0e69a3385fbf990d8eff287867f2ab064cffca49782f06fa",
+      "localSha256": "37ac8e9ac211952f0e69a3385fbf990d8eff287867f2ab064cffca49782f06fa",
+      "dependencyProbe": {
+        "sourceOrder": 13,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/PointUtils.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/PointUtils.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "f330ec57756956bdbcd14528f1cac08b7e6874787afab83fcbbdfbb8f619dcf9",
+      "localSha256": "f330ec57756956bdbcd14528f1cac08b7e6874787afab83fcbbdfbb8f619dcf9",
+      "dependencyProbe": {
+        "sourceOrder": 14,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/PolygonUtils.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/PolygonUtils.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "0b12a8a86608316027b7c982c54d1649369727438fea82c7606c46cf8f9cb607",
+      "localSha256": "0b12a8a86608316027b7c982c54d1649369727438fea82c7606c46cf8f9cb607",
+      "dependencyProbe": {
+        "sourceOrder": 15,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/PostProcessNeighbor.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/PostProcessNeighbor.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "3dc4cbdebdcb62bf5d1cf7d608333decd3f5e52bee213c6ee5fb586f1519e9f6",
+      "localSha256": "3dc4cbdebdcb62bf5d1cf7d608333decd3f5e52bee213c6ee5fb586f1519e9f6",
+      "dependencyProbe": {
+        "sourceOrder": 16,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/PostProcessNeighbors.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/PostProcessNeighbors.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "83596e83107ef73054bb9b574a8728eb0c855067d6543ed0cd0717f486ab90da",
+      "localSha256": "83596e83107ef73054bb9b574a8728eb0c855067d6543ed0cd0717f486ab90da",
+      "dependencyProbe": {
+        "sourceOrder": 17,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/SampleConfigFactory.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/SampleConfigFactory.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "6242f37c69d9adcfc492d57e46f762167932474ea7176c729e58318516372165",
+      "localSha256": "6242f37c69d9adcfc492d57e46f762167932474ea7176c729e58318516372165",
+      "dependencyProbe": {
+        "sourceOrder": 18,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/SupportIslandPoint.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/SupportIslandPoint.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "9c9ea170bbd30ec6b9cad14e3579c836261e0b937176bb49de0250694f72d8c7",
+      "localSha256": "9c9ea170bbd30ec6b9cad14e3579c836261e0b937176bb49de0250694f72d8c7",
+      "dependencyProbe": {
+        "sourceOrder": 19,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/UniformSupportIsland.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/UniformSupportIsland.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "a367a44be00f7fdd49306b6bd1caa934eaad9513579d3d6fbbcb2fda9735d9b2",
+      "localSha256": "9f56a160da34b693b6e0a00f7dca56f3c3218d4a728c9e10ed92a672faa0cbd2",
+      "portEdited": true,
+      "dependencyProbe": {
+        "sourceOrder": 20,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/VoronoiDiagramCGAL.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/VoronoiDiagramCGAL.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "9386270d19331004eb1cfd22149cd2de87fec10b53c46c1d97d52169f70861c5",
+      "localSha256": "9386270d19331004eb1cfd22149cd2de87fec10b53c46c1d97d52169f70861c5",
+      "dependencyProbe": {
+        "sourceOrder": 21,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportIslands/VoronoiGraphUtils.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportIslands/VoronoiGraphUtils.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "036a1a04fd24b4e182dbb815d9f9596fd8d73c8d11da88c6750822424c9e8937",
+      "localSha256": "2451617de3d8b23e55dba5c116527f55bb3cdbe1d0e2ff8b1cc48d42fba69f86",
+      "portEdited": true,
+      "dependencyProbe": {
+        "sourceOrder": 22,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/SupportPointGenerator.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/SupportPointGenerator.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "9da0b9ae8a0164999596dbf6258ef95e09e6ea8c40025b56ca8bc4480be695d3",
+      "localSha256": "9da0b9ae8a0164999596dbf6258ef95e09e6ea8c40025b56ca8bc4480be695d3",
+      "dependencyProbe": {
+        "sourceOrder": 23,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/Tesselate.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/Tesselate.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "c46928d4b8a852f35397004b59b66da324be4eb006a7c3b536285afa50781495",
+      "localSha256": "c46928d4b8a852f35397004b59b66da324be4eb006a7c3b536285afa50781495",
+      "dependencyProbe": {
+        "sourceOrder": 24,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/ConcaveHull.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/ConcaveHull.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "283a4fb6d573c6de278ed7422176f8ee4d91294ef0bde1c60a7cfedfa0dadf96",
+      "localSha256": "283a4fb6d573c6de278ed7422176f8ee4d91294ef0bde1c60a7cfedfa0dadf96",
+      "dependencyProbe": {
+        "sourceOrder": 25,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    },
+    {
+      "localPath": "slasupport_port/libslic3r/SLA/Pad.cpp",
+      "kind": "copied-upstream",
+      "upstreamPath": "src/libslic3r/SLA/Pad.cpp",
+      "upstreamRevision": "b028299c770b8380ee81c921a2867d522f288123",
+      "upstreamSha256": "dd84af97f388ade99ed70fdb84842588f531019df3b5445f6365777bd5247905",
+      "localSha256": "dd84af97f388ade99ed70fdb84842588f531019df3b5445f6365777bd5247905",
+      "dependencyProbe": {
+        "sourceOrder": 26,
+        "includeUniverse": "Prusa SLA headers first; Orca core fallback"
+      }
+    }
+  ],
+  "deferredDependencyProbes": [
+    {
+      "upstreamPath": "src/libslic3r/SLA/SupportTreeSlicer.cpp",
+      "copied": false,
+      "requiredLocalUnits": [
+        "slasupport_port/libslic3r/SLA/SupportTreeMesher.cpp",
+        "slasupport_port/libslic3r/SLA/SupportTreeBuilder.cpp"
+      ]
+    },
+    {
+      "upstreamPath": "src/libslic3r/SLA/SupportSlicesCache.cpp",
+      "copied": false,
+      "missingDependencies": [
+        "libslic3r/SLAPrint.hpp::SliceRecord",
+        "libslic3r/SLA/PrinterCorrections.hpp::apply_printer_corrections",
+        "libslic3r/SLA/PrinterCorrections.hpp::apply_absolute_correction"
+      ]
+    },
+    {
+      "upstreamPath": "src/libslic3r/SLA/BranchingTreeSLA.cpp",
+      "copied": false,
+      "requiredLocalUnits": [
+        "slasupport_port/libslic3r/SLA/DefaultSupportTree.cpp"
+      ]
+    }
+  ]
+}
