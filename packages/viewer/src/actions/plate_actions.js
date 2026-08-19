@@ -2,6 +2,7 @@ import { log } from '../core/log.js'
 import { deriveKernelParams } from 'three-slicer/settings'
 import { roleRatios } from '../core/toolpath_segments.js'
 import { MAX_PLATES } from '../core/plate_layout.js'
+import { makeSL1 } from '../core/sl1_write.js'
 import { statsFromKernel } from './use_slicer.js'
 import { download } from './export_actions.js'
 
@@ -14,7 +15,7 @@ export function makePlateActions(deps) {
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
     settings, canvasMode, downgradeOffer, onExport,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
-    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl,
+    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
     onSlicedRef,
@@ -35,38 +36,73 @@ export function makePlateActions(deps) {
       layersDataRef.current = null; toolpathRef.current = null; segDataRef.current = null
       setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setRoleLegend([])
       setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return '' })
+      apiRef.current?.setSlaPreview?.(null)
       return
     }
     layersDataRef.current = r.layers
     const n = r.layers.length
     layerLoRef.current = 0; layerHiRef.current = n - 1; setLayerLo(0); setLayerHi(n - 1)
+    // A resin result previews as SOLID meshes (the model lifted by its elevation + the kernel's support/pad
+    //  meshes) — upstream's architecture; the layer stream stays raster-only. An FFF focus tears that down.
+    const isSla = !!r.stats?.sla
+    apiRef.current?.setSlaPreview?.(isSla ? {
+      modelSTL: r.modelSTL, supportMesh: r.support_mesh, padMesh: r.pad_mesh,
+      // lift_layers = pad zone + elevation (the kernel's whole-scene lift). elevation_layers alone is the
+      // pre-pad fallback for results sliced by an older kernel.
+      lift: (r.stats.lift_layers ?? r.stats.elevation_layers ?? 0) * (r.stats.layer_height || 0.05),
+      offX: plateOffsetsRef.current[idx]?.offX ?? 0, offZ: plateOffsetsRef.current[idx]?.offZ ?? 0,
+    } : null)
     const cached = plateTpRef.current[idx]
-    const entry = (cached && cached.layers === r.layers) ? cached : buildPlateToolpath(idx, r.layers)
+    const entry = isSla ? null : ((cached && cached.layers === r.layers) ? cached : buildPlateToolpath(idx, r.layers))
     if (entry) {
       toolpathRef.current = entry.ctl; segDataRef.current = entry.seg
       entry.ctl.setLayerRange(0, n - 1)
       applyViewColors()
       setSegCount(entry.seg.nSeg); setRoleLegend(roleRatios(entry.seg.typeLengths))
+    } else if (isSla) {
+      toolpathRef.current = null; segDataRef.current = null
+      setSegCount(r.stats.path_segments || 0); setRoleLegend([])
     }
     apiRef.current?.onSliced()
     setCanvasMode('preview')
     setStats(statsFromKernel(r.stats))
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
-    setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
+    // A resin result has no G-code; its export (.sl1) is built on click by exportPlateSl1 — see SliceBar.
+    setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl)
+      return r.stats.sla ? '' : URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
+  }
+  // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
+  //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
+  //  the kernel warmup opt-out refuses. The `exporting` label is what keeps the button honest while it runs.
+  async function exportPlateSl1(idx = selectedPlateRef.current) {
+    const r = plateResultsRef.current[idx]
+    if (!r || r.error || !r.stats?.sla || !r.layers?.length) { setError('No resin slice on this plate — slice first'); return }
+    setExporting?.('Building SL1…')
+    try {
+      const bytes = await makeSL1({
+        layers: r.layers, params: r.slaParams ?? {}, stats: r.stats,
+        jobName: `plate_${idx + 1}`, timestamp: new Date().toISOString(),
+      })
+      download(bytes, `plate_${idx + 1}.sl1`, 'application/zip', onExport)
+    } catch (e) {
+      setError('SL1 export failed: ' + (e?.message || e))
+    } finally {
+      setExporting?.(null)
+    }
   }
   // Shares the host's export hook with the 3mf/STL writers — a host that takes one save should take all of them.
   function downloadGcode(gcode, name) { download(gcode, name, 'text/plain', onExport) }
   const _sleep = (ms) => new Promise(r => setTimeout(r, ms))
   // plateResultsRef is a ref, so the UI does not refresh on its own — mirror the count into state wherever it changes.
   function refreshSlicedCount() {
-    setSlicedPlateCount(Object.values(plateResultsRef.current).filter(r => r && !r.error && r.gcode).length)
+    setSlicedPlateCount(Object.values(plateResultsRef.current).filter(r => r && !r.error && (r.gcode || r.stats?.sla)).length)
   }
   // Saves the G-code of every sliced plate at once — only when the user explicitly asks (never automatically).
   //  Browsers throttle back-to-back downloads, so the files are spaced out.
   async function exportAllGcode() {
     setSliceMenu(false)
     const sliced = Object.entries(plateResultsRef.current)
-      .filter(([, r]) => r && !r.error && r.gcode)
+      .filter(([, r]) => r && !r.error && (r.gcode || r.stats?.sla))
       .sort((a, b) => Number(a[0]) - Number(b[0]))
     // Same rule the single-plate export follows, applied per plate: a plate whose model leaves the printable
     //  volume is skipped rather than silently written, and the notice names it so it is not just missing.
@@ -76,8 +112,12 @@ export function makePlateActions(deps) {
       setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
       return
     }
-    for (const [i, r] of done) { downloadGcode(r.gcode, `plate_${Number(i) + 1}.gcode`); await _sleep(350) }
-    setSliceNotice(`Exported G-code for ${done.length} plate(s)`
+    for (const [i, r] of done) {
+      if (r.stats?.sla) await exportPlateSl1(Number(i))
+      else downloadGcode(r.gcode, `plate_${Number(i) + 1}.gcode`)
+      await _sleep(350)
+    }
+    setSliceNotice(`Exported ${done.length} plate(s)`
       + (skipped ? ` — skipped ${skipped} that extend beyond the bed` : ''))
   }
   async function onSlice(scope = 'current') {
@@ -131,6 +171,8 @@ export function makePlateActions(deps) {
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
         setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
+        // The SLA support tree can fail while the slice itself stands — saying so beats a silently bare model.
+        if (r?.stats?.support_error) setSliceNotice(`Support generation failed (${r.stats.support_error}) — the slice contains the model only`)
         if (economy) setSliceNotice('Memory pressure — finished in economy mode (no preview, G-code can still be downloaded)')
         else if (classicWalls) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
       } catch (e) {
@@ -169,5 +211,5 @@ export function makePlateActions(deps) {
     if (canvasMode === 'preview') showPlateResult(i)   // switching plates in Preview -> show that plate's cached result
   }
 
-  return { showPlateResult, refreshSlicedCount, exportAllGcode, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
+  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
 }

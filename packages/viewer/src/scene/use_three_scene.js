@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
-import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'
+import { buildMergedSTL, exportObjects, stlToSoup } from '../core/model_geometry.js'
 import { buildOverhangGeometry } from './overhang_view.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
@@ -587,7 +587,62 @@ export function useThreeScene(deps) {
     }
     transform.addEventListener('dragging-changed', e => { if (!e.value && overhangDeg != null) rebuildOverhang() })
 
+    // ---- SLA solid preview (upstream's architecture: the preview renders MESHES — the processed model, the
+    //  support tree and the pad — never layer outlines; the layer stream is raster-only). One group in the
+    //  kernel frame (z-up, plate offset), model clone lifted by the elevation, materials clip-plane aware so
+    //  the layer slider becomes a section cut (upstream SlaCap, minus the filled cap face).
+    let slaGroup = null
+    const slaClipPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e9),   // keep world y <= constant
+                           new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e9)]    // keep world y >= -constant
+    function clearSlaPreview() {
+      if (!slaGroup) return
+      slaGroup.parent?.remove(slaGroup)
+      slaGroup.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose() } })
+      slaGroup = null
+      invalidate()
+    }
+
     apiRef.current = {
+      /** SLA preview: replace the outline toolpath with SOLID meshes — the plate's model geometry (lifted by
+       *  the elevation), the kernel's support tree mesh and the pad mesh, all in the kernel frame at the
+       *  plate's offset. `null` tears the group down (leaving Preview, switching to an FFF plate). */
+      setSlaPreview: (payload) => {
+        clearSlaPreview()
+        if (!payload) return
+        const { modelSTL, supportMesh, padMesh, lift = 0, offX = 0, offZ = 0 } = payload
+        renderer.localClippingEnabled = true
+        slaClipPlanes[0].constant = 1e9; slaClipPlanes[1].constant = 1e9
+        slaGroup = new THREE.Group()
+        slaGroup.rotation.x = -Math.PI / 2
+        slaGroup.position.set(offX, 0, offZ)
+        const material = (color) => new THREE.MeshPhongMaterial({
+          color, side: THREE.DoubleSide, clippingPlanes: slaClipPlanes,
+        })
+        const soup = (arr) => {
+          const geo = new THREE.BufferGeometry()
+          geo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
+          geo.computeVertexNormals()
+          return geo
+        }
+        const model = modelSTL ? stlToSoup(modelSTL) : null
+        if (model) {
+          const mesh = new THREE.Mesh(soup(model), material(0xd7862a))
+          mesh.position.z = lift            // group is z-up: +z is world up
+          slaGroup.add(mesh)
+        }
+        if (supportMesh && supportMesh.length) slaGroup.add(new THREE.Mesh(soup(supportMesh), material(0x9b78d8)))
+        if (padMesh && padMesh.length) slaGroup.add(new THREE.Mesh(soup(padMesh), material(0xb0a06a)))
+        // Inside toolpathGroup, so Prepare/Preview visibility toggling covers the solid preview for free.
+        toolpathGroup.add(slaGroup)
+        invalidate()
+      },
+      /** Section-cut the SLA preview to [zLo, zHi] (kernel z, mm) — what the layer slider means for meshes.
+       *  null/undefined on either side opens that side fully. */
+      setSlaClip: (zLo, zHi) => {
+        slaClipPlanes[0].constant = zHi == null ? 1e9 : zHi
+        slaClipPlanes[1].constant = zLo == null ? 1e9 : -zLo
+        invalidate()
+      },
       setMode,
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
@@ -826,6 +881,7 @@ export function useThreeScene(deps) {
       renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
       renderer.domElement.removeEventListener('dblclick', onDblClick); renderer.domElement.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
+      clearSlaPreview()
       apiRef.current = null
       transform.detach(); transform.dispose(); orbit.dispose(); scaleBox.dispose(); boxSelect.dispose()
       scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose() })

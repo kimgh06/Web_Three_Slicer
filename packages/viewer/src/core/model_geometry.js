@@ -130,3 +130,20 @@ export function exportObjects(objects, { plateCount, bedWidth, bedDepth }) {
              tris, faceCount: lp.length / 9, paint: o.paint || null }
   })
 }
+
+// Binary STL bytes -> a non-indexed position soup (9 floats per triangle), stored normals skipped. This is the
+//  inverse direction of buildMergedSTL: the SLA preview re-renders the exact buffer the kernel sliced as a solid
+//  mesh, so the two cannot disagree. Returns null on anything that is not a well-formed binary STL.
+export function stlToSoup(buf) {
+  const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+  if (!bytes || bytes.byteLength < 84) return null
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const count = dv.getUint32(80, true)
+  if (84 + 50 * count !== bytes.byteLength) return null
+  const pos = new Float32Array(count * 9)
+  for (let i = 0; i < count; i++) {
+    const base = 84 + 50 * i + 12
+    for (let f = 0; f < 9; f++) pos[i * 9 + f] = dv.getFloat32(base + 4 * f, true)
+  }
+  return pos
+}

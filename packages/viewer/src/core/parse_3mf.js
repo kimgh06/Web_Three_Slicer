@@ -161,12 +161,26 @@ function metadataPairs(fragment) {
 
 function parseModelSettings(xml) {
   const objects = new Map()   // 3mf object id -> {name, extruder, …} (the <metadata> of that object)
+  const volumes = new Map()
   const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
   let m
   while ((m = OBJ_RE.exec(xml))) {
     const id = attr(m[1], 'id')
     // Only the object's OWN metadata: <part> children carry their own and would otherwise overwrite it.
-    if (id) objects.set(id, metadataPairs(m[2].replace(/<part\b[\s\S]*?<\/part>/g, '')))
+    if (id) {
+      const body = m[2]
+      objects.set(id, metadataPairs(body.replace(/<(?:part|volume)\b[\s\S]*?<\/(?:part|volume)>/g, '')))
+      const records = []
+      for (const volume of body.match(/<volume\b[\s\S]*?<\/volume>/g) || []) {
+        const type = metadataPairs(volume).volume_type
+        const kind = type === 'SupportBlocker' ? 'blocker' : type === 'SupportEnforcer' ? 'enforcer' : null
+        const firstTriangle = Number(attr(volume, 'firstid'))
+        const lastTriangle = Number(attr(volume, 'lastid'))
+        if (kind && Number.isInteger(firstTriangle) && Number.isInteger(lastTriangle) && firstTriangle >= 0 && lastTriangle >= firstTriangle)
+          records.push({ firstTriangle, lastTriangle, kind })
+      }
+      if (records.length) volumes.set(id, records)
+    }
   }
   const plates = []
   const PLATE_RE = /<plate\b[^>]*>([\s\S]*?)<\/plate>/g
@@ -181,7 +195,50 @@ function parseModelSettings(xml) {
     // plater_id is 1-based upstream; the viewer's plates are 0-based.
     plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds })
   }
-  return { objects, plates }
+  return { objects, plates, volumes }
+}
+
+const SLA_CAPABILITIES = Object.freeze({
+  manualSupportPoints: 'prepared-roundtrip',
+  drainHoles: 'preserved-unsupported',
+  modifierVolumes: 'prepared-mask-filtering',
+  uiEditing: 'unavailable',
+})
+
+function parseSlaRecords(text, label, stride, issues, readRecord) {
+  const records = new Map()
+  if (!text?.trim()) return records
+  const lines = text.trim().split(/\r?\n/)
+  const header = new RegExp(`^${label}_format_version=(\\d+)$`).exec(lines[0])
+  const version = header ? Number(header[1]) : 0
+  for (const line of lines.slice(header ? 1 : 0)) {
+    const match = /^object_id=(\d+)\|(.*)$/.exec(line)
+    if (!match || records.has(Number(match?.[1]))) continue
+    const object = Number(match[1])
+    const values = match[2].trim() ? match[2].trim().split(/\s+/).map(Number) : []
+    const width = stride(version)
+    if (!width || values.length % width !== 0 || values.some(value => !Number.isFinite(value))) {
+      issues.push({ code: label === 'support_points' ? 'SLA_SUPPORT_POINT_COUNT' : 'SLA_DRAIN_HOLE_COUNT', object })
+      records.set(object, [])
+      continue
+    }
+    const parsed = []
+    for (let at = 0; at < values.length; at += width) parsed.push(readRecord(values.slice(at, at + width), version))
+    records.set(object, parsed)
+  }
+  return records
+}
+
+function transformPoint(xf, point) {
+  const [x, y, z] = point
+  return [x * xf[0] + y * xf[3] + z * xf[6] + xf[9], x * xf[1] + y * xf[4] + z * xf[7] + xf[10], x * xf[2] + y * xf[5] + z * xf[8] + xf[11]]
+}
+
+function transformDirection(xf, direction) {
+  const [x, y, z] = direction
+  const out = [x * xf[0] + y * xf[3] + z * xf[6], x * xf[1] + y * xf[4] + z * xf[7], x * xf[2] + y * xf[5] + z * xf[8]]
+  const length = Math.hypot(...out)
+  return length ? out.map(value => value / length) : out
 }
 
 function readProject(files, dec) {
@@ -192,6 +249,8 @@ function readProject(files, dec) {
     plates: [],            // [{index, objectIds}]
     hasLayerHeightProfile: false,
     hasCustomGcodePerLayer: false,
+    volumeMeta: new Map(),
+    sla: { capabilities: { ...SLA_CAPABILITIES }, issues: [], supportPoints: new Map(), drainHoles: new Map() },
   }
   const settingsText = text('Metadata/project_settings.config')
   if (settingsText) {
@@ -203,7 +262,19 @@ function readProject(files, dec) {
     const parsed = parseModelSettings(modelSettings)
     project.objectMeta = parsed.objects
     project.plates = parsed.plates
+    project.volumeMeta = parsed.volumes
   }
+  project.sla.supportPoints = parseSlaRecords(text('Metadata/Slic3r_PE_sla_support_points.txt'), 'support_points',
+    version => version === 0 ? 3 : version === 1 ? 5 : 0, project.sla.issues, (values, version) => ({
+      position: values.slice(0, 3), radius: version === 0 ? 0.4 : values[3],
+      type: version === 0 || values[4] === 2 ? 'manual' : values[4] === 1 ? 'island' : 'slope',
+    }))
+  project.sla.drainHoles = parseSlaRecords(text('Metadata/Slic3r_PE_sla_drain_holes.txt'), 'drain_holes',
+    version => version === 1 ? 8 : 0, project.sla.issues, values => {
+      const normalLength = Math.hypot(values[3], values[4], values[5])
+      const normal = normalLength ? values.slice(3, 6).map(value => value / normalLength) : values.slice(3, 6)
+      return { position: values.slice(0, 3).map((value, axis) => value + normal[axis]), normal, radius: values[6], height: values[7] - 1 }
+    })
   project.hasLayerHeightProfile = !!text('Metadata/layer_heights_profile.txt')?.trim()
   project.hasCustomGcodePerLayer = !!text('Metadata/custom_gcode_per_layer.xml')?.trim()
   return project
@@ -247,6 +318,7 @@ export async function parse3MFProject(buffer, baseName = 'model') {
   if (!root) throw new Error(`3MF root model not found: ${rootPath}`)
 
   const out = []
+  const project = readProject(files, dec)
   // Expand objects recursively -> push triangles into the tris array. depth guards against circular references.
   // `paintSink` collects the painted facets of every mesh reached, rebased onto the OUTPUT triangle numbering:
   //  one build item may pull in several component meshes, each with its own local facet indices, and the kernel's
@@ -285,7 +357,29 @@ export async function parse3MFProject(buffer, baseName = 'model') {
     const paintSink = emptyPaint()
     emit(it.objectid, it.path || rootPath, it.transform, sink, paintSink, 0)
     if (sink.length < 9) return
-    const tris = new Float32Array(sink)
+    let tris = new Float32Array(sink)
+    const modifiers = []
+    const volumeRecords = project.volumeMeta.get(it.objectid) || []
+    if (volumeRecords.length) {
+      const modifierFaces = new Set()
+      for (let volume = 0; volume < volumeRecords.length; volume++) {
+        const record = volumeRecords[volume]
+        const start = record.firstTriangle * 9
+        const end = Math.min(sink.length, (record.lastTriangle + 1) * 9)
+        if (start >= end) continue
+        for (let face = record.firstTriangle; face <= record.lastTriangle; face++) modifierFaces.add(face)
+        modifiers.push({ id: `${it.objectid}:modifier:${volume}`, kind: record.kind, tris: new Float32Array(sink.slice(start, end)) })
+      }
+      if (modifierFaces.size) {
+        const printable = []
+        for (let face = 0; face < sink.length / 9; face++) if (!modifierFaces.has(face)) printable.push(...sink.slice(face * 9, face * 9 + 9))
+        tris = new Float32Array(printable)
+      }
+    }
+    const supportPoints = (project.sla.supportPoints.get(i + 1) || []).map(point => ({ ...point, position: transformPoint(it.transform, point.position) }))
+    const drainHoles = (project.sla.drainHoles.get(i + 1) || []).map(hole => ({
+      ...hole, position: transformPoint(it.transform, hole.position), normal: transformDirection(it.transform, hole.normal),
+    }))
     // The XY box in the file's own coordinates. A slicer-written 3mf lays its PLATES OUT IN WORLD SPACE — plate 2's
     //  objects simply sit a few hundred mm along x from plate 1's — so this box is the only record of the
     //  arrangement the author made. The scene's bakeLocal centres every object and drops it, which is why the
@@ -303,10 +397,11 @@ export async function parse3MFProject(buffer, baseName = 'model') {
       tris,
       objectid: it.objectid,
       paint: paintIsEmpty(paintSink) ? null : paintSink,
+      sla: { supportPoints, drainHoles, modifierVolumes: modifiers },
       bbox: { minX, minY, maxX, maxY },
     })
   })
-  return { objects: out, project: readProject(files, dec) }
+  return { objects: out, project }
 }
 
 /** Geometry only — the shape every caller before the project import used. */
