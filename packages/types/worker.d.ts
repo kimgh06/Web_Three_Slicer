@@ -5,6 +5,7 @@
 // promises and is the easier way in; these types are here for hosts driving the worker directly, and because the
 // shape has traps that only a written-down contract makes visible — see the slice request and `erase`.
 import type { SliceResult } from '../engine/index.d.ts'
+import type { SlaErrorCode, SlaJob } from './sla.d.ts'
 
 /** Brush geometry shared by paint and erase: the hit facet, the hit point, the camera, the radius. */
 export interface BrushArgs {
@@ -56,6 +57,13 @@ export type SlicerRequest =
   /** The painted overlay triangles. `enf`/`blk` always; `states` adds those states. Reply: `overlay`. */
   | { cmd: 'overlay'; states?: PaintState[] }
   /**
+   * Legacy single-object SLA (resin) slice. `params` accepts a JSON string or an object (this path parses either). Same reply stream as
+   * a slice: `progress` and `layer` while it runs, then `done` (stats only; layers arrived as `layer`) — or `error`.
+   */
+  | { cmd: 'sla'; stl: ArrayBuffer; params: string | object }
+  /** Object-aware SLA protocol. The worker preserves the ordered objects; it never merges them for a fallback. */
+  | { cmd: 'slaJob'; job: SlaJob }
+  /**
    * Slice — and note it carries **no `cmd`**: slicing is the worker's default action, and leaving the field off
    * is what selects it. `params` must be a JSON **string**; the worker hands it straight to the kernel, which
    * parses JSON text. (`createSlicer().slice()` on the direct handle also accepts an object and stringifies it.)
@@ -85,6 +93,6 @@ export type SlicerResponse =
   | { type: 'layer'; z: number; idx: number; gcode: string; paths: Float32Array; widths: Float32Array }
   /** `result.stats.streamed` says whether the G-code came through `layer` messages or is on the result. */
   | { type: 'done'; result: SliceResult }
-  | { type: 'error'; error: string }
+  | { type: 'error'; error: string; code?: SlaErrorCode }
 
 export {}

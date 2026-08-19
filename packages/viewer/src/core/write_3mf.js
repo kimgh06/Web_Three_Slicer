@@ -238,6 +238,7 @@ export async function write3MFProject(objects, settings, opts = {}) {
     ' <resources>\n',
   ]
   const items = []
+  const volumeRanges = []
   objects.forEach((object, at) => {
     const objectId = at + 1                     // 3mf ids are 1-based and must be unique within the model part
     const origin = upstreamPlateOrigin(object.plate ?? 0, plateCount, bedWidth, bedDepth)
@@ -253,8 +254,22 @@ export async function write3MFProject(objects, settings, opts = {}) {
     const paintOf = painted
       ? (face) => { const hex = painted.get(face); return hex ? ` ${paintAttr}="${hex}"` : '' }
       : () => ''
+    const modifiers = object.sla?.modifierVolumes || []
+    const parts = [object.tris, ...modifiers.map(modifier => modifier.tris)]
+    const length = parts.reduce((sum, part) => sum + part.length, 0)
+    const combined = new Float32Array(length)
+    let writeAt = 0
+    for (const part of parts) { combined.set(part, writeAt); writeAt += part.length }
+    const ranges = [{ first: 0, last: object.tris.length / 9 - 1, type: 'ModelPart' }]
+    let face = object.tris.length / 9
+    for (const modifier of modifiers) {
+      const count = modifier.tris.length / 9
+      ranges.push({ first: face, last: face + count - 1, type: modifier.kind === 'enforcer' ? 'SupportEnforcer' : 'SupportBlocker' })
+      face += count
+    }
+    volumeRanges.push(ranges)
     modelParts.push(`  <object id="${objectId}" type="model">\n`)
-    modelParts.push(meshBytes(object, shift, paintOf))
+    modelParts.push(meshBytes({ tris: combined }, shift, paintOf))
     modelParts.push('  </object>\n')
     items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 0 0 0" printable="1"/>\n`)
   })
@@ -266,6 +281,11 @@ export async function write3MFProject(objects, settings, opts = {}) {
     objectConfig.push(`  <object id="${at + 1}">\n`)
     objectConfig.push(`    <metadata key="name" value="${xmlEscape(object.name ?? `object_${at + 1}`)}"/>\n`)
     objectConfig.push(`    <metadata key="extruder" value="${object.extruder ?? 1}"/>\n`)
+    for (const range of volumeRanges[at]) {
+      objectConfig.push(`    <volume firstid="${range.first}" lastid="${range.last}">\n`)
+      objectConfig.push(`      <metadata key="volume_type" value="${range.type}"/>\n`)
+      objectConfig.push('    </volume>\n')
+    }
     objectConfig.push('  </object>\n')
   })
   // plater_id is 1-based upstream; the viewer's plates are 0-based (parse_3mf.js reads it back the same way).
@@ -293,6 +313,27 @@ export async function write3MFProject(objects, settings, opts = {}) {
   const projectSettings = serializeProjectSettings(settings)
   if (Object.keys(projectSettings).length)
     files['Metadata/project_settings.config'] = strToU8(JSON.stringify(projectSettings, null, 4) + '\n')
+
+  const supportLines = []
+  const drainLines = []
+  objects.forEach((object, at) => {
+    const points = object.sla?.supportPoints || []
+    if (points.length) supportLines.push(`object_id=${at + 1}|${points.map(point => {
+      const type = point.type === 'manual' ? 2 : point.type === 'island' ? 1 : 3
+      return [...point.position, point.radius ?? 0.4, type].map(num).join(' ')
+    }).join(' ')}`)
+    const holes = object.sla?.drainHoles || []
+    if (holes.length) drainLines.push(`object_id=${at + 1}|${holes.map(hole => {
+      const length = Math.hypot(...hole.normal)
+      const normal = length ? hole.normal.map(value => value / length) : hole.normal
+      const storedPosition = hole.position.map((value, axis) => value - normal[axis])
+      return [...storedPosition, ...normal, hole.radius, hole.height + 1].map(num).join(' ')
+    }).join(' ')}`)
+  })
+  if (supportLines.length)
+    files['Metadata/Slic3r_PE_sla_support_points.txt'] = strToU8(`support_points_format_version=1\n${supportLines.join('\n')}\n`)
+  if (drainLines.length)
+    files['Metadata/Slic3r_PE_sla_drain_holes.txt'] = strToU8(`drain_holes_format_version=1\n${drainLines.join('\n')}\n`)
 
   // level 3, not the 6 that looks like the safe default: a 3mf is XML, which deflate shreds at any level, so 6
   //  buys nothing here and costs the user seconds of a frozen tab. Measured on a 980k-facet sphere (79MB of XML):

@@ -91,6 +91,26 @@ export const printerKeys = printers.keys
 /** Vendor -> profile name -> `[nozzle, setIndex, model]`, straight from the data (for building a picker). */
 export const printersByVendor = printers.byVendor
 
+/** Vendor -> slicing technology. Absent means FFF — only the resin vendor bundles are marked, so a printer
+ *  picker can keep FFF machines and SLA machines apart with one lookup. */
+export const printerTechByVendor = printers.techByVendor ?? {}
+
+/** The resin material catalog (SLA vendor bundles, inherits flattened): {name, bundle, type, vendor, colour,
+ *  exposure_time, initial_exposure_time, initial_layer_height, layerHeight}. layerHeight is the preset's
+ *  compatibility condition reduced to a number — the picker filters on it without an expression engine. */
+export const resinCatalog = printers.resins ?? []
+
+/** The settings a resin material applies, ready to merge — the exposure family plus the remembered pick.
+ *  `null` when unknown. The material never touches support/pad keys (upstream keeps those in sla_print). */
+export function resinSettingsFor(name) {
+  const entry = resinCatalog.find(r => r.name === name)
+  if (!entry) return null
+  const out = { sla_material_settings_id: name }
+  for (const key of ['exposure_time', 'initial_exposure_time', 'initial_layer_height'])
+    if (Number.isFinite(entry[key])) out[key] = entry[key]
+  return out
+}
+
 // Process (print) presets live in the ~800 KB processes.json, so they load on demand — the first call fetches,
 //  later ones reuse the same promise. Returns a small facade so no caller has to know the column layout.
 let processesPromise = null
@@ -531,6 +551,143 @@ export function deriveKernelParams(settings, opts) {
     // Stage 7: wall generator classic|arachne (arachne = the real ported OrcaSlicer WallToolPaths, variable width)
     wall_generator: (String(S('wall_generator') ?? 'classic') === 'arachne') ? 'arachne' : 'classic',
     // support_density has no matching schema key, so the kernel default (0.15) is used; scarf_length likewise uses the kernel default (10mm)
+  }
+}
+
+// ---- Printer technology (FFF vs SLA routing) ----------------------------------------------------------------
+// The technology is a property of the printer profile, exactly as upstream models it: one settings map, two
+//  disjoint key families, and the profile's technology key decides which family the UI shows and which slicing
+//  path runs. The schema already carries the key (inherited from the upstream lineage), so an imported preset
+//  that names a resin printer routes itself.
+export function printerTechnology(settings) {
+  return String(settingRaw(settings, 'printer_technology') ?? 'FFF').toUpperCase() === 'SLA' ? 'SLA' : 'FFF'
+}
+
+// SLA settings provenance table. Rows come from the schema's `defined_in` marker so a new resin option cannot
+// silently leave the UI/bridge without a documented omission/default decision. Explicit rows cover upstream
+// expression defaults the extractor cannot evaluate (support_tree_type and branching's bridge limits).
+const SLA_SETTING_OVERRIDES = {
+  layer_height: { omission: 'resin-default', default: 0.05, provenance: 'shared key; FFF schema default is not used' },
+  support_tree_type: { default: 'default', enum: ['default', 'branching', 'organic'], provenance: 'upstream enum expression' },
+  branchingsupport_pillar_connection_mode: { default: 'dynamic', enum: ['zigzag', 'cross', 'dynamic'], provenance: 'upstream enum expression' },
+  sla_archive_format: { default: 'SL1', enum: ['SL1'], provenance: 'Original Prusa SL1 archive' },
+}
+
+const SLA_SCHEMA_ROWS = Object.fromEntries(Object.entries(schema)
+  .filter(([key, meta]) => key === 'printer_technology' || String(meta.defined_in ?? '').includes('sla_'))
+  .map(([key, meta]) => [key, {
+    source: 'config-schema.json',
+    omission: 'schema-default',
+    default: meta.default,
+    ...(meta.enum_values ? { enum: [...meta.enum_values] } : {}),
+    provenance: `${meta.defined_in}:${meta.line}`,
+  }]))
+
+export const SLA_SETTING_CONTRACT = Object.freeze(Object.fromEntries(
+  Object.entries({ ...SLA_SCHEMA_ROWS, ...SLA_SETTING_OVERRIDES }).map(([key, row]) => [key, Object.freeze({
+    ...row,
+    ...(SLA_SETTING_OVERRIDES[key] ?? {}),
+  })]),
+))
+export const slaSettingContract = SLA_SETTING_CONTRACT
+export const slaSettingKeys = Object.freeze(Object.keys(SLA_SETTING_CONTRACT))
+
+// Right-panel settings values -> SLA slice parameters (sla_core.js) + the raster/export geometry the viewer's
+//  SL1 writer needs. A separate function, NOT a branch inside deriveKernelParams: that one feeds the WASM kernel
+//  and its empty-map key count is a pinned invariant — this one feeds the JS contour slicer and owes bytes to
+//  nobody yet. Keys the schema does not define (the resin display's pixel grid, the per-layer height override)
+//  are read from the map directly, so they follow the same omission-friendly rule: absent means the default.
+export function deriveSlaParams(settings) {
+  const S = k => settingScalar(settings, k)
+  const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) && v > 0 ? v : d }
+
+  // Read from the MAP, not through the schema fallback: the key is shared with FFF and its schema default is that
+  //  technology's opinion (0.2mm) — four resin layers thick. Absent means the resin default here.
+  const rawLayerHeight = settings?.layer_height
+  const mapLayerHeight = Number(Array.isArray(rawLayerHeight) ? rawLayerHeight[0] : rawLayerHeight)
+  const layer_height = Number.isFinite(mapLayerHeight) && mapLayerHeight > 0 ? mapLayerHeight : 0.05
+  // Zero is a legal fade count (no fade band), so this one cannot go through the positives-only reader.
+  const fadedRaw = Number(S('faded_layers'))
+  const requestedSupportTree = String(S('support_tree_type') ?? 'default').toLowerCase()
+  const support_tree_type = ['default', 'branching', 'organic'].includes(requestedSupportTree)
+    ? requestedSupportTree
+    : 'default'
+  return {
+    layer_height,
+    initial_layer_height: num('initial_layer_height', layer_height),
+    exposure_time: num('exposure_time', 7),
+    initial_exposure_time: num('initial_exposure_time', 35),
+    faded_layers: Number.isFinite(fadedRaw) && fadedRaw >= 0 ? fadedRaw : 10,
+    // The physical display and its pixel grid — what turns millimetres into raster pixels at export time.
+    //  Fallbacks are the SL1's own panel, the reference machine of the format this exports to.
+    display_width: num('display_width', 120.96),
+    display_height: num('display_height', 68.04),
+    display_pixels_x: num('display_pixels_x', 2560),
+    display_pixels_y: num('display_pixels_y', 1440),
+    // Panel mounting: the whole SL1 family is portrait with X mirrored (projection through the vat floor);
+    //  the raster writer swaps the image axes for portrait exactly like upstream SL1.cpp create_raster.
+    display_orientation: String(S('display_orientation') ?? 'portrait') === 'landscape' ? 'landscape' : 'portrait',
+    display_mirror_x: settingRaw(settings, 'display_mirror_x') === undefined ? true : !!settingRaw(settings, 'display_mirror_x'),
+    display_mirror_y: !!settingRaw(settings, 'display_mirror_y'),
+    // SL1 archive identity fields (config.ini): written as-is, empty when the host never set a named
+    //  profile — the same thing upstream produces then. material_print_speed defaults to 'fast', the value
+    //  every Prusa vendor SL1 material carries (-> expUserProfile 0 in the archive).
+    material_print_speed: String(S('material_print_speed') ?? 'fast'),
+    printer_model: String(S('printer_model') ?? ''),
+    printer_variant: String(S('printer_variant') ?? ''),
+    printer_settings_id: String(S('printer_settings_id') ?? ''),
+    sla_print_settings_id: String(S('sla_print_settings_id') ?? ''),
+    sla_material_settings_id: String(S('sla_material_settings_id') ?? ''),
+    // The kernel's over-bed check and centring read bed dimensions; for a resin printer the printable area IS
+    //  the display, so the display doubles as the bed the shared parser sees.
+    bed_width: num('display_width', 120.96),
+    bed_depth: num('display_height', 68.04),
+    // Support generation (kernel slice_sla): the grid-pillar generator's shape parameters, all schema keys the
+    //  SLA extraction pass brought in — schema defaults rule, an edit wins.
+    supports_enable: !!settingRaw(settings, 'supports_enable'),
+    pad_enable: !!settingRaw(settings, 'pad_enable'),
+    // Passed through so a requested hollow is REFUSED (typed kernel error) instead of silently sliced solid —
+    //  the OpenVDB chain hollowing needs is not ported, and a solid print labeled hollowed is the worst outcome.
+    hollowing_enable: !!settingRaw(settings, 'hollowing_enable'),
+    support_buildplate_only: !!settingRaw(settings, 'support_buildplate_only'),
+    support_pillar_diameter: num('support_pillar_diameter', 1.0),
+    support_head_front_diameter: num('support_head_front_diameter', 0.4),
+    support_head_width: num('support_head_width', 1.0),
+    support_head_penetration: num('support_head_penetration', 0.2),
+    support_points_density_relative: num('support_points_density_relative', 100),
+    support_critical_angle: num('support_critical_angle', 45),
+    support_tree_type,
+    // The tree shape (upstream SupportTreeConfig): bridge reach, bracing distance, the base foot cone, the
+    //  pillar connection style, and how far the object is lifted onto its supports. Elevation may legally be
+    //  ZERO (print directly on the plate), so it cannot go through the positives-only reader.
+    support_max_bridge_length: num('support_max_bridge_length', 15),
+    support_max_pillar_link_distance: num('support_max_pillar_link_distance', 10),
+    support_base_diameter: num('support_base_diameter', 4),
+    support_base_height: num('support_base_height', 1),
+    // The rest of upstream make_support_cfg (SLAPrint.cpp:50) — small-pillar percent arrives as "50%" so the
+    //  percent sign is stripped here; widening factor and base safety distance are legally ZERO (zero safety
+    //  falls back to the kernel's own safety_distance), so neither can go through the positives-only reader.
+    support_small_pillar_diameter_percent:
+      (() => { const v = Number(String(S('support_small_pillar_diameter_percent') ?? '').replace('%', '')); return Number.isFinite(v) && v > 0 ? v : 50 })(),
+    support_pillar_widening_factor:
+      (() => { const v = Number(S('support_pillar_widening_factor')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
+    support_base_safety_distance:
+      (() => { const v = Number(S('support_base_safety_distance')); return Number.isFinite(v) && v >= 0 ? v : 1 })(),
+    support_max_bridges_on_pillar: num('support_max_bridges_on_pillar', 3),
+    support_max_weight_on_model: num('support_max_weight_on_model', 10),
+    // The generator's input slices are gap-closed with this radius, exactly like upstream slice_mesh_ex.
+    slice_closing_radius: num('slice_closing_radius', 0.049),
+    support_object_elevation: (() => { const v = Number(S('support_object_elevation')); return Number.isFinite(v) && v >= 0 ? v : 5 })(),
+    support_pillar_connection_mode: String(S('support_pillar_connection_mode') ?? 'dynamic'),
+    // The pad (upstream make_pad_cfg): wall height is legally ZERO (flat pad, no cavity), so it cannot go
+    //  through the positives-only reader.
+    pad_brim_size: num('pad_brim_size', 1.6),
+    pad_wall_thickness: num('pad_wall_thickness', 2),
+    pad_wall_height:
+      (() => { const v = Number(S('pad_wall_height')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
+    pad_wall_slope: num('pad_wall_slope', 90),
+    pad_max_merge_distance: num('pad_max_merge_distance', 50),
+    pad_around_object: !!settingRaw(settings, 'pad_around_object'),
   }
 }
 

@@ -56,6 +56,9 @@ export function makeToolpathView(deps) {
     for (const [k, r] of Object.entries(plateResultsRef.current)) {
       const idx = Number(k)
       if (!r || r.error || !r.layers || !r.layers.length) continue
+      // A resin result previews as solid meshes (setSlaPreview), not as outline toolpaths — and if this plate's
+      //  PREVIOUS result was FFF, its toolpath entry is still in the scene and must go, or the two render together.
+      if (r.stats?.sla) { disposePlateToolpath(idx); continue }
       const e = plateTpRef.current[idx]
       if (!e || e.layers !== r.layers) buildPlateToolpath(idx, r.layers)
     }

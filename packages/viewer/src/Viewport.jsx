@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { deriveKernelParams, settingRaw, settingScalar } from 'three-slicer/settings'
+import { deriveKernelParams, printerTechnology, settingRaw, settingScalar } from 'three-slicer/settings'
 import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
@@ -21,7 +21,7 @@ import { bedOverflow, overflowText } from './core/bed_bounds.js'
 import { towerBoxes } from './core/tower_layout.js'
 import {
   TopBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
-  PreviewControls, StatsCard, PrinterCard, FilamentCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
+  PreviewControls, StatsCard, PrinterCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 
 // 3D viewport + browser-only slicing (WASM, track C stage 4).
@@ -39,6 +39,22 @@ const DEFAULT_FILAMENT_COLORS = [
   '#d16a9a', '#6a7ad1', '#8fd16a', '#d18f6a', '#6ad1d1', '#c74ad1', '#a8a8a8', '#4a6ad1',
 ]
 
+// A sidebar panel can also be shown but not editable (`panels={{ printerCard: 'readonly' }}`) — the case a host
+//  that presets printer/process/filament itself actually wants, and which hiding the card does not cover.
+//  One inert wrapper per card, rather than a `disabled` prop threaded through five card components and every
+//  input inside them. That also locks the host's OWN nodes (motionPanel, filamentPanel, processPanel) for free,
+//  which is the right reading: a read-only printer card with a live motion panel inside it would be strange.
+//  `inert=''` and not `inert={true}` — React only learned `inert` as a real boolean prop in 19, and the peer
+//  range here starts at 18, where a boolean is dropped and the empty string is what gets through.
+//  Only the sidebar panels are lockable (types/viewer.d.ts LockablePanel); elsewhere 'readonly' reads as visible.
+//  Module scope on purpose: defined inside the component its function identity would change every render, which
+//  React reads as a NEW component type and answers by remounting the whole subtree — measured on the layer
+//  slider, whose <input type=range> was replaced mid-drag on the first onChange, killing the native drag after
+//  one step. Any state-carrying child (focus, an IME composition, a drag) breaks the same way.
+const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
+  ? <div className="vp-readonly" inert="">{children}</div>
+  : children)
+
 // Embedding surface (all optional — omitting every one of them is the standalone app this component has always been):
 //  · panels    — per-panel visibility, {name: false} hides. Everything defaults to visible, so a host opts OUT only.
 //  · gcode     — G-code text rendered instead of a slice result (no kernel run). See the injection effect below.
@@ -50,20 +66,19 @@ export default function Viewport({
   panels = null, features = null, gcode = null, defaultExtruderColors = null, defaultAutoSlice = false,
   onEvent = null, onSliced = null, onExport = null,
 }) {
+  // Which slicing technology the printer profile declares — the one switch the FFF/SLA routing hangs off.
+  //  Everything downstream derives from it: the panels shown, the slicing path (use_slicer), the export format.
+  const tech = printerTechnology(settings)
   // A panel is shown unless the host explicitly said false — an unknown key is therefore visible, so a panel added
   //  later does not silently disappear for hosts that listed the ones they wanted.
+  //  A second, technology-driven cut on top of the host contract: the FFF-only panels (extruder colours, the prime
+  //  tower, the support/material brushes) make no sense against a resin printer and are dropped as a set — the
+  //  mirror of how upstream tabs declare supports_printer_technology(). The resin card takes the filament card's
+  //  place through the same mechanism.
+  const FFF_PANELS = ['filamentCard', 'towerCard', 'paintPanel']
   const showPanel = (name) => panels?.[name] !== false
-  // A sidebar panel can also be shown but not editable (`panels={{ printerCard: 'readonly' }}`) — the case a host
-  //  that presets printer/process/filament itself actually wants, and which hiding the card does not cover.
-  //  One inert wrapper per card, rather than a `disabled` prop threaded through five card components and every
-  //  input inside them. That also locks the host's OWN nodes (motionPanel, filamentPanel, processPanel) for free,
-  //  which is the right reading: a read-only printer card with a live motion panel inside it would be strange.
-  //  `inert=''` and not `inert={true}` — React only learned `inert` as a real boolean prop in 19, and the peer
-  //  range here starts at 18, where a boolean is dropped and the empty string is what gets through.
-  //  Only the sidebar panels are lockable (types/viewer.d.ts LockablePanel); elsewhere 'readonly' reads as visible.
-  const Panel = ({ name, children }) => (panels?.[name] === 'readonly'
-    ? <div className="vp-readonly" inert="">{children}</div>
-    : children)
+    && !(tech === 'SLA' && FFF_PANELS.includes(name))
+    && !(tech !== 'SLA' && name === 'resinCard')
   // Opening the file dialog goes through here from all three entry points (top bar, empty hint, object toolbar),
   //  so features.filePicker cannot be honoured in two of them and forgotten in the third.
   const openFilePicker = () => { if (feature('filePicker')) fileInputRef.current?.click() }
@@ -269,9 +284,10 @@ export default function Viewport({
   useEffect(() => {
     const api = apiRef.current; if (!api) return
     const multi = extruderColors.length > 1
-    // No box when there is no tower: a single filament, the preview, an empty plate, or the tower switched off.
+    // No box when there is no tower: a single filament, the preview, an empty plate, the tower switched off —
+    //  or a resin printer, which has no extruders to purge between.
     const towerOff = settings?.enable_prime_tower === false
-    if (!multi || towerOff || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
+    if (!multi || towerOff || tech === 'SLA' || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
     // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
     api.setPrimeTower?.(towerBoxes({
       plateCount, settings, bedWidth: kp.bed_width, bedDepth: kp.bed_depth,
@@ -316,7 +332,7 @@ export default function Viewport({
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    showPlateResult, refreshSlicedCount, exportAllGcode, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
@@ -395,7 +411,7 @@ export default function Viewport({
   //  but G-code is already in absolute bed millimetres — so the offset is the bed's own corner, per the plate grid
   //  laid out by setPlates (plate i sits at (i%cols)*step, floor(i/cols)*step; model y maps to three -z).
   useEffect(() => {
-    if (gcode == null) return
+    if (gcode == null || tech === 'SLA') return   // injected G-code is an FFF artifact — a resin profile has no path that renders it
     const idx = selectedPlateRef.current
     try {
       const parsed = parseGcode(String(gcode), { filamentDiameter: Number(kp.filament_diameter) || 1.75 })
@@ -427,6 +443,12 @@ export default function Viewport({
     lo = Math.max(0, Math.min(max, lo)); hi = Math.max(0, Math.min(max, hi))
     if (lo > hi) { const t = lo; lo = hi; hi = t }
     setLayerLo(lo); setLayerHi(hi); applyLayerRange()
+    // A resin preview is solid meshes, so the slider becomes a section cut: clip below the lower layer's
+    //  bottom and above the upper layer's top. Fully-open ends pass null (no plane on that side).
+    const L = layersDataRef.current
+    if (L && plateResultsRef.current[selectedPlateRef.current]?.stats?.sla)
+      apiRef.current?.setSlaClip?.(lo <= 0 ? null : (L[lo - 1]?.z ?? null),
+                                   hi >= L.length - 1 ? null : (L[hi]?.z ?? null))
   }
   function onLo(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(v, layerHiRef.current) }
   function onHi(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(layerLoRef.current, v) }
@@ -513,10 +535,11 @@ export default function Viewport({
   // The rail button and the object card's button are the SUPPORT brush's entry point, so pressing them always ends
   //  up in support painting — from material painting that means switching, which is what "entering one leaves the
   //  other" has to look like from the user's side. Only pressing it while already support painting turns it off.
-  function togglePaintGizmo() { setPaintMode(supportPainting ? 'off' : 'enforcer') }
+  function togglePaintGizmo() { if (tech === 'SLA') return; setPaintMode(supportPainting ? 'off' : 'enforcer') }
   // Entering material painting from a filament chip: pick the extruder first, then switch the brush, so the first
   //  stroke after the click already carries the right selector state (support_paint stamps it from these refs).
   function startMaterialPaint(extruderIndex) {
+    if (tech === 'SLA') return   // the selector paints FFF support/material states — nothing to paint onto a resin slice yet
     const index = Number.isInteger(extruderIndex) ? extruderIndex : null
     setMaterialExtruder(index)
     if (paintModeRef.current !== 'material') setPaintMode('material')
@@ -650,7 +673,7 @@ export default function Viewport({
         {ok && canvasMode === 'prepare' && showPanel('gizmoRail') && (
           <GizmoRail gizmoMode={gmode} paintMode={paintMode}
             onGizmo={m => { setPaintMode('off'); apiRef.current?.setMode(m) }}
-            onTogglePaint={togglePaintGizmo} />
+            onTogglePaint={togglePaintGizmo} paintEnabled={tech !== 'SLA'} />
         )}
 
         {/* Center viewport */}
@@ -728,10 +751,10 @@ export default function Viewport({
 
         {/* S4 right sidebar */}
         {ok && showPanel('sidebar') && (
-          <Panel name="sidebar"><aside className="sidebar">
+          <Panel panels={panels} name="sidebar"><aside className="sidebar">
             <div className="sidebar-scroll">
               {showPanel('printerCard') && (
-                <Panel name="printerCard">
+                <Panel panels={panels} name="printerCard">
                   <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
                     settings={settings} setSettings={setSettings} motionPanel={motionPanel}
                     onExportPreset={exportPrinterPreset}
@@ -740,22 +763,29 @@ export default function Viewport({
               )}
 
               {showPanel('filamentCard') && (
-                <Panel name="filamentCard">
+                <Panel panels={panels} name="filamentCard">
                   <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
                     settings={settings} setSettings={setSettings} filamentPanel={filamentPanel}
                     paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
                 </Panel>
               )}
 
+              {/* The resin card stands where the filament card stood — showPanel routes the two by technology. */}
+              {showPanel('resinCard') && (
+                <Panel panels={panels} name="resinCard">
+                  <ResinCard settings={settings} setSettings={setSettings} stats={statsWithTools} />
+                </Panel>
+              )}
+
               {objects.length > 0 && showPanel('objectList') && (
-                <Panel name="objectList">
+                <Panel panels={panels} name="objectList">
                 <ObjectList objects={objects} extruderColors={extruderColors}
                   selectedIds={selectedIds}
                   onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
                   onRemove={id => { recordHistory(); removeObject(id) }}
-                  supportOn={supportOn} onToggleSupport={onToggleSupport}
+                  supportOn={supportOn} onToggleSupport={onToggleSupport} fffSupport={tech !== 'SLA'}
                   overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}
                   overhangAngle={overhangAngle} paintMode={paintMode} onTogglePaint={togglePaintGizmo}
                   supportStyle={supportStyle} supportStyles={supportStyles}
@@ -769,7 +799,7 @@ export default function Viewport({
 
               {/* A prime tower only exists with a second filament, so the card appears with one. */}
               {extruderColors.length > 1 && showPanel('towerCard') && (
-                <Panel name="towerCard">
+                <Panel panels={panels} name="towerCard">
                 <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
                   wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
                   towerStats={towerStats} selectedPlate={selectedPlate} plateCount={plateCount} />
@@ -782,7 +812,7 @@ export default function Viewport({
 
               {/* Preview controls (view type / slider / legend) */}
               {canvasMode === 'preview' && previewControls && showPanel('previewControls') && (
-                <Panel name="previewControls">
+                <Panel panels={panels} name="previewControls">
                 <section className="side-card">
                   <div className="sc-head">🎚 Preview</div>
                   {previewControls}
@@ -792,7 +822,7 @@ export default function Viewport({
 
               {/* (3) Process (settings panel) */}
               {showPanel('processCard') && (
-                <Panel name="processCard">
+                <Panel panels={panels} name="processCard">
                 <section className="side-card process-card" data-testid="process-section">
                   <div className="sc-head">⚙ Process</div>
                   {processPanel}
@@ -802,12 +832,14 @@ export default function Viewport({
             </div>
 
             {showPanel('sliceBar') && (
-              <Panel name="sliceBar">
+              <Panel panels={panels} name="sliceBar">
               <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
+                slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla}
+                onExportSl1={() => exportPlateSl1()} exporting={exporting}
                 bedWarning={bedOver || overBed
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the bed`
                     + (bedOverText ? ` by ${bedOverText}` : '')

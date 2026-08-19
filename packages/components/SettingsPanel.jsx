@@ -19,12 +19,16 @@ const CUSTOM_WIDGETS = {
   printable_area: BedShapeEditor,
 }
 import { uiTree } from 'three-slicer/data'
-import { settingRaw } from 'three-slicer/settings'
+import { settingRaw, printerTechnology } from 'three-slicer/settings'
 import { disabledKeys, makeCfg } from 'three-slicer/toggle'
 
 const MAIN_BUILDERS = Object.keys(uiTree).filter(b => uiTree[b].length > 0)
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']
-const builderLabel = b => b.replace('::build', '').replace('Tab', '')
+const builderLabel = b => b.replace('::build', '').replace('Tab', '').replace('_sla', ' (SLA)')
+// The ui-tree is keyed by upstream's own builder names, and upstream spells the technology into them
+//  (TabSLAPrint, TabPrinter::build_sla vs build_fff) — so the name IS the supports_printer_technology()
+//  declaration, and matching it is the whole port of that virtual.
+const builderTech = b => (/SLA|build_sla\b/.test(b) ? 'SLA' : 'FFF')
 
 function isDirty(settings, key) {
   if (!settings || !(key in settings)) return false
@@ -113,7 +117,14 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
   const [pageIdx, setPageIdx] = useState(0)
   const [mode, setMode] = useState('all')
   const [query, setQuery] = useState('')
-  const allPages = uiTree[only?.builder ?? builder] ?? []
+  // Builders are filtered by the printer profile's technology — FFF tabs for a filament printer, the SLA tabs
+  //  for a resin one. When the technology flips, the selected builder may no longer be offered; the render falls
+  //  back to the first offered one rather than writing state during render. `only` bypasses the filter: a host
+  //  that pinned one page keeps it regardless of what the profile says.
+  const tech = printerTechnology(settings)
+  const builders = MAIN_BUILDERS.filter(b => builderTech(b) === tech)
+  const activeBuilder = only?.builder ?? (builders.includes(builder) ? builder : builders[0] ?? '')
+  const allPages = uiTree[only?.builder ?? activeBuilder] ?? []
   const pages = only?.page ? allPages.filter(p => p.page === only.page) : allPages
   const page = pages[Math.min(pageIdx, pages.length - 1)]
   const disabled = useMemo(() => disabledKeys(makeCfg(settings)), [settings])
@@ -132,8 +143,8 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
         <input className="sp-search" placeholder={`Search options (${Object.keys(schema).length})…`} value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
         {!q && (<>
           <label className="sp-builder"><span>Settings group</span>
-            <select value={builder} onChange={e => { setBuilder(e.target.value); setPageIdx(0) }}>
-              {MAIN_BUILDERS.map(b => <option key={b} value={b}>{builderLabel(b)}</option>)}
+            <select value={activeBuilder} onChange={e => { setBuilder(e.target.value); setPageIdx(0) }}>
+              {builders.map(b => <option key={b} value={b}>{builderLabel(b)}</option>)}
             </select>
           </label>
           <div className="sp-pages">

@@ -166,6 +166,27 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   is half the paint topology key (`${id}:${ext}:${faces}`), so a fresh one silently drops that object's painting.
   Record at the ACTION layer, never on the buttons: delete alone is reachable from four entry points.
 - UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS.
+- **SLA is a second technology, not an FFF variant.** `printer_technology` routes it: `deriveSlaParams` ->
+  `slice_sla`, with a JS contour fallback when the wasm is absent. The support chain under
+  `packages/wasm-core/slasupport_port/` is PrusaSlicer 2.9.6 verbatim — its own guide is
+  `slasupport_port/PORT_NOTES.md`, and `test_sla_source_manifest.mjs` fails the build when a ported file
+  drifts from its recorded upstream hash. It builds against real vendored deps, not shims: NLopt 2.5.0
+  (Prusa's exact pin) and SGI glu-libtess in `third_party/deps_src/`, plus brew CGAL headers with
+  `-DCGAL_DISABLE_GMP=1` on every CGAL-compiling group (the GMP auto-detect otherwise links `__gmpn_*`
+  symbols no wasm provides).
+- **What the SLA kernel cannot do it refuses with a typed code — it never approximates.** Hollowing/drain
+  holes are `SLA_UNSUPPORTED_HOLLOWING` (an entry gate in `slice_sla.cpp` AND the request layer, because a
+  solid slice answered to a hollow request would be a mislabeled print); organic trees and
+  `pad_around_object` are typed too; and a pad that fails to GENERATE fails the slice (upstream
+  SlicingError semantics) rather than emitting a scene lifted onto a pad that is not there.
+- **The SLA layer frame lifts by `stats.lift_layers`, not elevation.** A pad occupies `[0, pad]` and the
+  scene above rises by pad + elevation; the viewer overlay must use `lift_layers` — lifting by elevation
+  alone is exactly the bug that floated supports in mid-air on pad-enabled previews.
+- **The SL1 export is PORTRAIT by default**, like every Prusa SL1-family profile: the mask canvas is
+  `pixels_y` wide by `pixels_x` tall, columns run along the display's y axis and rows along the X-mirrored
+  x axis (`slaRasterTransform`, validated against masks a real 2.9.6 archive holds). `config.ini` is
+  upstream `fill_iniconf`'s field set in `std::map` (alphabetical) order with 6-decimal floats.
+  `test_sla_mt.mjs` pins the mt (pthread) kernel byte-identical to the st one over the same SLA slice.
 - Licensed AGPL-3.0-or-later (`LICENSE.txt`).
 
 ## Commands
@@ -209,7 +230,16 @@ node packages/viewer/test_scale_box.mjs
 # Undo/redo stack semantics (branch discard, coalescing, limit) + the Ctrl+Z/Y binding
 node packages/viewer/test_history.mjs
 
-# Rebuild the kernel (needs emscripten + brew boost/eigen)
+# SLA: the kernel invariants + pad + mt parity + the hollowing gate run inside test:kernel; the rest standalone
+node packages/wasm-core/test_sla_kernel.mjs        # slice_sla end to end: contours, supports, lift frame
+node packages/wasm-core/test_sla_support_points.mjs # the ported SupportPointGenerator against its recorded run
+node packages/wasm-core/test_sla_support_slicer.mjs # the winding-true fallback slicer's loop contract
+node packages/wasm-core/test_sla_source_manifest.mjs # slasupport_port files match their upstream hashes
+node packages/engine/test_sla_request.mjs          # the typed SLA job protocol (capability codes)
+node packages/viewer/test_sl1.mjs                  # SL1 raster transform (portrait), config.ini, archive
+node packages/viewer/test_sla_3mf.mjs              # SLA 3mf records (points/drain holes) round-trip
+
+# Rebuild the kernel (needs emscripten + brew boost/eigen + brew cgal for the SLA group)
 bash packages/wasm-core/build.sh
 
 # Regenerate the extracted JSON (slicers/slicer sources -> packages/data/)

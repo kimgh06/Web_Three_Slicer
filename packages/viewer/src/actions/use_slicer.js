@@ -1,6 +1,6 @@
 import { log } from '../core/log.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, settingRaw } from 'three-slicer/settings'
+import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer/settings'
 import { makeSlicerWorker } from '../make_worker.js'
 
 // The kernel's stats object, reduced to what the UI reads. One place, because the per-plate path shows the same
@@ -13,6 +13,8 @@ export function statsFromKernel(s) {
     engine: s.time_engine, limits: s.machine_limits,
     overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },
     overBedModel: !!s.over_bed_model,     // true = the model itself is off the bed, not just what was printed around it
+    // A resin slice's own figures ride along; the card switches its filament line on `sla`.
+    ...(s.sla ? { sla: true, resinMl: s.resin_ml ?? 0 } : {}),
   }
 }
 
@@ -87,6 +89,9 @@ export function useSlicer(deps) {
         const d = e.data
         const pnd = pendingSliceRef.current
         if (d.type === 'progress') {   // stage 30: reset the watchdog (+record the phase) + weighted mapping + per-band polling control
+          // An SLA slice reports layers linearly — the FFF phase weighting (and its SAB polling bands) would map
+          //  a layer count onto surface/support phases that do not exist there.
+          if (pnd?.sla) { setProgress(d.total ? d.done / d.total : 0); pnd?.kick?.(); return }
           const N = d.total > 2 ? (d.total - 2) / 2 : 0
           if (N && d.done <= N) stopSupPoll()          // first progress = PASS1 done -> stop P1 polling
           if (N && d.done === N + 1) startSupPoll(N)
@@ -131,7 +136,8 @@ export function useSlicer(deps) {
   function assembleResult(result) {
     if (result && result.stats && result.stats.streamed) {
       const a = streamAccumRef.current || { layers: [], gcode: [] }
-      return { stats: result.stats, layers: a.layers, gcode: a.gcode.join('') }
+      // Spread first: fields beside the stream (the SLA solid meshes) must survive assembly.
+      return { ...result, stats: result.stats, layers: a.layers, gcode: a.gcode.join('') }
     }
     return result
   }
@@ -164,7 +170,7 @@ export function useSlicer(deps) {
   // ---- Slicing (derived from the right panel settings) — per plate (stage 29-2) + streaming/watchdog/OOM ladder (stage 30) ----
   const WATCHDOG_MS = 60000   // stage-30 hang watchdog: no progress/layer news for 60s -> declared dead
   const SILENT_STAGE_MS = 300000   // surface/support window (around 50% progress): the kernel is structurally silent — minutes are normal on large models. A relaxed limit to avoid false positives.
-  function sliceOne(buf, paramsStr) {
+  function sliceOne(buf, paramsStr, cmd) {
     return new Promise((resolve, reject) => {
       // dev/test hooks (not set in production): __vpFail(n)=force a failure (ladder verification) · __vpStallNext=unresponsive worker (watchdog) · __vpWatchdogOnce=short watchdog (ms).
       if (typeof window !== 'undefined' && window.__vpFail && window.__vpFail(window.__vpSliceN = (window.__vpSliceN || 0) + 1)) { reject(new Error('forced failure (test hook)')); return }
@@ -193,10 +199,10 @@ export function useSlicer(deps) {
         try { workerRef.current?.terminate() } catch {} ; workerRef.current = null   // force-terminate the stalled worker
         reject(new Error(`watchdog: no progress for ${ms}ms — assuming memory pressure`))
       }, ms) }
-      pendingSliceRef.current = { resolve, reject, kick, stop, note }
+      pendingSliceRef.current = { resolve, reject, kick, stop, note, sla: cmd === 'sla' }
       kick()
-      getWorker().postMessage({ stl: buf, params: paramsStr, stall })
-      startP1Poll()   // real PASS1 progress (0 -> 35%) — a no-op when SAB is unsupported (st)
+      getWorker().postMessage({ ...(cmd ? { cmd } : {}), stl: buf, params: paramsStr, stall })
+      if (cmd !== 'sla') startP1Poll()   // real PASS1 progress (0 -> 35%) — a no-op when SAB is unsupported (st); SLA reports linearly itself
     })
   }
   function recreateWorker() { try { workerRef.current?.terminate() } catch {} ; workerRef.current = null; getWorker() }
@@ -318,6 +324,17 @@ export function useSlicer(deps) {
   // One merged STL through the whole ladder: parameters + incremental digest + the last-successful-geometry bookkeeping.
   //  Finishing via economy/classic used different parameters, so the cache cannot be reused (lastGeom is cleared).
   async function runSlice(merged) {
+    // SLA routing: the technology key sends the merge to the pure-JS contour slicer instead of the kernel. No
+    //  retry ladder and no incremental cache — there is no Arachne to crash and no stage cache to reuse — and the
+    //  derived params ride on the result so the SL1 writer rasterizes with the values this slice actually used.
+    if (printerTechnology(settings) === 'SLA') {
+      const slaParams = deriveSlaParams(settings)
+      if (typeof window !== 'undefined') window.__vpParams = slaParams   // dev/test aid, same as the FFF path
+      const r = await sliceOne(merged.buf, JSON.stringify(slaParams), 'sla')
+      // merged.buf survives (the post copies, it does not transfer) — the preview renders this exact geometry
+      //  as a solid mesh, lifted by the elevation, beside the kernel's support/pad meshes.
+      return { r: { ...r, gcode: '', slaParams, modelSTL: merged.buf }, params: slaParams }
+    }
     const params = buildParams(merged)
     const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
     try {
