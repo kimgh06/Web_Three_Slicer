@@ -1,7 +1,7 @@
 {
   "name": "three-slicer",
-  "version": "0.1.7",
-  "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), React viewer with GPU toolpath preview, and schema-driven settings UI.",
+  "version": "0.2.0",
+  "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), SLA resin slicing with PrusaSlicer's ported support/pad chain and .sl1 export, React viewer with GPU toolpath preview, and schema-driven settings UI.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "exports": {
@@ -96,6 +96,8 @@
     "!data/config-schema-builddump.json",
     "!data/**/.omc",
     "README.md",
+    "CHANGELOG.md",
+    "THIRD-PARTY-NOTICES.md",
     "LICENSE.txt"
   ],
   "repository": {
@@ -108,6 +110,10 @@
     "3d-printing",
     "slicer",
     "gcode",
+    "sla",
+    "resin",
+    "sl1",
+    "msla",
     "stl",
     "wasm",
     "orcaslicer",

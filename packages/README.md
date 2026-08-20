@@ -1,6 +1,6 @@
 # three-slicer
 
-Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It can slice binary STL files to G-code in Node or the browser, and it also ships React UI pieces for building a browser slicer: a three.js viewport, GPU toolpath preview, and a schema-driven settings panel.
+Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It can slice binary STL files to G-code in Node or the browser, and it also ships React UI pieces for building a browser slicer: a three.js viewport, GPU toolpath preview, and a schema-driven settings panel. SLA (resin) printers are a second technology in the same kernel — supports and pad from PrusaSlicer's ported chain, previewed in the same viewer, exported as an `.sl1` archive.
 
 The package is published as a single npm package, `three-slicer`, with subpath exports for the engine, viewer, components, worker, and extracted OrcaSlicer data.
 
@@ -23,6 +23,7 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 - Support painting and material painting, plus per-tool filament and purge statistics.
 - 3MF **project** import in the viewer: a slicer-written `.3mf` (OrcaSlicer/BambuStudio save, MakerWorld download) restores its plate layout, project settings, and painted facets — not just the meshes.
 - Extracted data files for custom UIs: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament catalogs.
+- SLA (resin) slicing: PrusaSlicer 2.9.6's ported support-point generator, support tree and pad, a resin material catalog, and `.sl1` mask export — routed by `printer_technology`, with typed capability errors for what the port does not cover.
 - Automatic multithreaded WASM selection on cross-origin-isolated browser pages.
 
 ## Installation
@@ -399,6 +400,53 @@ worker.postMessage({ cmd: 'erase', facet, hx, hy, hz, cx, cy, cz, radius })
 
 Because a single enum serves both jobs, a support blocker paint and an Extruder 2 paint are the same mark on a facet, and painted materials only take effect with support turned off (the painted multi-material path emits no support). Support painting is unaffected: a support-enabled slice stays on the single-material path.
 
+## SLA (Resin) Slicing
+
+SLA is a second printer technology, not an FFF mode. `printer_technology` in the settings map routes it —
+apply an SLA machine profile from the catalog (`printersByVendor` marks the technology) or set the key
+yourself, then derive SLA params and call the SLA entry:
+
+```js
+import { printerTechnology, deriveSlaParams, resinCatalog, resinSettingsFor } from 'three-slicer/settings'
+
+printerTechnology(settings)                        // 'SLA' or 'FFF'
+const params = deriveSlaParams(settings)           // layers/exposure, display, supports, pad, raster orientation
+
+const result = slicer.sliceSla(stl, params)
+result.stats.sla                                   // true — no G-code; stats carry resin_ml and time_estimate
+result.stats.layers                                // includes the pad + elevation lift below the model
+result.layers[0].paths                             // the same stride-8 segment stream the FFF preview reads
+```
+
+In a worker, `client.sliceSla(stl, params, { onProgress, onLayer })` is the same call over the message
+protocol, and `client.sliceSlaJob(job)` takes the typed job protocol — objects with manual support points,
+drain-hole records and modifier volumes — validated structurally before slicing.
+
+A runnable version ships with the package: `node node_modules/three-slicer/engine/examples/sla_headless.mjs`
+slices a cube with supports and pad, then demonstrates the capability refusal below.
+
+The support chain is PrusaSlicer 2.9.6's own, ported verbatim and compiled into the same WASM kernel: the
+support-point generator, the default support tree, and the real pad geometry. Resin materials follow the
+same catalog pattern as filaments: `resinCatalog` lists them, `resinSettingsFor(name)` is one preset.
+
+**What the kernel cannot do it refuses with a typed code — it never approximates.** A request the port does
+not cover fails with a stable error instead of silently producing something else:
+
+| Code | Refused request |
+| --- | --- |
+| `SLA_UNSUPPORTED_HOLLOWING` | `hollowing_enable` or drain holes — a solid slice answered to a hollow request would be a mislabeled print |
+| `SLA_UNSUPPORTED_ORGANIC` | organic support trees |
+| `SLA_PAD_AROUND_OBJECT_UNSUPPORTED` | zero-elevation pad embedding (`pad_around_object`) |
+
+`SLA_CAPABILITIES` (exported from `three-slicer/client`) is the machine-readable capability map. A `.3mf`
+carrying SLA records survives round-trip regardless: manual support points and drain holes are preserved on
+import and written back on export, even where slicing refuses to consume them.
+
+The viewer follows the technology automatically: an SLA profile swaps the filament card for the resin card,
+hides the FFF-only tools (prime tower, painting brushes), previews the generated support and pad meshes, and
+exports an `.sl1` archive — per-layer PNG masks in the SL1 family's portrait orientation plus upstream's
+`config.ini` — instead of G-code.
+
 ## Worker Usage
 
 Slicing blocks its thread for seconds, so in a browser it belongs in a worker. `three-slicer/client` wraps the
@@ -569,6 +617,7 @@ the layout by hand.
 | --- | --- |
 | `createSlicer()` | Loads the WASM kernel and returns a slicer handle |
 | `slicer.slice(stl, params, callbacks?)` | Slices binary STL input to G-code or streamed layers |
+| `slicer.sliceSla(stl, params, onProgress?)` | SLA slice — layer masks, support/pad meshes, resin stats; typed `error` on a refused capability |
 | `slicer.paintPrepare(stl)` | Prepares painting against a model; returns the facet count |
 | `slicer.paint(args)` | Paints enforcer/blocker data (boolean pair; the state-addressed form is worker-only) |
 | `slicer.paintClear()` | Clears painting data for every state |
@@ -598,6 +647,9 @@ the layout by hand.
 | `machineLimitKeys` | The schema keys the kernel's machine limits are read from |
 | `processPresets()` | Lazy facade over the print (process) preset catalog |
 | `filamentPresets()` | Lazy facade over the material preset catalog |
+| `printerTechnology(settings)` | `'SLA'` or `'FFF'` — what routes a slice to `slice_sla` |
+| `deriveSlaParams(settings)` | Sparse settings → the SLA kernel's params (display, supports, pad, raster) |
+| `resinCatalog` / `resinSettingsFor(name)` | The resin material catalog, and one preset's settings |
 
 ### `three-slicer/toggle`
 
@@ -649,6 +701,9 @@ the layout by hand.
 - Some vector settings are simplified to their first element.
 - Material painting and support cannot currently produce two materials on the same slice: the painted multi-material path emits no support, and one triangle selector serves both brushes.
 - The multi-material prime tower is a real ported wipe tower, but the fallback square ring used when it fails is not.
+- SLA hollowing and drain-hole geometry are refused with `SLA_UNSUPPORTED_HOLLOWING` (the OpenVDB chain is not ported); the records still round-trip through `.3mf`.
+- The `.sl1` export lives in the viewer (its masks need a canvas); there is no headless `.sl1` writer export yet.
+- SLA mask edges are canvas anti-aliasing, not upstream's AGG rasterizer — same geometry, slightly different edge pixels.
 - Multithreaded WASM requires cross-origin isolation.
 - `three` is pinned as a peer dependency because viewer internals depend on the `TransformControls` API shape.
 

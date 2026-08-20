@@ -73,7 +73,8 @@ Regenerate: `python3 web/extract_all.py` (paths are derived from `__file__` — 
   the final truth about which options exist and their types and defaults.
 - The **automatic value-correction dialog rules** in `update_print_fff_config` (ConfigManipulation.cpp) — e.g. forcing wall_loops=1 when spiral
   mode is on — are not toggles, so they are absent from this JSON. They must be translated by hand.
-- The SLA family was extracted but not reviewed.
+- The SLA family is extracted and now consumed: the SLA tabs render in the settings panel and `deriveSlaParams`
+  reads the display/support/pad keys (see `packages/engine/README.md`, "SLA parameters").
 - The ui-tree <-> schema cross-check found 2 dangling references: `spaghetti_detector` (commented out at PrintConfig.cpp:4020 while
   TabPrinter still references it) and `pad_edge_radius` (SLA legacy, no definition). A web implementation can simply
   skip these two keys.
