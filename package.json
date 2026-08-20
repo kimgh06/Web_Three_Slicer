@@ -10,7 +10,7 @@
     "build": "npm run build --workspaces --if-present",
     "dev": "npm run dev -w three-slicer-viewer",
     "test": "npm run test:kernel && npm run test:viewer",
-    "test:kernel": "node packages/wasm-core/test.mjs && node packages/wasm-core/test_sla_kernel.mjs && node packages/wasm-core/test_sla_pad.mjs && node packages/wasm-core/test_sla_mt.mjs && node packages/wasm-core/test_sla_hollowing.mjs && node packages/types/test_kernel_params.mjs && node packages/engine/test_client.mjs && node packages/engine/test_sla.mjs",
+    "test:kernel": "node packages/wasm-core/test.mjs && node packages/wasm-core/test_port_parity.mjs && node packages/wasm-core/test_sla_kernel.mjs && node packages/wasm-core/test_sla_pad.mjs && node packages/wasm-core/test_sla_mt.mjs && node packages/wasm-core/test_sla_hollowing.mjs && node packages/types/test_kernel_params.mjs && node packages/engine/test_client.mjs && node packages/engine/test_sla.mjs",
     "test:viewer": "node packages/viewer/test_layers.mjs && node packages/viewer/test_wiring.mjs && node packages/viewer/test_viewer_docs.mjs && node packages/viewer/test_preset_file.mjs && node packages/viewer/test_bed_bounds.mjs && node packages/viewer/test_plate_layout.mjs && node packages/viewer/test_merge_stl.mjs && node packages/viewer/test_box_select.mjs && node packages/viewer/test_bed_grid.mjs && node packages/viewer/test_tower_layout.mjs && node packages/viewer/test_gcode_parse.mjs && node packages/viewer/test_history.mjs && node packages/viewer/test_loaders.mjs && node packages/viewer/test_overhang.mjs && node packages/viewer/test_scale_box.mjs && node packages/viewer/test_3mf_export.mjs && node packages/viewer/test_3mf_project.mjs && node packages/viewer/test_sl1.mjs"
   },
   "overrides": {
