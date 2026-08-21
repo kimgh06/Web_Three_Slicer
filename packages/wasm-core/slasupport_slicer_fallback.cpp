@@ -1,5 +1,8 @@
 #include "slasupport_bridge.h"
 
+#include <tbb/parallel_for.h>     // the treesupport stub — real threads only inside a ParallelScope (mt)
+#include <tbb/stub_parallel.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -245,11 +248,21 @@ SupportSliceBatch slice_support_mesh_fallback(
         layer_segments[by_height[it - sorted_heights.begin()]].push_back(segment);
   }
 
+  // Chain each height's segments into loops — per-height slots, so mt threads (inside the
+  // ParallelScope) produce byte-identical results to the serial st walk. On error the lowest
+  // first-seen height's message wins, matching the serial walk's first-error semantics.
   std::vector<std::vector<Polygon>> sliced(unique_heights.size());
-  for (std::uint32_t u = 0; u < unique_heights.size(); ++u) {   // first-seen order, like the original walk
-    sliced[u] = chain_closed_loops(layer_segments[u], result.error);
-    if (!result.error.empty()) return result;
+  std::vector<std::string> chain_errors(unique_heights.size());
+  {
+    tbb_stub::ParallelScope parallel_scope;
+    tbb::parallel_for(tbb::blocked_range<std::uint32_t>(0, (std::uint32_t)unique_heights.size()),
+                      [&](const tbb::blocked_range<std::uint32_t>& range) {
+                        for (std::uint32_t u = range.begin(); u < range.end(); ++u)
+                          sliced[u] = chain_closed_loops(layer_segments[u], chain_errors[u]);
+                      });
   }
+  for (std::uint32_t u = 0; u < unique_heights.size(); ++u)
+    if (!chain_errors[u].empty()) { result.error = chain_errors[u]; return result; }
   result.slices.reserve(heights.size());
   for (std::size_t k = 0; k < heights.size(); ++k) result.slices.push_back(sliced[slice_of[k]]);
   result.ok = true;

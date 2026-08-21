@@ -38,7 +38,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace em = emscripten;
@@ -103,6 +106,50 @@ static bool point_in_region(const IntPoint& pt, const Paths& ps) {
   for (const Path& q : ps) if (PointInPolygon(pt, q)) ++cnt;
   return (cnt & 1) != 0;
 }
+// Layer-parallel runner for the kernel-side per-layer passes (contours, raster clip, pad clip):
+// each index writes only its own slot, so chunk boundaries cannot change the output — mt runs
+// byte-identical to st. Threads exist only in the mt build; workers must not touch embind, so
+// report() stays with the caller (a phase now finishes in well under a band's width anyway).
+// A worker exception (Clipper on degenerate input) is captured and rethrown on the caller —
+// escaping a std::thread would terminate.
+template <class Fn>
+static void sla_for_each_layer(int n, const Fn& fn) {
+#ifdef __EMSCRIPTEN_PTHREADS__
+  const unsigned hw = std::thread::hardware_concurrency();
+  if (n > 3 && hw > 1) {
+    const unsigned nt = std::min<unsigned>(hw - 1, (unsigned)n);
+    const int chunk = std::max(1, n / int(nt * 8));
+    std::atomic<int> next{0};
+    std::exception_ptr first_error = nullptr;
+    std::mutex error_mutex;
+    auto work = [&] {
+      try {
+        for (;;) {
+          const int lo = next.fetch_add(chunk);
+          if (lo >= n) break;
+          const int hi = std::min(n, lo + chunk);
+          for (int i = lo; i < hi; ++i) fn(i);
+        }
+      } catch (...) {
+        std::lock_guard<std::mutex> hold(error_mutex);
+        if (!first_error) first_error = std::current_exception();
+      }
+    };
+    std::vector<std::thread> workers;
+    workers.reserve(nt - 1);
+    for (unsigned t = 1; t < nt; ++t) {
+      try { workers.emplace_back(work); }   // pool exhausted -> the caller and existing workers absorb
+      catch (...) { break; }
+    }
+    work();
+    for (std::thread& worker : workers) worker.join();
+    if (first_error) std::rethrow_exception(first_error);
+    return;
+  }
+#endif
+  for (int i = 0; i < n; ++i) fn(i);
+}
+
 static inline IntPoint ip(double x, double y) {
   return IntPoint((cInt)std::llround(x * SCALE), (cInt)std::llround(y * SCALE));
 }
@@ -162,16 +209,17 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   // slicer (slice_mesh_ex + slice_closing_radius, upstream's own pipeline); this set is display/raster only.
   const double closing_r = std::max(0.0, sla_jd(params_json, "slice_closing_radius", 0.049));
   std::vector<Paths> contours(N);
-  for (int i = 0; i < N; ++i) {
-    if (CX()) { result.set("error", std::string("canceled")); return result; }
-    if ((i & 63) == 0) report(i * 300 / std::max(1, N), 1000);   // contours: 0 -> 30%
+  sla_for_each_layer(N, [&](int i) {
+    if (CX()) return;   // cooperative bail; the boundary check below reports the cancel
     Paths loops = chain_polys(layerSegs[i]);
     contours[i] = SimplifyPolygons(loops, pftEvenOdd);
     if (p.gcode_resolution > 1e-6) CleanPolygons(contours[i], SCALE * p.gcode_resolution);
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
                                      [](const Path& q){ return q.size() < 3; }), contours[i].end());
     layerSegs[i].clear(); layerSegs[i].shrink_to_fit();
-  }
+  });
+  if (CX()) { result.set("error", std::string("canceled")); return result; }
+  report(180, 1000);   // contours done: 18%
 
   tw_contours = emscripten_get_now();
   // ---- Support parameters (upstream SupportTreeConfig names where one exists) --------------------------------
@@ -253,10 +301,13 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   prepared.callbacks.is_canceled = [&]() { return CX(); };
   prepared.callbacks.on_progress = [&](const slasupport_bridge::Progress& progress) {
     if (progress.total == 0) return;
-    if (progress.phase == slasupport_bridge::ProgressPhase::prepare)           // generation: 30% -> 32%
-      report(300 + (int)(progress.completed * 20 / progress.total), 1000);
-    else if (progress.phase == slasupport_bridge::ProgressPhase::support_tree) // tree: 32% -> 67%
-      report(320 + (int)(progress.completed * 350 / progress.total), 1000);
+    // Band widths follow the MEASURED mt phase shares (support-point generation is the longest
+    // phase and used to sit in a 2% band, which read as a frozen bar; the bridge now also ticks
+    // its weld/slice/prepare sub-stages so this band moves the whole time).
+    if (progress.phase == slasupport_bridge::ProgressPhase::prepare)           // generation: 18% -> 65%
+      report(180 + (int)(progress.completed * 470 / progress.total), 1000);
+    else if (progress.phase == slasupport_bridge::ProgressPhase::support_tree) // tree: 65% -> 82%
+      report(650 + (int)(progress.completed * 170 / progress.total), 1000);
   };
   if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && NN_planned > 0) {
     std::vector<float> model_soup; model_soup.reserve(tris.size() * 9);
@@ -320,7 +371,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     bc.max_weight_on_model = max_weight;
     bc.max_bridges_on_pillar = max_bridges;
     bc.mesh_steps = 45;   // upstream's output-mesh resolution (SupportTreeBuilder::merged_mesh default)
-    report(320, 1000);                                            // sampling done -> entering the tree
+    report(650, 1000);                                            // sampling done -> entering the tree
     slasupport_bridge::Result R = slasupport_bridge::generate(prepared, bc);
     if (R.ok) { smesh = std::move(R.mesh); pillar_count = R.pillars; }
     else support_error = R.error.empty() ? "support tree produced nothing" : R.error;
@@ -390,8 +441,8 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     support_slicer_error = sliced.error;
     if (sliced.ok) {
       const double tw_clip0 = emscripten_get_now();
-      for (int g = 0; g < NN; ++g) {
-        if ((g & 63) == 0) report(670 + g * 230 / std::max(1, NN), 1000);
+      report(820, 1000);   // raster: 82% -> 95%
+      sla_for_each_layer(NN, [&](int g) {
         Paths loops;
         loops.reserve(sliced.slices[g].size());
         for (const slasupport_bridge::Polygon& polygon : sliced.slices[g]) {
@@ -405,7 +456,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         merged.erase(std::remove_if(merged.begin(), merged.end(),
                                     [](const Path& q){ return q.size() < 3; }), merged.end());
         support[g] = clip_paths(merged, contour_at(g), ctDifference);
-      }
+      });
       tw_raster_clip = emscripten_get_now() - tw_clip0;
     }
   }
@@ -420,7 +471,8 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     slasupport_bridge::SupportSliceBatch pad_sliced =
       slasupport_bridge::slice_support_mesh_fallback(pmesh, pad_mids);
     if (pad_sliced.ok) {
-      for (int g = 0; g < NN; ++g) {
+      report(950, 1000);   // pad raster: 95% -> 97%
+      sla_for_each_layer(NN, [&](int g) {
         Paths loops;
         loops.reserve(pad_sliced.slices[g].size());
         for (const slasupport_bridge::Polygon& polygon : pad_sliced.slices[g]) {
@@ -434,8 +486,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         merged.erase(std::remove_if(merged.begin(), merged.end(),
                                     [](const Path& q){ return q.size() < 3; }), merged.end());
         pad[g] = clip_paths(merged, union_paths(contour_at(g), support[g]), ctDifference);
+      });
+      for (int g = 0; g < NN; ++g)   // the "highest non-empty layer" scan is order-dependent — post-pass
         if (!pad[g].empty()) pad_layers = g + 1;
-      }
     } else if (pad_error.empty()) pad_error = pad_sliced.error;
   }
 
@@ -461,7 +514,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       Lo.set("z", z); Lo.set("paths", to_f32(tp)); Lo.set("widths", to_f32(wd));
       layersArr.call<void>("push", Lo);
     }
-    if ((g & 7) == 0 || g == NN - 1) report(900 + (g + 1) * 100 / std::max(1, NN), 1000);   // emission: 90% -> 100%
+    if ((g & 7) == 0 || g == NN - 1) report(970 + (g + 1) * 30 / std::max(1, NN), 1000);   // emission: 97% -> 100%
   }
 
   // ---- Stats: the resin figures + the exposure-fade time model (identical to the JS core it replaces). ----------

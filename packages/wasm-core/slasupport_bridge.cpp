@@ -172,6 +172,16 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
 
       // The object mesh in generation (plate) space — for slicing, the surface snap, and the permanent-point
       // checks. Vertices are welded because the slicer walks shared edges (an unwelded soup has none).
+      const std::size_t object_index = &object - job.objects.data();
+      // Sample-phase sub-stage ticks on a 0..1000-per-object scale. The weld/slice/prepare stretch
+      // used to be SILENT (only generate's per-layer status reported), which parked the UI progress
+      // bar for the longest phase of an SLA slice; generate's 0..100 maps onto 350..1000 below.
+      const auto stage_tick = [&job, object_index, object_total = job.objects.size()](std::size_t value) {
+        if (job.callbacks.on_progress)
+          job.callbacks.on_progress({ProgressPhase::prepare,
+                                     object_index * 1000 + value, object_total * 1000});
+      };
+
       const double tw_weld0 = emscripten_get_now();
       std::vector<float> soup;
       soup.reserve(object.mesh.size());
@@ -186,6 +196,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       its_merge_vertices(its);
       AABBMesh emesh{its};
       out.t_weld_ms += emscripten_get_now() - tw_weld0;
+      stage_tick(50);
 
       // The generator's input slices come from the REAL slicer with the profile's gap-closing radius —
       // exactly upstream's pipeline (SLAPrintSteps slice_model -> get_model_slices), not from the kernel's
@@ -208,13 +219,10 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       }
       cancel();
       out.t_slice_ms += emscripten_get_now() - tw_slice0;
+      stage_tick(180);
 
-      const std::size_t object_index = &object - job.objects.data();
-      Slic3r::sla::StatusFunction status = [&job, object_index, total = job.objects.size()](int st) {
-        if (job.callbacks.on_progress)
-          job.callbacks.on_progress({ProgressPhase::prepare,
-                                     object_index * 100 + std::size_t(std::max(0, std::min(100, st))),
-                                     total * 100});
+      Slic3r::sla::StatusFunction status = [&stage_tick](int st) {
+        stage_tick(350 + std::size_t(std::max(0, std::min(100, st))) * 650 / 100);
       };
 
       const double tw_prepare0 = emscripten_get_now();
@@ -229,6 +237,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
             std::move(slices), heights, {}, cancel, status);
       }
       out.t_prepare_ms += emscripten_get_now() - tw_prepare0;
+      stage_tick(350);
 
       // Permanent (manual) points of this object enter the generator's density accounting…
       Slic3r::sla::SupportPoints authored;
