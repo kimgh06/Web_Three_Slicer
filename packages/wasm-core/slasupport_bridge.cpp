@@ -8,6 +8,9 @@
 //  layer frame (elevation zone at the bottom) receives world coordinates.
 #include "slasupport_bridge.h"
 
+#include <emscripten/emscripten.h>   // emscripten_get_now — phase timing (stats only)
+#include <tbb/stub_parallel.h>       // ParallelScope — lets the tbb stub run real threads (mt only)
+
 #include <libslic3r/AABBMesh.hpp>
 #include <libslic3r/SLA/DefaultSupportTree.hpp>
 #include <libslic3r/SLA/SupportTree.hpp>
@@ -169,6 +172,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
 
       // The object mesh in generation (plate) space — for slicing, the surface snap, and the permanent-point
       // checks. Vertices are welded because the slicer walks shared edges (an unwelded soup has none).
+      const double tw_weld0 = emscripten_get_now();
       std::vector<float> soup;
       soup.reserve(object.mesh.size());
       for (std::size_t i = 0; i < object.mesh.size(); i += 3) {
@@ -181,6 +185,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       indexed_triangle_set its = soup_to_its(soup);
       its_merge_vertices(its);
       AABBMesh emesh{its};
+      out.t_weld_ms += emscripten_get_now() - tw_weld0;
 
       // The generator's input slices come from the REAL slicer with the profile's gap-closing radius —
       // exactly upstream's pipeline (SLAPrintSteps slice_model -> get_model_slices), not from the kernel's
@@ -190,8 +195,19 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       for (const PreparedLayer* layer : object_layers) heights.push_back(float(layer->slice_z));
       Slic3r::MeshSlicingParamsEx slicing_params;
       slicing_params.closing_radius = float(cfg.slice_closing_radius);
-      std::vector<Slic3r::ExPolygons> slices =
-          Slic3r::slice_mesh_ex(its, heights, slicing_params, [&cancel]{ cancel(); });
+      const double tw_slice0 = emscripten_get_now();
+      std::vector<Slic3r::ExPolygons> slices;
+      {
+        // mt builds: slice_mesh_ex's internal tbb::parallel_for splits across the pthread pool inside
+        // this scope (per-layer slots, deterministic — byte-identical to the serial st run). st builds
+        // and no-thread environments run exactly the code they always did. The cancel passed in must
+        // NOT throw — a throw inside a worker std::thread terminates; the boundary check right after
+        // preserves the cancellation semantics (a canceled slice produces no output either way).
+        tbb_stub::ParallelScope parallel_scope;
+        slices = Slic3r::slice_mesh_ex(its, heights, slicing_params, []{});
+      }
+      cancel();
+      out.t_slice_ms += emscripten_get_now() - tw_slice0;
 
       const std::size_t object_index = &object - job.objects.data();
       Slic3r::sla::StatusFunction status = [&job, object_index, total = job.objects.size()](int st) {
@@ -201,8 +217,18 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
                                      total * 100});
       };
 
-      Slic3r::sla::SupportPointGeneratorData data = Slic3r::sla::prepare_generator_data(
-          std::move(slices), heights, {}, cancel, status);
+      const double tw_prepare0 = emscripten_get_now();
+      Slic3r::sla::SupportPointGeneratorData data;
+      {
+        // The five prepare passes are execution::for_each(ex_tbb, …) over independent layer slots —
+        // parallel via the SLA group's ExecutionTBB shadow inside this scope (mt), serial otherwise.
+        // generate_support_points below stays OUTSIDE any scope: its result collection is
+        // mutex-appended, so a parallel run would make the point ORDER thread-dependent.
+        tbb_stub::ParallelScope parallel_scope;
+        data = Slic3r::sla::prepare_generator_data(
+            std::move(slices), heights, {}, cancel, status);
+      }
+      out.t_prepare_ms += emscripten_get_now() - tw_prepare0;
 
       // Permanent (manual) points of this object enter the generator's density accounting…
       Slic3r::sla::SupportPoints authored;
@@ -217,15 +243,19 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       }
       prepare_permanent_support_points_port(data.permanent_supports, authored, emesh);
 
+      const double tw_generate0 = emscripten_get_now();
       Slic3r::sla::LayerSupportPoints layer_points =
           Slic3r::sla::generate_support_points(data, generator_config, cancel, status);
+      out.t_generate_ms += emscripten_get_now() - tw_generate0;
 
       // Maximal move of support point to mesh surface, no more than height of layer (upstream :768).
       double allowed_move = heights.size() > 1
           ? double(heights[1] - heights[0]) + std::numeric_limits<float>::epsilon()
           : double(std::numeric_limits<float>::epsilon());
+      const double tw_move0 = emscripten_get_now();
       Slic3r::sla::SupportPoints surface_points =
           Slic3r::sla::move_on_mesh_surface(layer_points, emesh, allowed_move, cancel);
+      out.t_move_ms += emscripten_get_now() - tw_move0;
 
       // …and are appended AFTER the move so their authored 3d position survives (upstream :776).
       surface_points.insert(surface_points.end(),

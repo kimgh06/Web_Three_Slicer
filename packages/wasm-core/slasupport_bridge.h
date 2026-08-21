@@ -241,6 +241,12 @@ struct GeneratedPoints {
   std::vector<SupportPoint> points; // object-local positions, output order = generation order per object
   std::string error;
   bool ok = false;
+  // Phase timings accumulated over all objects (ms) — diagnostics only, summed into the kernel's stats.
+  double t_weld_ms = 0;      // soup transform + its_merge_vertices + AABBMesh build
+  double t_slice_ms = 0;     // slice_mesh_ex (the generator's input slices)
+  double t_prepare_ms = 0;   // prepare_generator_data (the five per-layer clipper passes)
+  double t_generate_ms = 0;  // generate_support_points proper (island sampling)
+  double t_move_ms = 0;      // move_on_mesh_surface
 };
 
 GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& cfg);

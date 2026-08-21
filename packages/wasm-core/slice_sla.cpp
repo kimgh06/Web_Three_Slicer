@@ -141,6 +141,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
 
   const int N = height <= ilh ? 1 : 1 + (int)std::ceil((height - ilh) / lh);
   double tw0 = emscripten_get_now(), tw_contours = 0, tw_sample = 0, tw_tree = 0, tw_raster = 0;
+  double t_sample_weld = 0, t_sample_slice = 0, t_sample_prepare = 0, t_sample_generate = 0, t_sample_move = 0;
 
   // ---- Model contours: facet-major plane sweep at each layer's MID height (volume-faithful), chained +
   //      cleaned the way pass1 does it. Mid planes are ascending, so the lower_bound walk matches pass1's.
@@ -287,6 +288,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     generator_backend = "prusa_port";
     slasupport_bridge::GeneratedPoints generated =
       slasupport_bridge::generate_support_points(prepared, generator_config);
+    t_sample_weld = generated.t_weld_ms; t_sample_slice = generated.t_slice_ms;
+    t_sample_prepare = generated.t_prepare_ms;
+    t_sample_generate = generated.t_generate_ms; t_sample_move = generated.t_move_ms;
     if (generated.ok) prepared.points = std::move(generated.points);
     else if (support_error.empty())
       support_error = generated.error.empty() ? "support point generation failed" : generated.error;
@@ -374,14 +378,18 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   std::vector<Paths> support(NN);
   slasupport_bridge::SupportSliceCacheStats support_slice_cache;
   std::string support_slicer_error;
+  double tw_raster_slice = 0, tw_raster_clip = 0;   // the batch mesh sweep vs the per-layer clipper pass
   if (!smesh.empty()) {
     std::vector<double> gmids(NN);
     for (int g = 0; g < NN; ++g) gmids[g] = top_z(g) - (g == 0 ? ilh : lh) / 2;
+    const double tw_batch0 = emscripten_get_now();
     slasupport_bridge::SupportSliceBatch sliced =
       slasupport_bridge::slice_support_mesh_fallback(smesh, gmids);
+    tw_raster_slice = emscripten_get_now() - tw_batch0;
     support_slice_cache = sliced.cache;
     support_slicer_error = sliced.error;
     if (sliced.ok) {
+      const double tw_clip0 = emscripten_get_now();
       for (int g = 0; g < NN; ++g) {
         if ((g & 63) == 0) report(670 + g * 230 / std::max(1, NN), 1000);
         Paths loops;
@@ -398,6 +406,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
                                     [](const Path& q){ return q.size() < 3; }), merged.end());
         support[g] = clip_paths(merged, contour_at(g), ctDifference);
       }
+      tw_raster_clip = emscripten_get_now() - tw_clip0;
     }
   }
 
@@ -519,8 +528,15 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   stats.set("over_bed", MP.over_bed);
   stats.set("t_contours_ms", tw_contours - tw0);
   stats.set("t_sample_ms", tw_sample - tw_contours);
+  stats.set("t_sample_weld_ms", t_sample_weld);         // inside t_sample: weld + AABB build
+  stats.set("t_sample_slice_ms", t_sample_slice);       // inside t_sample: slice_mesh_ex
+  stats.set("t_sample_prepare_ms", t_sample_prepare);   // inside t_sample: prepare_generator_data
+  stats.set("t_sample_generate_ms", t_sample_generate); // inside t_sample: generate_support_points proper
+  stats.set("t_sample_move_ms", t_sample_move);         // inside t_sample: move_on_mesh_surface
   stats.set("t_tree_ms", tw_tree - tw_sample);
   stats.set("t_raster_ms", tw_raster - tw_tree);
+  stats.set("t_raster_slice_ms", tw_raster_slice);   // inside t_raster: the fallback mesh sweep batch
+  stats.set("t_raster_clip_ms", tw_raster_clip);     // inside t_raster: Simplify/Clean/difference per layer
   stats.set("t_emit_ms", emscripten_get_now() - tw_raster);
   stats.set("layer_height", lh);
   stats.set("initial_layer_height", ilh);
