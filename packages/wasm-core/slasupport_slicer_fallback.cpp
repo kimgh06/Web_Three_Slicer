@@ -1,5 +1,8 @@
 #include "slasupport_bridge.h"
 
+#include <tbb/parallel_for.h>     // the treesupport stub — real threads only inside a ParallelScope (mt)
+#include <tbb/stub_parallel.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -85,26 +88,75 @@ bool intersect_triangle(const float* triangle, double height, Segment& segment) 
   return true;
 }
 
-std::vector<Polygon> chain_closed_loops(std::vector<Segment> segments, std::string& error) {
+std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, std::string& error) {
   std::vector<Polygon> loops;
   std::vector<long> votes;   // per loop: directed segments agreeing with the chained order, minus disagreeing
-  while (!segments.empty()) {
-    const Segment seed = segments.back();
-    segments.pop_back();
-    Polygon loop{seed.a, seed.b};
-    long vote = seed.oriented ? 1 : 0;
+  // The original chained with a linear find_if + erase — O(S^2) per layer, and the support raster's
+  // dominant cost on pillar-heavy scenes. This quantized endpoint index reproduces its exact matching
+  // semantics: the candidate chosen is the FIRST unused segment in insertion order whose endpoint is
+  // close() to the open end (erase kept relative order, so "first remaining" == lowest original index),
+  // and each new loop seeds from the LAST unused segment (== segments.back() of the shrinking vector).
+  // One cell equals kTolerance, so close() partners sit at most one cell apart on each axis.
+  const auto cell = [](double v) -> std::int64_t { return std::llround(v / kTolerance); };
+  const auto pack = [](std::int64_t cx, std::int64_t cy) -> std::uint64_t {
+    return (std::uint64_t)(std::uint32_t)(std::int32_t)cx | ((std::uint64_t)(std::uint32_t)(std::int32_t)cy << 32);
+  };
+  // Open-addressing flat table (25% load, duplicate keys allowed): the per-layer node-allocating
+  // unordered_map showed up as the chaining cost itself once the O(S^2) scan was gone.
+  const std::uint32_t kNone = std::numeric_limits<std::uint32_t>::max();
+  std::size_t capacity = 16;
+  while (capacity < segments.size() * 4 + 8) capacity <<= 1;
+  const std::uint64_t mask = capacity - 1;
+  const auto mix = [](std::uint64_t k) {
+    k ^= k >> 33; k *= 0xff51afd7ed558ccdULL; k ^= k >> 33;
+    return k;
+  };
+  std::vector<std::uint64_t> slot_key(capacity);
+  std::vector<std::uint32_t> slot_seg(capacity, kNone);   // kNone == empty slot
+  const auto insert = [&](std::uint64_t key, std::uint32_t i) {
+    std::uint64_t s = mix(key) & mask;
+    while (slot_seg[s] != kNone) s = (s + 1) & mask;
+    slot_key[s] = key;
+    slot_seg[s] = i;
+  };
+  for (std::uint32_t i = 0; i < segments.size(); ++i) {
+    insert(pack(cell(segments[i].a.x), cell(segments[i].a.y)), i);
+    insert(pack(cell(segments[i].b.x), cell(segments[i].b.y)), i);
+  }
+  std::vector<char> used(segments.size(), 0);
+  const auto first_unused_match = [&](const Vec2& end) -> std::uint32_t {
+    std::uint32_t best = kNone;
+    const std::int64_t cx = cell(end.x), cy = cell(end.y);
+    for (std::int64_t dx = -1; dx <= 1; ++dx)
+      for (std::int64_t dy = -1; dy <= 1; ++dy) {
+        const std::uint64_t key = pack(cx + dx, cy + dy);
+        for (std::uint64_t s = mix(key) & mask; slot_seg[s] != kNone; s = (s + 1) & mask) {
+          if (slot_key[s] != key) continue;
+          const std::uint32_t i = slot_seg[s];
+          if (used[i] || i >= best) continue;
+          if (close(segments[i].a, end) || close(segments[i].b, end)) best = i;
+        }
+      }
+    return best;
+  };
+  std::size_t seed_scan = segments.size();
+  while (true) {
+    while (seed_scan > 0 && used[seed_scan - 1]) --seed_scan;
+    if (seed_scan == 0) break;
+    const std::uint32_t seed = (std::uint32_t)(seed_scan - 1);
+    used[seed] = 1;
+    Polygon loop{segments[seed].a, segments[seed].b};
+    long vote = segments[seed].oriented ? 1 : 0;
     while (!close(loop.back(), loop.front())) {
-      const auto next = std::find_if(segments.begin(), segments.end(), [&](const Segment& segment) {
-        return close(segment.a, loop.back()) || close(segment.b, loop.back());
-      });
-      if (next == segments.end()) {
+      const std::uint32_t next = first_unused_match(loop.back());
+      if (next == kNone) {
         error = "generic mesh sweep produced an open contour";
         return {};
       }
-      const bool forward = close(next->a, loop.back());
-      if (next->oriented) vote += forward ? 1 : -1;
-      loop.push_back(forward ? next->b : next->a);
-      segments.erase(next);
+      used[next] = 1;
+      const bool forward = close(segments[next].a, loop.back());
+      if (segments[next].oriented) vote += forward ? 1 : -1;
+      loop.push_back(forward ? segments[next].b : segments[next].a);
     }
     loop.pop_back();
     if (loop.size() >= 3 && std::abs(signed_area(loop)) > kTolerance) {
@@ -129,16 +181,6 @@ std::vector<Polygon> chain_closed_loops(std::vector<Segment> segments, std::stri
     }
   }
   return loops;
-}
-
-std::vector<Polygon> slice_at_height(const std::vector<float>& soup, double height, std::string& error) {
-  std::vector<Segment> segments;
-  segments.reserve(soup.size() / 9);
-  for (std::size_t offset = 0; offset < soup.size(); offset += 9) {
-    Segment segment;
-    if (intersect_triangle(soup.data() + offset, height, segment)) segments.push_back(segment);
-  }
-  return chain_closed_loops(std::move(segments), error);
 }
 
 std::uint64_t height_key(double height) {
@@ -166,26 +208,63 @@ SupportSliceBatch slice_support_mesh_fallback(
       result.error = "support mesh: non-finite coordinate";
       return result;
     }
-  std::unordered_map<std::uint64_t, std::vector<Polygon>> cache;
-  result.slices.reserve(heights.size());
-  for (double height : heights) {
-    if (!std::isfinite(height)) {
+  // Deduplicate heights with the same bit-pattern cache the per-height loop had (first
+  // occurrence is the miss, repeats are hits), keeping unique heights in first-seen order.
+  std::unordered_map<std::uint64_t, std::uint32_t> slice_id;
+  std::vector<double> unique_heights;
+  std::vector<std::uint32_t> slice_of(heights.size());
+  for (std::size_t k = 0; k < heights.size(); ++k) {
+    if (!std::isfinite(heights[k])) {
       result.error = "support heights: non-finite value";
       return result;
     }
-    const std::uint64_t key = height_key(height);
-    const auto found = cache.find(key);
-    if (found != cache.end()) {
-      ++result.cache.hits;
-      result.slices.push_back(found->second);
-      continue;
-    }
-    ++result.cache.misses;
-    std::vector<Polygon> slice = slice_at_height(triangle_soup, height, result.error);
-    if (!result.error.empty()) return result;
-    cache.emplace(key, slice);
-    result.slices.push_back(std::move(slice));
+    const auto inserted = slice_id.emplace(height_key(heights[k]), (std::uint32_t)unique_heights.size());
+    if (inserted.second) { unique_heights.push_back(heights[k]); ++result.cache.misses; }
+    else ++result.cache.hits;
+    slice_of[k] = inserted.first->second;
   }
+
+  // Facet-major sweep: visit only the heights inside each triangle's z band, instead of scanning the
+  // whole soup once per height (O(heights x facets) — the other half of the raster bottleneck). A
+  // triangle contributes segments exactly for zmin < h <= zmax (the edge-crossing rule inside
+  // intersect_triangle), and per-height segment order stays the soup's facet order, so the chained
+  // loops come out byte-identical to the per-height scan's.
+  std::vector<std::uint32_t> by_height((std::uint32_t)unique_heights.size());
+  for (std::uint32_t i = 0; i < by_height.size(); ++i) by_height[i] = i;
+  std::sort(by_height.begin(), by_height.end(), [&](std::uint32_t l, std::uint32_t r) {
+    return unique_heights[l] < unique_heights[r];
+  });
+  std::vector<double> sorted_heights(by_height.size());
+  for (std::uint32_t i = 0; i < by_height.size(); ++i) sorted_heights[i] = unique_heights[by_height[i]];
+  std::vector<std::vector<Segment>> layer_segments(unique_heights.size());
+  for (std::size_t offset = 0; offset < triangle_soup.size(); offset += 9) {
+    const float* triangle = triangle_soup.data() + offset;
+    const double zmin = std::min({triangle[2], triangle[5], triangle[8]});
+    const double zmax = std::max({triangle[2], triangle[5], triangle[8]});
+    Segment segment;
+    for (auto it = std::upper_bound(sorted_heights.begin(), sorted_heights.end(), zmin);
+         it != sorted_heights.end() && *it <= zmax; ++it)
+      if (intersect_triangle(triangle, *it, segment))
+        layer_segments[by_height[it - sorted_heights.begin()]].push_back(segment);
+  }
+
+  // Chain each height's segments into loops — per-height slots, so mt threads (inside the
+  // ParallelScope) produce byte-identical results to the serial st walk. On error the lowest
+  // first-seen height's message wins, matching the serial walk's first-error semantics.
+  std::vector<std::vector<Polygon>> sliced(unique_heights.size());
+  std::vector<std::string> chain_errors(unique_heights.size());
+  {
+    tbb_stub::ParallelScope parallel_scope;
+    tbb::parallel_for(tbb::blocked_range<std::uint32_t>(0, (std::uint32_t)unique_heights.size()),
+                      [&](const tbb::blocked_range<std::uint32_t>& range) {
+                        for (std::uint32_t u = range.begin(); u < range.end(); ++u)
+                          sliced[u] = chain_closed_loops(layer_segments[u], chain_errors[u]);
+                      });
+  }
+  for (std::uint32_t u = 0; u < unique_heights.size(); ++u)
+    if (!chain_errors[u].empty()) { result.error = chain_errors[u]; return result; }
+  result.slices.reserve(heights.size());
+  for (std::size_t k = 0; k < heights.size(); ++k) result.slices.push_back(sliced[slice_of[k]]);
   result.ok = true;
   return result;
 }

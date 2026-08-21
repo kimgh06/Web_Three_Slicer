@@ -436,7 +436,6 @@ not cover fails with a stable error instead of silently producing something else
 | --- | --- |
 | `SLA_UNSUPPORTED_HOLLOWING` | `hollowing_enable` or drain holes — a solid slice answered to a hollow request would be a mislabeled print |
 | `SLA_UNSUPPORTED_ORGANIC` | organic support trees |
-| `SLA_PAD_AROUND_OBJECT_UNSUPPORTED` | zero-elevation pad embedding (`pad_around_object`) |
 
 `SLA_CAPABILITIES` (exported from `three-slicer/client`) is the machine-readable capability map. A `.3mf`
 carrying SLA records survives round-trip regardless: manual support points and drain holes are preserved on

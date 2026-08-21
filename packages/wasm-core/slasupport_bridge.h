@@ -154,7 +154,7 @@ struct PadCapability {
 };
 
 // The upstream pad group (Pad.cpp + ConcaveHull + Tesselate/glu-libtess) is linked; generate_pad below is
-// the ported driver. The pad-around-object (embed) mode remains a typed unsupported error — see PadParams.
+// the ported driver, embed (pad_around_object) included.
 PadCapability pad_capability();
 
 struct PadParams {
@@ -163,9 +163,15 @@ struct PadParams {
   double max_merge_distance = 50.0; // pad_max_merge_distance
   double wall_slope_deg     = 90.0; // pad_wall_slope [deg]
   double brim_size          = 1.6;  // pad_brim_size
-  // pad_around_object (embed/zero-elevation). Geometry support exists upstream but the surrounding
-  // zero-elevation frame is not wired in this driver yet: requesting it returns a typed error.
+  // pad_around_object (embed / zero elevation): the pad is built AROUND the object's bottom band with a
+  // gap ring (upstream PadConfig::EmbedObject), the object itself stays unelevated, and the model
+  // contours always join the blueprint. The caller must force elevation to 0 (upstream is_zero_elevation).
   bool   around_object      = false;
+  bool   around_object_everywhere = false; // pad_around_object_everywhere
+  double object_gap         = 1.0;  // pad_object_gap
+  double stick_width        = 0.5;  // pad_object_connector_width
+  double stick_stride       = 10.0; // pad_object_connector_stride
+  double stick_penetration  = 0.3;  // pad_object_connector_penetration
 };
 
 struct PadResult {
@@ -235,6 +241,12 @@ struct GeneratedPoints {
   std::vector<SupportPoint> points; // object-local positions, output order = generation order per object
   std::string error;
   bool ok = false;
+  // Phase timings accumulated over all objects (ms) — diagnostics only, summed into the kernel's stats.
+  double t_weld_ms = 0;      // soup transform + its_merge_vertices + AABBMesh build
+  double t_slice_ms = 0;     // slice_mesh_ex (the generator's input slices)
+  double t_prepare_ms = 0;   // prepare_generator_data (the five per-layer clipper passes)
+  double t_generate_ms = 0;  // generate_support_points proper (island sampling)
+  double t_move_ms = 0;      // move_on_mesh_surface
 };
 
 GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& cfg);

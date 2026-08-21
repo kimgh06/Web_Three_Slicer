@@ -72,8 +72,15 @@ Pad (Pad.cpp + ConcaveHull + Tesselate/glu-libtess, LINKED):
   support mesh (and, with supports off, the model) over the foot band `[0, full_height + 0.1]`, then
   `Pad.cpp::create_pad`. Pad geometry comes out with its top at z=0 and is stood ON the plate instead; the
   scene above rises by `ceil(full_height / layer_height)` layers — upstream's rebase at slicing time.
-- `pad_around_object` (embed / zero elevation) stays a typed unsupported error
-  (`SLA_PAD_AROUND_OBJECT_UNSUPPORTED`): the geometry exists upstream but the zero-elevation frame (object
-  seated into the pad plate, bottom point filtering) is not wired in this driver yet.
+- `pad_around_object` (embed / zero elevation) is wired: `PadParams` carries upstream's
+  `PadConfig::EmbedObject` (everywhere/gap/connector sticks), the blueprint band starts at
+  `-wall_thickness` so the object's own bottom band is sampled (SupportTree.cpp create_pad's
+  `zstart = gndlvl - embed*thickness`), the model contours always join the blueprint in embed mode, and the
+  CALLER must force elevation to 0 — upstream `is_zero_elevation` (SLAPrint.cpp:43) is
+  `pad_enable && pad_around_object`, and `slice_sla` reproduces it. Upstream `validate_pad`
+  (SLAPrint.cpp:154) accepts an EMPTY embed pad (embed && !everywhere) — the ring survives only where
+  supports stand (`remove_redundant_parts`), so a supportless embed keeps nothing and the object prints
+  directly on the plate; the driver returns ok with an empty mesh and `slice_sla` then lifts NOTHING
+  (its layer frame is fixed only after pad generation for exactly this case).
 - With `pad_enable=false`, no role-6 paths or pad mesh are emitted. `test_sla_pad.mjs` locks omission, the
-  supported capability, the lifted layer frame, and the embed gate.
+  supported capability, the lifted layer frame, and the embed/everywhere geometry.

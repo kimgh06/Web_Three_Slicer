@@ -8,6 +8,9 @@
 //  layer frame (elevation zone at the bottom) receives world coordinates.
 #include "slasupport_bridge.h"
 
+#include <emscripten/emscripten.h>   // emscripten_get_now — phase timing (stats only)
+#include <tbb/stub_parallel.h>       // ParallelScope — lets the tbb stub run real threads (mt only)
+
 #include <libslic3r/AABBMesh.hpp>
 #include <libslic3r/SLA/DefaultSupportTree.hpp>
 #include <libslic3r/SLA/SupportTree.hpp>
@@ -169,6 +172,17 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
 
       // The object mesh in generation (plate) space — for slicing, the surface snap, and the permanent-point
       // checks. Vertices are welded because the slicer walks shared edges (an unwelded soup has none).
+      const std::size_t object_index = &object - job.objects.data();
+      // Sample-phase sub-stage ticks on a 0..1000-per-object scale. The weld/slice/prepare stretch
+      // used to be SILENT (only generate's per-layer status reported), which parked the UI progress
+      // bar for the longest phase of an SLA slice; generate's 0..100 maps onto 350..1000 below.
+      const auto stage_tick = [&job, object_index, object_total = job.objects.size()](std::size_t value) {
+        if (job.callbacks.on_progress)
+          job.callbacks.on_progress({ProgressPhase::prepare,
+                                     object_index * 1000 + value, object_total * 1000});
+      };
+
+      const double tw_weld0 = emscripten_get_now();
       std::vector<float> soup;
       soup.reserve(object.mesh.size());
       for (std::size_t i = 0; i < object.mesh.size(); i += 3) {
@@ -181,6 +195,8 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       indexed_triangle_set its = soup_to_its(soup);
       its_merge_vertices(its);
       AABBMesh emesh{its};
+      out.t_weld_ms += emscripten_get_now() - tw_weld0;
+      stage_tick(50);
 
       // The generator's input slices come from the REAL slicer with the profile's gap-closing radius —
       // exactly upstream's pipeline (SLAPrintSteps slice_model -> get_model_slices), not from the kernel's
@@ -190,19 +206,38 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       for (const PreparedLayer* layer : object_layers) heights.push_back(float(layer->slice_z));
       Slic3r::MeshSlicingParamsEx slicing_params;
       slicing_params.closing_radius = float(cfg.slice_closing_radius);
-      std::vector<Slic3r::ExPolygons> slices =
-          Slic3r::slice_mesh_ex(its, heights, slicing_params, [&cancel]{ cancel(); });
+      const double tw_slice0 = emscripten_get_now();
+      std::vector<Slic3r::ExPolygons> slices;
+      {
+        // mt builds: slice_mesh_ex's internal tbb::parallel_for splits across the pthread pool inside
+        // this scope (per-layer slots, deterministic — byte-identical to the serial st run). st builds
+        // and no-thread environments run exactly the code they always did. The cancel passed in must
+        // NOT throw — a throw inside a worker std::thread terminates; the boundary check right after
+        // preserves the cancellation semantics (a canceled slice produces no output either way).
+        tbb_stub::ParallelScope parallel_scope;
+        slices = Slic3r::slice_mesh_ex(its, heights, slicing_params, []{});
+      }
+      cancel();
+      out.t_slice_ms += emscripten_get_now() - tw_slice0;
+      stage_tick(180);
 
-      const std::size_t object_index = &object - job.objects.data();
-      Slic3r::sla::StatusFunction status = [&job, object_index, total = job.objects.size()](int st) {
-        if (job.callbacks.on_progress)
-          job.callbacks.on_progress({ProgressPhase::prepare,
-                                     object_index * 100 + std::size_t(std::max(0, std::min(100, st))),
-                                     total * 100});
+      Slic3r::sla::StatusFunction status = [&stage_tick](int st) {
+        stage_tick(350 + std::size_t(std::max(0, std::min(100, st))) * 650 / 100);
       };
 
-      Slic3r::sla::SupportPointGeneratorData data = Slic3r::sla::prepare_generator_data(
-          std::move(slices), heights, {}, cancel, status);
+      const double tw_prepare0 = emscripten_get_now();
+      Slic3r::sla::SupportPointGeneratorData data;
+      {
+        // The five prepare passes are execution::for_each(ex_tbb, …) over independent layer slots —
+        // parallel via the SLA group's ExecutionTBB shadow inside this scope (mt), serial otherwise.
+        // generate_support_points below stays OUTSIDE any scope: its result collection is
+        // mutex-appended, so a parallel run would make the point ORDER thread-dependent.
+        tbb_stub::ParallelScope parallel_scope;
+        data = Slic3r::sla::prepare_generator_data(
+            std::move(slices), heights, {}, cancel, status);
+      }
+      out.t_prepare_ms += emscripten_get_now() - tw_prepare0;
+      stage_tick(350);
 
       // Permanent (manual) points of this object enter the generator's density accounting…
       Slic3r::sla::SupportPoints authored;
@@ -217,15 +252,19 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       }
       prepare_permanent_support_points_port(data.permanent_supports, authored, emesh);
 
+      const double tw_generate0 = emscripten_get_now();
       Slic3r::sla::LayerSupportPoints layer_points =
           Slic3r::sla::generate_support_points(data, generator_config, cancel, status);
+      out.t_generate_ms += emscripten_get_now() - tw_generate0;
 
       // Maximal move of support point to mesh surface, no more than height of layer (upstream :768).
       double allowed_move = heights.size() > 1
           ? double(heights[1] - heights[0]) + std::numeric_limits<float>::epsilon()
           : double(std::numeric_limits<float>::epsilon());
+      const double tw_move0 = emscripten_get_now();
       Slic3r::sla::SupportPoints surface_points =
           Slic3r::sla::move_on_mesh_surface(layer_points, emesh, allowed_move, cancel);
+      out.t_move_ms += emscripten_get_now() - tw_move0;
 
       // …and are appended AFTER the move so their authored 3d position survives (upstream :776).
       surface_points.insert(surface_points.end(),
@@ -269,10 +308,6 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
                        const PadParams& params) {
   PadResult out;
   out.capability = pad_capability();
-  if (params.around_object) {
-    out.error = "SLA_PAD_AROUND_OBJECT_UNSUPPORTED";
-    return out;
-  }
 
   Slic3r::sla::PadConfig pad_config;
   pad_config.wall_thickness_mm = params.wall_thickness;
@@ -280,20 +315,32 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
   pad_config.max_merge_dist_mm = params.max_merge_distance;
   pad_config.wall_slope        = params.wall_slope_deg * M_PI / 180.0;
   pad_config.brim_size_mm      = params.brim_size;
+  if (params.around_object) {
+    // Upstream builtin_pad_cfg (SLAPrint.cpp:117): embed is on exactly when pad_enable && pad_around_object.
+    pad_config.embed_object.enabled             = true;
+    pad_config.embed_object.everywhere          = params.around_object_everywhere;
+    pad_config.embed_object.object_gap_mm       = params.object_gap;
+    pad_config.embed_object.stick_width_mm      = params.stick_width;
+    pad_config.embed_object.stick_stride_mm     = params.stick_stride;
+    pad_config.embed_object.stick_penetration_mm = params.stick_penetration;
+  }
   const std::string invalid = pad_config.validate();
   if (!invalid.empty()) { out.error = invalid; return out; }
   out.full_height = pad_config.full_height();
 
-  // Upstream samples the blueprint over [ground, ground + full_height + sampling] — the foot band. The
-  // inputs here are in the print frame, so ground is 0.
+  // Upstream samples the blueprint over [zstart, zstart + full_height + sampling] where zstart is the
+  // ground MINUS the plate thickness in embed mode (SupportTree.cpp create_pad: the object sits at ground
+  // and the pad plate extends below it, so the model band sampled is the object's own bottom). The inputs
+  // here are in the print frame, so ground is 0.
   constexpr float PadSamplingLH = 0.1f;
+  const float zstart = params.around_object ? -float(params.wall_thickness) : 0.f;
   std::vector<float> heights;
-  for (float h = 0.f; h < float(out.full_height + PadSamplingLH + 1e-6); h += PadSamplingLH)
+  for (float h = zstart; h < zstart + float(out.full_height + PadSamplingLH + 1e-6); h += PadSamplingLH)
     heights.push_back(h);
 
   try {
     Slic3r::ExPolygons model_contours;
-    if (!supports_enabled && !model_mesh.empty()) {
+    if ((!supports_enabled || params.around_object) && !model_mesh.empty()) {
       indexed_triangle_set model_its = soup_to_its(model_mesh);
       Slic3r::sla::pad_blueprint(model_its, model_contours, heights);
     }
@@ -302,14 +349,23 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
       indexed_triangle_set support_its = soup_to_its(support_mesh);
       Slic3r::sla::pad_blueprint(support_its, support_contours, heights);
     }
+    // Upstream validate_pad (SLAPrint.cpp:154): an EMPTY pad is legal exactly when embed is on and the pad
+    // is not forced everywhere — the ring survives only where supports stand, so a supportless embed keeps
+    // nothing and the object simply prints on the plate. Everywhere else, empty means failure.
+    const bool empty_is_legal = params.around_object && !params.around_object_everywhere;
     if (model_contours.empty() && support_contours.empty()) {
+      if (empty_is_legal) { out.ok = true; return out; }
       out.error = "pad: nothing reaches the plate to stand on";
       return out;
     }
 
     indexed_triangle_set pad;
     Slic3r::sla::create_pad(support_contours, model_contours, pad, pad_config);
-    if (pad.indices.empty()) { out.error = "pad: empty geometry"; return out; }
+    if (pad.indices.empty()) {
+      if (empty_is_legal) { out.ok = true; return out; }
+      out.error = "pad: empty geometry";
+      return out;
+    }
 
     // Pad.cpp emits z in [-full_height, 0] (top face on the ground); stand it on the plate instead.
     const float lift = float(out.full_height);

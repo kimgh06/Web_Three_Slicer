@@ -20,7 +20,8 @@ for (const unit of ['SLA/Pad.cpp', 'SLA/ConcaveHull.cpp', 'Tesselate.cpp'])
 assert.match(build, /glu-libtess/)
 const notes = readFileSync(join(here, 'slasupport_port/PORT_NOTES.md'), 'utf8')
 assert.match(notes, /Pad \(Pad\.cpp \+ ConcaveHull \+ Tesselate\/glu-libtess, LINKED\)/)
-assert.match(notes, /SLA_PAD_AROUND_OBJECT_UNSUPPORTED/)
+assert.match(notes, /pad_around_object/)
+assert.match(notes, /is_zero_elevation/)
 
 function boxSTL() {
   const vertices = [[-5,-5,0],[5,-5,0],[5,5,0],[-5,5,0],[-5,-5,5],[5,-5,5],[5,5,5],[-5,5,5]]
@@ -33,6 +34,23 @@ function boxSTL() {
       buffer.writeFloatLE(value, offset)
       offset += 4
     }
+  })
+  return new Uint8Array(buffer)
+}
+
+// A slab on a central leg: the slab's underside is a plate-reaching overhang, so embed-mode supports
+// really exist and their feet keep the around-object pad from being redundant.
+function tableSTL() {
+  const boxFaces = (v) => [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
+    .map(face => face.map(index => v[index]))
+  const box = (x0, y0, z0, x1, y1, z1) => boxFaces([
+    [x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]])
+  const triangles = [...box(-2, -2, 0, 2, 2, 5), ...box(-6, -6, 5, 6, 6, 7)]
+  const buffer = Buffer.alloc(84 + triangles.length * 50)
+  buffer.writeUInt32LE(triangles.length, 80)
+  triangles.forEach((tri, index) => {
+    let offset = 84 + index * 50 + 12
+    for (const vertex of tri) for (const value of vertex) { buffer.writeFloatLE(value, offset); offset += 4 }
   })
   return new Uint8Array(buffer)
 }
@@ -130,12 +148,48 @@ int main() {
     supportZmin = Math.min(supportZmin, sup.support_mesh[index])
   assert.ok(supportZmin > 2 - 0.35, `support mesh bottom ${supportZmin} must stand on the 2mm pad top`)
 
-  // Given: pad_around_object. Then: the typed unsupported error, and no pad output at all.
-  const embed = slicer.slice_sla(boxSTL(), params({ pad_enable: true, pad_around_object: true }), undefined)
-  assert.equal(embed.stats.pad_error, 'SLA_PAD_AROUND_OBJECT_UNSUPPORTED')
-  assert.equal(embed.pad_mesh.length, 0)
-  assert.equal(embed.stats.pad_layers, 0)
-  assert.equal(embed.stats.layers, off.stats.layers, 'the embed gate must not lift the stack')
+  // Given: pad_around_object (embed / zero elevation) on a FLAT-BOTTOMED object with no supports needed.
+  // Then: upstream validate_pad semantics — the ring survives only where supports stand, so the pad is
+  // legally EMPTY, nothing lifts, and the object prints directly on the plate. Even a requested elevation
+  // is forced to zero (is_zero_elevation).
+  const embedFlat = slicer.slice_sla(boxSTL(),
+    params({ pad_enable: true, pad_around_object: true, supports_enable: true, support_object_elevation: 5 }), undefined)
+  assert.equal(embedFlat.error, undefined, `embed(flat) errored: ${embedFlat.error}`)
+  assert.equal(embedFlat.pad_mesh.length, 0, 'no supports -> the ring is redundant everywhere -> empty pad')
+  assert.equal(embedFlat.stats.pad_layers, 0)
+  assert.equal(embedFlat.stats.elevation_layers, 0, 'embed forces zero elevation')
+  assert.equal(embedFlat.stats.layers, off.stats.layers, 'an empty embed pad must not lift the stack')
+
+  // Given: embed on an OVERHANG model (slab on a leg) whose supports really stand on the plate.
+  // Then: the pad exists (feet pads + the ring), the stack grows by exactly the pad zone, the object is
+  // not elevated, and the pad mesh occupies the [0, full_height] plate band.
+  const table = tableSTL()
+  const embed = slicer.slice_sla(table,
+    params({ pad_enable: true, pad_around_object: true, supports_enable: true, support_object_elevation: 5 }), undefined)
+  assert.equal(embed.error, undefined, `embed(overhang) errored: ${embed.error}`)
+  assert.equal(embed.stats.pad_error, undefined)
+  assert.ok(embed.stats.support_points > 0, 'the slab underside must demand supports')
+  assert.ok(embed.pad_mesh.length > 0 && embed.pad_mesh.length % 9 === 0)
+  assert.equal(embed.stats.pad_layers, padZone)
+  assert.equal(embed.stats.elevation_layers, 0, 'embed forces zero elevation')
+  const tableOff = slicer.slice_sla(table, params({}), undefined)
+  assert.equal(embed.stats.layers, tableOff.stats.layers + padZone, 'embed lifts by the pad zone only')
+  assert.ok(roleSegments(embed.layers[padZone], 1).length > 0, 'the model sits directly on the pad')
+  let embedZmin = Infinity, embedZmax = -Infinity
+  for (let index = 2; index < embed.pad_mesh.length; index += 3) {
+    embedZmin = Math.min(embedZmin, embed.pad_mesh[index]); embedZmax = Math.max(embedZmax, embed.pad_mesh[index])
+  }
+  assert.ok(Math.abs(embedZmin) < 1e-4 && Math.abs(embedZmax - 2) < 1e-4,
+    `embed pad z range [${embedZmin}, ${embedZmax}] must be the [0, full_height] plate band`)
+
+  // Given: embed + everywhere on the flat cube. Then: the pad spreads under the whole footprint (a
+  // BrimPadSkeleton), so it exists even with no supports, and the pad zone lifts the stack.
+  const everywhere = slicer.slice_sla(boxSTL(),
+    params({ pad_enable: true, pad_around_object: true, pad_around_object_everywhere: true }), undefined)
+  assert.equal(everywhere.error, undefined, `everywhere pad errored: ${everywhere.error}`)
+  assert.ok(everywhere.pad_mesh.length > 0)
+  assert.equal(everywhere.stats.pad_layers, padZone)
+  assert.equal(everywhere.stats.layers, off.stats.layers + padZone)
 
   // Given: a pad request that cannot be satisfied (supports on but enforcers-only filters every point, so
   // nothing reaches the plate to blueprint). Then: the SLICE fails — upstream's SlicingError semantics —
@@ -148,7 +202,7 @@ int main() {
   const again = slicer.slice_sla(boxSTL(), params({ pad_enable: true }), undefined)
   assert.deepEqual(again.pad_mesh, on.pad_mesh)
 
-  console.log('test_sla_pad: ported pad geometry, lifted layer frame, feet-on-pad, embed gate, and pad-off isolation passed')
+  console.log('test_sla_pad: ported pad geometry, lifted layer frame, feet-on-pad, embed/everywhere, and pad-off isolation passed')
 } finally {
   rmSync(temporary, { recursive: true, force: true })
 }

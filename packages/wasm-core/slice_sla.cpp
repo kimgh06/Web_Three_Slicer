@@ -14,7 +14,8 @@
 //  as a triangle MESH; its raster view is produced by slicing that mesh with the same sweep the model goes
 //  through, so the preview solid and the SL1 masks cannot disagree.
 //  The PAD is the ported Pad.cpp (blueprint over the foot band -> walls/brim/wings), standing on the plate
-//  with everything above lifted by its height; pad_around_object stays a typed unsupported error.
+//  with everything above lifted by its height; pad_around_object (embed) wraps the pad around the object's
+//  bottom band instead and forces zero elevation (upstream is_zero_elevation).
 //  All support/pad regions stay DISJOINT from the model contour (Clipper diff) because the SL1 rasterizer
 //  fills even-odd — an overlap would punch a hole.
 // =============================================================================
@@ -37,7 +38,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace em = emscripten;
@@ -102,6 +106,50 @@ static bool point_in_region(const IntPoint& pt, const Paths& ps) {
   for (const Path& q : ps) if (PointInPolygon(pt, q)) ++cnt;
   return (cnt & 1) != 0;
 }
+// Layer-parallel runner for the kernel-side per-layer passes (contours, raster clip, pad clip):
+// each index writes only its own slot, so chunk boundaries cannot change the output — mt runs
+// byte-identical to st. Threads exist only in the mt build; workers must not touch embind, so
+// report() stays with the caller (a phase now finishes in well under a band's width anyway).
+// A worker exception (Clipper on degenerate input) is captured and rethrown on the caller —
+// escaping a std::thread would terminate.
+template <class Fn>
+static void sla_for_each_layer(int n, const Fn& fn) {
+#ifdef __EMSCRIPTEN_PTHREADS__
+  const unsigned hw = std::thread::hardware_concurrency();
+  if (n > 3 && hw > 1) {
+    const unsigned nt = std::min<unsigned>(hw - 1, (unsigned)n);
+    const int chunk = std::max(1, n / int(nt * 8));
+    std::atomic<int> next{0};
+    std::exception_ptr first_error = nullptr;
+    std::mutex error_mutex;
+    auto work = [&] {
+      try {
+        for (;;) {
+          const int lo = next.fetch_add(chunk);
+          if (lo >= n) break;
+          const int hi = std::min(n, lo + chunk);
+          for (int i = lo; i < hi; ++i) fn(i);
+        }
+      } catch (...) {
+        std::lock_guard<std::mutex> hold(error_mutex);
+        if (!first_error) first_error = std::current_exception();
+      }
+    };
+    std::vector<std::thread> workers;
+    workers.reserve(nt - 1);
+    for (unsigned t = 1; t < nt; ++t) {
+      try { workers.emplace_back(work); }   // pool exhausted -> the caller and existing workers absorb
+      catch (...) { break; }
+    }
+    work();
+    for (std::thread& worker : workers) worker.join();
+    if (first_error) std::rethrow_exception(first_error);
+    return;
+  }
+#endif
+  for (int i = 0; i < n; ++i) fn(i);
+}
+
 static inline IntPoint ip(double x, double y) {
   return IntPoint((cInt)std::llround(x * SCALE), (cInt)std::llround(y * SCALE));
 }
@@ -140,6 +188,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
 
   const int N = height <= ilh ? 1 : 1 + (int)std::ceil((height - ilh) / lh);
   double tw0 = emscripten_get_now(), tw_contours = 0, tw_sample = 0, tw_tree = 0, tw_raster = 0;
+  double t_sample_weld = 0, t_sample_slice = 0, t_sample_prepare = 0, t_sample_generate = 0, t_sample_move = 0;
 
   // ---- Model contours: facet-major plane sweep at each layer's MID height (volume-faithful), chained +
   //      cleaned the way pass1 does it. Mid planes are ascending, so the lower_bound walk matches pass1's.
@@ -160,16 +209,17 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   // slicer (slice_mesh_ex + slice_closing_radius, upstream's own pipeline); this set is display/raster only.
   const double closing_r = std::max(0.0, sla_jd(params_json, "slice_closing_radius", 0.049));
   std::vector<Paths> contours(N);
-  for (int i = 0; i < N; ++i) {
-    if (CX()) { result.set("error", std::string("canceled")); return result; }
-    if ((i & 63) == 0) report(i * 300 / std::max(1, N), 1000);   // contours: 0 -> 30%
+  sla_for_each_layer(N, [&](int i) {
+    if (CX()) return;   // cooperative bail; the boundary check below reports the cancel
     Paths loops = chain_polys(layerSegs[i]);
     contours[i] = SimplifyPolygons(loops, pftEvenOdd);
     if (p.gcode_resolution > 1e-6) CleanPolygons(contours[i], SCALE * p.gcode_resolution);
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
                                      [](const Path& q){ return q.size() < 3; }), contours[i].end());
     layerSegs[i].clear(); layerSegs[i].shrink_to_fit();
-  }
+  });
+  if (CX()) { result.set("error", std::string("canceled")); return result; }
+  report(180, 1000);   // contours done: 18%
 
   tw_contours = emscripten_get_now();
   // ---- Support parameters (upstream SupportTreeConfig names where one exists) --------------------------------
@@ -205,26 +255,39 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
 
   // Pad (upstream PadConfig, make_pad_cfg SLAPrint.cpp:135): the pad occupies [0, full_height] on the plate
   //  and everything else — support feet included — stands on TOP of it, exactly upstream's rebase at slicing
-  //  time. pad_around_object stays a typed unsupported error (see the bridge header).
+  //  time. pad_around_object (embed) builds the pad AROUND the object's bottom band instead: the object is
+  //  not elevated (upstream is_zero_elevation forces it to 0) and sits directly on the pad plate.
   const double pad_wall_t   = std::max(0.0, sla_jd(params_json, "pad_wall_thickness", 2.0));
   const double pad_wall_h   = std::max(0.0, sla_jd(params_json, "pad_wall_height", 0.0));
   const double pad_slope    = sla_jd(params_json, "pad_wall_slope", 90.0);
   const double pad_merge    = sla_jd(params_json, "pad_max_merge_distance", 50.0);
   const double pad_brim     = sla_jd(params_json, "pad_brim_size", 1.6);
   const bool   pad_embed    = sla_jb(params_json, "pad_around_object", false);
+  const bool   pad_everywhere = sla_jb(params_json, "pad_around_object_everywhere", false);
+  const double pad_obj_gap  = std::max(0.0, sla_jd(params_json, "pad_object_gap", 1.0));
+  const double pad_stick_w  = std::max(0.0, sla_jd(params_json, "pad_object_connector_width", 0.5));
+  const double pad_stick_s  = std::max(0.0, sla_jd(params_json, "pad_object_connector_stride", 10.0));
+  const double pad_stick_p  = std::max(0.0, sla_jd(params_json, "pad_object_connector_penetration", 0.3));
   const double pad_full_h   = pad_on ? pad_wall_t + pad_wall_h : 0.0;
-  const int n_pad = pad_on && !pad_embed ? std::max(1, (int)std::ceil(pad_full_h / lh)) : 0;
+  // PLANNED pad zone. The definitive n_pad is fixed only after the pad geometry exists: an embed pad may
+  //  legitimately come back EMPTY (upstream validate_pad — the ring survives only where supports stand),
+  //  and an empty pad must not lift the scene.
+  const int n_pad_planned = pad_on ? std::max(1, (int)std::ceil(pad_full_h / lh)) : 0;
 
   // Elevation: with supports on, the object hangs above the plate — the layer stack grows by the elevation
   //  zone below it and every model contour shifts up. The model's own bottom then reads as one large island,
   //  which is exactly what routes pillars under it (upstream elevates for the same removability reason).
-  //  The pad adds its own zone UNDER that: lift = pad layers + elevation layers.
-  const int n_elev = supports_on ? (int)std::llround(elev_mm / lh) : 0;
-  const int n_lift = n_pad + n_elev;
-  const int NN = N + n_lift;
+  //  The pad adds its own zone UNDER that: lift = pad layers + elevation layers. Zero-elevation mode
+  //  (upstream is_zero_elevation, SLAPrint.cpp:43) is pad_enable && pad_around_object.
+  const double elev_eff = (pad_on && pad_embed) ? 0.0 : elev_mm;
+  const int n_elev = supports_on ? (int)std::llround(elev_eff / lh) : 0;
+  // The support-point generator below is frame-invariant (it consumes model-space slice_z), so it runs on
+  //  the PLANNED frame; the definitive n_pad / n_lift / NN are derived after pad generation.
+  const int n_lift_planned = n_pad_planned + n_elev;
+  const int NN_planned = N + n_lift_planned;
   static const Paths EMPTY_PATHS;
-  auto contour_at = [&](int g) -> const Paths& {
-    return (g >= n_lift && g - n_lift < N) ? contours[g - n_lift] : EMPTY_PATHS;
+  auto contour_planned = [&](int g) -> const Paths& {
+    return (g >= n_lift_planned && g - n_lift_planned < N) ? contours[g - n_lift_planned] : EMPTY_PATHS;
   };
   auto top_z = [&](int g) { return g == 0 ? ilh : ilh + g * lh; };
 
@@ -238,27 +301,30 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   prepared.callbacks.is_canceled = [&]() { return CX(); };
   prepared.callbacks.on_progress = [&](const slasupport_bridge::Progress& progress) {
     if (progress.total == 0) return;
-    if (progress.phase == slasupport_bridge::ProgressPhase::prepare)           // generation: 30% -> 32%
-      report(300 + (int)(progress.completed * 20 / progress.total), 1000);
-    else if (progress.phase == slasupport_bridge::ProgressPhase::support_tree) // tree: 32% -> 67%
-      report(320 + (int)(progress.completed * 350 / progress.total), 1000);
+    // Band widths follow the MEASURED mt phase shares (support-point generation is the longest
+    // phase and used to sit in a 2% band, which read as a frozen bar; the bridge now also ticks
+    // its weld/slice/prepare sub-stages so this band moves the whole time).
+    if (progress.phase == slasupport_bridge::ProgressPhase::prepare)           // generation: 18% -> 65%
+      report(180 + (int)(progress.completed * 470 / progress.total), 1000);
+    else if (progress.phase == slasupport_bridge::ProgressPhase::support_tree) // tree: 65% -> 82%
+      report(650 + (int)(progress.completed * 170 / progress.total), 1000);
   };
-  if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && NN > 0) {
+  if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && NN_planned > 0) {
     std::vector<float> model_soup; model_soup.reserve(tris.size() * 9);
     for (const Tri& t : tris) for (int v = 0; v < 3; ++v) {
       model_soup.push_back(t.v[v].x); model_soup.push_back(t.v[v].y); model_soup.push_back(t.v[v].z);
     }
     prepared.support_enforcers_only = sla_jb(params_json, "support_enforcers_only", false);
     prepared.objects.push_back({"legacy-0", std::move(model_soup), {}});
-    prepared.layers.reserve(NN);
-    for (int g = 0; g < NN; ++g) {
+    prepared.layers.reserve(NN_planned);
+    for (int g = 0; g < NN_planned; ++g) {
       slasupport_bridge::PreparedLayer layer;
       layer.object_id = "legacy-0";
       layer.index = (size_t)g;
       layer.print_z = top_z(g);
       layer.height = g == 0 ? ilh : lh;
-      layer.slice_z = layer.print_z - layer.height / 2 - n_lift * lh;
-      for (const Path& path : contour_at(g)) {
+      layer.slice_z = layer.print_z - layer.height / 2 - n_lift_planned * lh;
+      for (const Path& path : contour_planned(g)) {
         slasupport_bridge::Polygon polygon;
         polygon.reserve(path.size());
         for (const IntPoint& point : path) polygon.push_back({point.x() * INV, point.y() * INV});
@@ -273,6 +339,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     generator_backend = "prusa_port";
     slasupport_bridge::GeneratedPoints generated =
       slasupport_bridge::generate_support_points(prepared, generator_config);
+    t_sample_weld = generated.t_weld_ms; t_sample_slice = generated.t_slice_ms;
+    t_sample_prepare = generated.t_prepare_ms;
+    t_sample_generate = generated.t_generate_ms; t_sample_move = generated.t_move_ms;
     if (generated.ok) prepared.points = std::move(generated.points);
     else if (support_error.empty())
       support_error = generated.error.empty() ? "support point generation failed" : generated.error;
@@ -302,7 +371,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     bc.max_weight_on_model = max_weight;
     bc.max_bridges_on_pillar = max_bridges;
     bc.mesh_steps = 45;   // upstream's output-mesh resolution (SupportTreeBuilder::merged_mesh default)
-    report(320, 1000);                                            // sampling done -> entering the tree
+    report(650, 1000);                                            // sampling done -> entering the tree
     slasupport_bridge::Result R = slasupport_bridge::generate(prepared, bc);
     if (R.ok) { smesh = std::move(R.mesh); pillar_count = R.pillars; }
     else support_error = R.error.empty() ? "support tree produced nothing" : R.error;
@@ -314,13 +383,18 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   //          by n_pad layers — upstream's rebase at slicing time. With supports off the model itself is the
   //          blueprint.
   std::string pad_error;
-  if (pad_on && NN > 0) {
+  if (pad_on && NN_planned > 0) {
     slasupport_bridge::PadParams pad_params;
     pad_params.wall_thickness = pad_wall_t;    pad_params.wall_height = pad_wall_h;
     pad_params.max_merge_distance = pad_merge; pad_params.wall_slope_deg = pad_slope;
     pad_params.brim_size = pad_brim;           pad_params.around_object = pad_embed;
+    pad_params.around_object_everywhere = pad_everywhere;
+    pad_params.object_gap = pad_obj_gap;       pad_params.stick_width = pad_stick_w;
+    pad_params.stick_stride = pad_stick_s;     pad_params.stick_penetration = pad_stick_p;
     std::vector<float> pad_model_soup;
-    if (!supports_on) {
+    // The model joins the blueprint when nothing else reaches the plate (supports off) AND always in embed
+    // mode — upstream create_pad samples the object's own bottom band for the ring the pad wraps around.
+    if (!supports_on || pad_embed) {
       pad_model_soup.reserve(tris.size() * 9);
       for (const Tri& t : tris) for (int v = 0; v < 3; ++v) {
         pad_model_soup.push_back(t.v[v].x); pad_model_soup.push_back(t.v[v].y); pad_model_soup.push_back(t.v[v].z);
@@ -329,7 +403,6 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     slasupport_bridge::PadResult P =
       slasupport_bridge::generate_pad(pad_model_soup, smesh, supports_on, pad_params);
     if (P.ok) pmesh = std::move(P.mesh);
-    else if (pad_embed) pad_error = P.error;   // capability gate: soft, and n_pad==0 so nothing floats
     else {
       // Upstream semantics (SLAPrintSteps::generate_pad -> SlicingError): a requested pad that cannot be
       // generated FAILS the slice. Degrading softly here would leave the scene lifted by the pad zone with
@@ -338,6 +411,14 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       return result;
     }
   }
+  // The definitive frame: an empty pad (legal in embed mode — nothing survived the redundancy pass) lifts
+  //  nothing; otherwise the planned pad zone stands. Everything downstream reads these, not the planned set.
+  const int n_pad = (pad_on && !pmesh.empty()) ? n_pad_planned : 0;
+  const int n_lift = n_pad + n_elev;
+  const int NN = N + n_lift;
+  auto contour_at = [&](int g) -> const Paths& {
+    return (g >= n_lift && g - n_lift < N) ? contours[g - n_lift] : EMPTY_PATHS;
+  };
   // Everything above the pad rises by the pad zone; the tree stands on the pad top as one piece.
   if (n_pad > 0)
     for (size_t i = 2; i < smesh.size(); i += 3) smesh[i] += float(n_pad * lh);
@@ -348,16 +429,20 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   std::vector<Paths> support(NN);
   slasupport_bridge::SupportSliceCacheStats support_slice_cache;
   std::string support_slicer_error;
+  double tw_raster_slice = 0, tw_raster_clip = 0;   // the batch mesh sweep vs the per-layer clipper pass
   if (!smesh.empty()) {
     std::vector<double> gmids(NN);
     for (int g = 0; g < NN; ++g) gmids[g] = top_z(g) - (g == 0 ? ilh : lh) / 2;
+    const double tw_batch0 = emscripten_get_now();
     slasupport_bridge::SupportSliceBatch sliced =
       slasupport_bridge::slice_support_mesh_fallback(smesh, gmids);
+    tw_raster_slice = emscripten_get_now() - tw_batch0;
     support_slice_cache = sliced.cache;
     support_slicer_error = sliced.error;
     if (sliced.ok) {
-      for (int g = 0; g < NN; ++g) {
-        if ((g & 63) == 0) report(670 + g * 230 / std::max(1, NN), 1000);
+      const double tw_clip0 = emscripten_get_now();
+      report(820, 1000);   // raster: 82% -> 95%
+      sla_for_each_layer(NN, [&](int g) {
         Paths loops;
         loops.reserve(sliced.slices[g].size());
         for (const slasupport_bridge::Polygon& polygon : sliced.slices[g]) {
@@ -371,7 +456,8 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         merged.erase(std::remove_if(merged.begin(), merged.end(),
                                     [](const Path& q){ return q.size() < 3; }), merged.end());
         support[g] = clip_paths(merged, contour_at(g), ctDifference);
-      }
+      });
+      tw_raster_clip = emscripten_get_now() - tw_clip0;
     }
   }
 
@@ -385,7 +471,8 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     slasupport_bridge::SupportSliceBatch pad_sliced =
       slasupport_bridge::slice_support_mesh_fallback(pmesh, pad_mids);
     if (pad_sliced.ok) {
-      for (int g = 0; g < NN; ++g) {
+      report(950, 1000);   // pad raster: 95% -> 97%
+      sla_for_each_layer(NN, [&](int g) {
         Paths loops;
         loops.reserve(pad_sliced.slices[g].size());
         for (const slasupport_bridge::Polygon& polygon : pad_sliced.slices[g]) {
@@ -399,8 +486,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         merged.erase(std::remove_if(merged.begin(), merged.end(),
                                     [](const Path& q){ return q.size() < 3; }), merged.end());
         pad[g] = clip_paths(merged, union_paths(contour_at(g), support[g]), ctDifference);
+      });
+      for (int g = 0; g < NN; ++g)   // the "highest non-empty layer" scan is order-dependent — post-pass
         if (!pad[g].empty()) pad_layers = g + 1;
-      }
     } else if (pad_error.empty()) pad_error = pad_sliced.error;
   }
 
@@ -426,7 +514,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       Lo.set("z", z); Lo.set("paths", to_f32(tp)); Lo.set("widths", to_f32(wd));
       layersArr.call<void>("push", Lo);
     }
-    if ((g & 7) == 0 || g == NN - 1) report(900 + (g + 1) * 100 / std::max(1, NN), 1000);   // emission: 90% -> 100%
+    if ((g & 7) == 0 || g == NN - 1) report(970 + (g + 1) * 30 / std::max(1, NN), 1000);   // emission: 97% -> 100%
   }
 
   // ---- Stats: the resin figures + the exposure-fade time model (identical to the JS core it replaces). ----------
@@ -493,8 +581,15 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   stats.set("over_bed", MP.over_bed);
   stats.set("t_contours_ms", tw_contours - tw0);
   stats.set("t_sample_ms", tw_sample - tw_contours);
+  stats.set("t_sample_weld_ms", t_sample_weld);         // inside t_sample: weld + AABB build
+  stats.set("t_sample_slice_ms", t_sample_slice);       // inside t_sample: slice_mesh_ex
+  stats.set("t_sample_prepare_ms", t_sample_prepare);   // inside t_sample: prepare_generator_data
+  stats.set("t_sample_generate_ms", t_sample_generate); // inside t_sample: generate_support_points proper
+  stats.set("t_sample_move_ms", t_sample_move);         // inside t_sample: move_on_mesh_surface
   stats.set("t_tree_ms", tw_tree - tw_sample);
   stats.set("t_raster_ms", tw_raster - tw_tree);
+  stats.set("t_raster_slice_ms", tw_raster_slice);   // inside t_raster: the fallback mesh sweep batch
+  stats.set("t_raster_clip_ms", tw_raster_clip);     // inside t_raster: Simplify/Clean/difference per layer
   stats.set("t_emit_ms", emscripten_get_now() - tw_raster);
   stats.set("layer_height", lh);
   stats.set("initial_layer_height", ilh);
