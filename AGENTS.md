@@ -176,9 +176,11 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   symbols no wasm provides).
 - **What the SLA kernel cannot do it refuses with a typed code — it never approximates.** Hollowing/drain
   holes are `SLA_UNSUPPORTED_HOLLOWING` (an entry gate in `slice_sla.cpp` AND the request layer, because a
-  solid slice answered to a hollow request would be a mislabeled print); organic trees and
-  `pad_around_object` are typed too; and a pad that fails to GENERATE fails the slice (upstream
-  SlicingError semantics) rather than emitting a scene lifted onto a pad that is not there.
+  solid slice answered to a hollow request would be a mislabeled print); organic trees are typed too; and a
+  pad that fails to GENERATE fails the slice (upstream SlicingError semantics) rather than emitting a scene
+  lifted onto a pad that is not there. `pad_around_object` (embed) is SUPPORTED: it forces zero elevation
+  (upstream `is_zero_elevation`), and an EMPTY embed pad is legal (the ring survives only where supports
+  stand) — the layer frame is fixed only after pad generation so an empty pad lifts nothing.
 - **The SLA layer frame lifts by `stats.lift_layers`, not elevation.** A pad occupies `[0, pad]` and the
   scene above rises by pad + elevation; the viewer overlay must use `lift_layers` — lifting by elevation
   alone is exactly the bug that floated supports in mid-air on pad-enabled previews.

@@ -269,10 +269,6 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
                        const PadParams& params) {
   PadResult out;
   out.capability = pad_capability();
-  if (params.around_object) {
-    out.error = "SLA_PAD_AROUND_OBJECT_UNSUPPORTED";
-    return out;
-  }
 
   Slic3r::sla::PadConfig pad_config;
   pad_config.wall_thickness_mm = params.wall_thickness;
@@ -280,20 +276,32 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
   pad_config.max_merge_dist_mm = params.max_merge_distance;
   pad_config.wall_slope        = params.wall_slope_deg * M_PI / 180.0;
   pad_config.brim_size_mm      = params.brim_size;
+  if (params.around_object) {
+    // Upstream builtin_pad_cfg (SLAPrint.cpp:117): embed is on exactly when pad_enable && pad_around_object.
+    pad_config.embed_object.enabled             = true;
+    pad_config.embed_object.everywhere          = params.around_object_everywhere;
+    pad_config.embed_object.object_gap_mm       = params.object_gap;
+    pad_config.embed_object.stick_width_mm      = params.stick_width;
+    pad_config.embed_object.stick_stride_mm     = params.stick_stride;
+    pad_config.embed_object.stick_penetration_mm = params.stick_penetration;
+  }
   const std::string invalid = pad_config.validate();
   if (!invalid.empty()) { out.error = invalid; return out; }
   out.full_height = pad_config.full_height();
 
-  // Upstream samples the blueprint over [ground, ground + full_height + sampling] — the foot band. The
-  // inputs here are in the print frame, so ground is 0.
+  // Upstream samples the blueprint over [zstart, zstart + full_height + sampling] where zstart is the
+  // ground MINUS the plate thickness in embed mode (SupportTree.cpp create_pad: the object sits at ground
+  // and the pad plate extends below it, so the model band sampled is the object's own bottom). The inputs
+  // here are in the print frame, so ground is 0.
   constexpr float PadSamplingLH = 0.1f;
+  const float zstart = params.around_object ? -float(params.wall_thickness) : 0.f;
   std::vector<float> heights;
-  for (float h = 0.f; h < float(out.full_height + PadSamplingLH + 1e-6); h += PadSamplingLH)
+  for (float h = zstart; h < zstart + float(out.full_height + PadSamplingLH + 1e-6); h += PadSamplingLH)
     heights.push_back(h);
 
   try {
     Slic3r::ExPolygons model_contours;
-    if (!supports_enabled && !model_mesh.empty()) {
+    if ((!supports_enabled || params.around_object) && !model_mesh.empty()) {
       indexed_triangle_set model_its = soup_to_its(model_mesh);
       Slic3r::sla::pad_blueprint(model_its, model_contours, heights);
     }
@@ -302,14 +310,23 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
       indexed_triangle_set support_its = soup_to_its(support_mesh);
       Slic3r::sla::pad_blueprint(support_its, support_contours, heights);
     }
+    // Upstream validate_pad (SLAPrint.cpp:154): an EMPTY pad is legal exactly when embed is on and the pad
+    // is not forced everywhere — the ring survives only where supports stand, so a supportless embed keeps
+    // nothing and the object simply prints on the plate. Everywhere else, empty means failure.
+    const bool empty_is_legal = params.around_object && !params.around_object_everywhere;
     if (model_contours.empty() && support_contours.empty()) {
+      if (empty_is_legal) { out.ok = true; return out; }
       out.error = "pad: nothing reaches the plate to stand on";
       return out;
     }
 
     indexed_triangle_set pad;
     Slic3r::sla::create_pad(support_contours, model_contours, pad, pad_config);
-    if (pad.indices.empty()) { out.error = "pad: empty geometry"; return out; }
+    if (pad.indices.empty()) {
+      if (empty_is_legal) { out.ok = true; return out; }
+      out.error = "pad: empty geometry";
+      return out;
+    }
 
     // Pad.cpp emits z in [-full_height, 0] (top face on the ground); stand it on the plate instead.
     const float lift = float(out.full_height);

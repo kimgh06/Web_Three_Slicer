@@ -68,8 +68,8 @@ Every panel can be switched off, and the values the component owns can be seeded
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
   resin card, and slicing routes to the kernel's `slice_sla` — PrusaSlicer's ported support/pad chain — with an
   `.sl1` export instead of G-code (portrait masks, like every SL1-family machine). The preview lifts the model by
-  `stats.lift_layers` (pad + elevation), and a request the port does not cover (hollowing, organic trees,
-  `pad_around_object`) surfaces as a typed error instead of a wrong print.
+  `stats.lift_layers` (pad + elevation), and a request the port does not cover (hollowing, organic trees)
+  surfaces as a typed error instead of a wrong print.
 - **`gcode`** — G-code text drawn on the selected plate instead of a slice result. `parseGcode` recovers roles from
   `;TYPE:` (OrcaSlicer/PrusaSlicer/Cura), from `;_EXTRUSION_ROLE:` tags and from this kernel's own feature comments;
   bead width comes from `;WIDTH:` or, absent that, from E. What the file never states cannot be recovered: an

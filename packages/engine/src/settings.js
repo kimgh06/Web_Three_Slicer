@@ -688,6 +688,13 @@ export function deriveSlaParams(settings) {
     pad_wall_slope: num('pad_wall_slope', 90),
     pad_max_merge_distance: num('pad_max_merge_distance', 50),
     pad_around_object: !!settingRaw(settings, 'pad_around_object'),
+    // Embed mode (upstream PadConfig::EmbedObject): the ring's gap and the connector sticks that keep the
+    //  object attached to the pad. Read even when embed is off — the kernel ignores them then.
+    pad_around_object_everywhere: !!settingRaw(settings, 'pad_around_object_everywhere'),
+    pad_object_gap: num('pad_object_gap', 1),
+    pad_object_connector_width: num('pad_object_connector_width', 0.5),
+    pad_object_connector_stride: num('pad_object_connector_stride', 10),
+    pad_object_connector_penetration: num('pad_object_connector_penetration', 0.3),
   }
 }
 

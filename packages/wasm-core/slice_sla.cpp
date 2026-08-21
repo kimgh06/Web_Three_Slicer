@@ -14,7 +14,8 @@
 //  as a triangle MESH; its raster view is produced by slicing that mesh with the same sweep the model goes
 //  through, so the preview solid and the SL1 masks cannot disagree.
 //  The PAD is the ported Pad.cpp (blueprint over the foot band -> walls/brim/wings), standing on the plate
-//  with everything above lifted by its height; pad_around_object stays a typed unsupported error.
+//  with everything above lifted by its height; pad_around_object (embed) wraps the pad around the object's
+//  bottom band instead and forces zero elevation (upstream is_zero_elevation).
 //  All support/pad regions stay DISJOINT from the model contour (Clipper diff) because the SL1 rasterizer
 //  fills even-odd — an overlap would punch a hole.
 // =============================================================================
@@ -205,26 +206,39 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
 
   // Pad (upstream PadConfig, make_pad_cfg SLAPrint.cpp:135): the pad occupies [0, full_height] on the plate
   //  and everything else — support feet included — stands on TOP of it, exactly upstream's rebase at slicing
-  //  time. pad_around_object stays a typed unsupported error (see the bridge header).
+  //  time. pad_around_object (embed) builds the pad AROUND the object's bottom band instead: the object is
+  //  not elevated (upstream is_zero_elevation forces it to 0) and sits directly on the pad plate.
   const double pad_wall_t   = std::max(0.0, sla_jd(params_json, "pad_wall_thickness", 2.0));
   const double pad_wall_h   = std::max(0.0, sla_jd(params_json, "pad_wall_height", 0.0));
   const double pad_slope    = sla_jd(params_json, "pad_wall_slope", 90.0);
   const double pad_merge    = sla_jd(params_json, "pad_max_merge_distance", 50.0);
   const double pad_brim     = sla_jd(params_json, "pad_brim_size", 1.6);
   const bool   pad_embed    = sla_jb(params_json, "pad_around_object", false);
+  const bool   pad_everywhere = sla_jb(params_json, "pad_around_object_everywhere", false);
+  const double pad_obj_gap  = std::max(0.0, sla_jd(params_json, "pad_object_gap", 1.0));
+  const double pad_stick_w  = std::max(0.0, sla_jd(params_json, "pad_object_connector_width", 0.5));
+  const double pad_stick_s  = std::max(0.0, sla_jd(params_json, "pad_object_connector_stride", 10.0));
+  const double pad_stick_p  = std::max(0.0, sla_jd(params_json, "pad_object_connector_penetration", 0.3));
   const double pad_full_h   = pad_on ? pad_wall_t + pad_wall_h : 0.0;
-  const int n_pad = pad_on && !pad_embed ? std::max(1, (int)std::ceil(pad_full_h / lh)) : 0;
+  // PLANNED pad zone. The definitive n_pad is fixed only after the pad geometry exists: an embed pad may
+  //  legitimately come back EMPTY (upstream validate_pad — the ring survives only where supports stand),
+  //  and an empty pad must not lift the scene.
+  const int n_pad_planned = pad_on ? std::max(1, (int)std::ceil(pad_full_h / lh)) : 0;
 
   // Elevation: with supports on, the object hangs above the plate — the layer stack grows by the elevation
   //  zone below it and every model contour shifts up. The model's own bottom then reads as one large island,
   //  which is exactly what routes pillars under it (upstream elevates for the same removability reason).
-  //  The pad adds its own zone UNDER that: lift = pad layers + elevation layers.
-  const int n_elev = supports_on ? (int)std::llround(elev_mm / lh) : 0;
-  const int n_lift = n_pad + n_elev;
-  const int NN = N + n_lift;
+  //  The pad adds its own zone UNDER that: lift = pad layers + elevation layers. Zero-elevation mode
+  //  (upstream is_zero_elevation, SLAPrint.cpp:43) is pad_enable && pad_around_object.
+  const double elev_eff = (pad_on && pad_embed) ? 0.0 : elev_mm;
+  const int n_elev = supports_on ? (int)std::llround(elev_eff / lh) : 0;
+  // The support-point generator below is frame-invariant (it consumes model-space slice_z), so it runs on
+  //  the PLANNED frame; the definitive n_pad / n_lift / NN are derived after pad generation.
+  const int n_lift_planned = n_pad_planned + n_elev;
+  const int NN_planned = N + n_lift_planned;
   static const Paths EMPTY_PATHS;
-  auto contour_at = [&](int g) -> const Paths& {
-    return (g >= n_lift && g - n_lift < N) ? contours[g - n_lift] : EMPTY_PATHS;
+  auto contour_planned = [&](int g) -> const Paths& {
+    return (g >= n_lift_planned && g - n_lift_planned < N) ? contours[g - n_lift_planned] : EMPTY_PATHS;
   };
   auto top_z = [&](int g) { return g == 0 ? ilh : ilh + g * lh; };
 
@@ -243,22 +257,22 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     else if (progress.phase == slasupport_bridge::ProgressPhase::support_tree) // tree: 32% -> 67%
       report(320 + (int)(progress.completed * 350 / progress.total), 1000);
   };
-  if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && NN > 0) {
+  if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && NN_planned > 0) {
     std::vector<float> model_soup; model_soup.reserve(tris.size() * 9);
     for (const Tri& t : tris) for (int v = 0; v < 3; ++v) {
       model_soup.push_back(t.v[v].x); model_soup.push_back(t.v[v].y); model_soup.push_back(t.v[v].z);
     }
     prepared.support_enforcers_only = sla_jb(params_json, "support_enforcers_only", false);
     prepared.objects.push_back({"legacy-0", std::move(model_soup), {}});
-    prepared.layers.reserve(NN);
-    for (int g = 0; g < NN; ++g) {
+    prepared.layers.reserve(NN_planned);
+    for (int g = 0; g < NN_planned; ++g) {
       slasupport_bridge::PreparedLayer layer;
       layer.object_id = "legacy-0";
       layer.index = (size_t)g;
       layer.print_z = top_z(g);
       layer.height = g == 0 ? ilh : lh;
-      layer.slice_z = layer.print_z - layer.height / 2 - n_lift * lh;
-      for (const Path& path : contour_at(g)) {
+      layer.slice_z = layer.print_z - layer.height / 2 - n_lift_planned * lh;
+      for (const Path& path : contour_planned(g)) {
         slasupport_bridge::Polygon polygon;
         polygon.reserve(path.size());
         for (const IntPoint& point : path) polygon.push_back({point.x() * INV, point.y() * INV});
@@ -314,13 +328,18 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   //          by n_pad layers — upstream's rebase at slicing time. With supports off the model itself is the
   //          blueprint.
   std::string pad_error;
-  if (pad_on && NN > 0) {
+  if (pad_on && NN_planned > 0) {
     slasupport_bridge::PadParams pad_params;
     pad_params.wall_thickness = pad_wall_t;    pad_params.wall_height = pad_wall_h;
     pad_params.max_merge_distance = pad_merge; pad_params.wall_slope_deg = pad_slope;
     pad_params.brim_size = pad_brim;           pad_params.around_object = pad_embed;
+    pad_params.around_object_everywhere = pad_everywhere;
+    pad_params.object_gap = pad_obj_gap;       pad_params.stick_width = pad_stick_w;
+    pad_params.stick_stride = pad_stick_s;     pad_params.stick_penetration = pad_stick_p;
     std::vector<float> pad_model_soup;
-    if (!supports_on) {
+    // The model joins the blueprint when nothing else reaches the plate (supports off) AND always in embed
+    // mode — upstream create_pad samples the object's own bottom band for the ring the pad wraps around.
+    if (!supports_on || pad_embed) {
       pad_model_soup.reserve(tris.size() * 9);
       for (const Tri& t : tris) for (int v = 0; v < 3; ++v) {
         pad_model_soup.push_back(t.v[v].x); pad_model_soup.push_back(t.v[v].y); pad_model_soup.push_back(t.v[v].z);
@@ -329,7 +348,6 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     slasupport_bridge::PadResult P =
       slasupport_bridge::generate_pad(pad_model_soup, smesh, supports_on, pad_params);
     if (P.ok) pmesh = std::move(P.mesh);
-    else if (pad_embed) pad_error = P.error;   // capability gate: soft, and n_pad==0 so nothing floats
     else {
       // Upstream semantics (SLAPrintSteps::generate_pad -> SlicingError): a requested pad that cannot be
       // generated FAILS the slice. Degrading softly here would leave the scene lifted by the pad zone with
@@ -338,6 +356,14 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       return result;
     }
   }
+  // The definitive frame: an empty pad (legal in embed mode — nothing survived the redundancy pass) lifts
+  //  nothing; otherwise the planned pad zone stands. Everything downstream reads these, not the planned set.
+  const int n_pad = (pad_on && !pmesh.empty()) ? n_pad_planned : 0;
+  const int n_lift = n_pad + n_elev;
+  const int NN = N + n_lift;
+  auto contour_at = [&](int g) -> const Paths& {
+    return (g >= n_lift && g - n_lift < N) ? contours[g - n_lift] : EMPTY_PATHS;
+  };
   // Everything above the pad rises by the pad zone; the tree stands on the pad top as one piece.
   if (n_pad > 0)
     for (size_t i = 2; i < smesh.size(); i += 3) smesh[i] += float(n_pad * lh);
