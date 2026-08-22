@@ -64,16 +64,57 @@ Every panel can be switched off, and the values the component owns can be seeded
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
   the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
   `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `objectList`, `previewControls`, `processCard`,
-  `sliceBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
+  `sliceBar`, `moveBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
   resin card, and slicing routes to the kernel's `slice_sla` — PrusaSlicer's ported support/pad chain — with an
   `.sl1` export instead of G-code (portrait masks, like every SL1-family machine). The preview lifts the model by
   `stats.lift_layers` (pad + elevation), and a request the port does not cover (hollowing, organic trees)
   surfaces as a typed error instead of a wrong print.
+  An `.sl1` can also be OPENED (file picker or drag & drop). This viewer's own exports carry a SCENE sidecar
+  (`Metadata/threeslicer_scene.bin`: the model STL plus the support and pad meshes the preview was showing, ~3%
+  of the archive), so reopening one shows the exported surface ITSELF — no reconstruction, nothing approximated,
+  and the whole import lands in ~0.3s. A foreign SL1 has no such record, and there its SHAPE is reconstructed
+  from the masks —
+  every layer streamed through surface nets in workers (six producers turning masks into occupancy slices, one
+  sequential consumer sweeping them). It runs in TWO passes: a quarter-resolution one lands a real shaded mesh
+  in well under a second, then the full one replaces it (measured 0.7s and 4.2s on a 1095-layer archive), at the archive's own layer height in z and ~0.12mm
+  in xy, with the anti-aliased mask grays interpolated for sub-voxel edges and both the surface and its normals
+  relaxed (the layer ripple a mask grid leaves behind is largely a shading artefact) — and shown as a solid mesh on the
+  selected plate, with the layer slider section-cutting it like any sliced result. While the reconstruction
+  runs a translucent stack of sampled masks stands in, until the coarse pass replaces it.
+  Colours: a mask records what cures, not which pixels were model, support or pad — so this viewer's own
+  exports carry a role sidecar (`Metadata/threeslicer_roles.bin`, the support/pad segments per layer; every
+  other consumer ignores the unknown member) and reconstruct in the sliced preview's three colours. A foreign
+  SL1 has no such record and reconstructs in one colour. Opening one applies what the archive states —
+  `printer_technology` first of all, then the exposure family, the layer height and the pixel grid read off a
+  mask header — so a file opened in a fresh FFF session switches the whole route to SLA instead of stranding
+  resin masks on a filament bed. The one number it cannot supply is the display's PHYSICAL size: millimetres
+  appear nowhere in an SL1, so the preview is scaled by the printer set in the viewer and the import notice says
+  so. Export hands an imported archive back byte-identical rather than re-rasterizing empty geometry.
 - **`gcode`** — G-code text drawn on the selected plate instead of a slice result. `parseGcode` recovers roles from
   `;TYPE:` (OrcaSlicer/PrusaSlicer/Cura), from `;_EXTRUSION_ROLE:` tags and from this kernel's own feature comments;
   bead width comes from `;WIDTH:` or, absent that, from E. What the file never states cannot be recovered: an
   unmarked run reads as wall, and there is no print-time estimate (that needs the machine's acceleration limits).
+- **`sl1`** — the SLA half of that contract: an `.sl1` archive (`File`, raw bytes, or `{name, data}`) rendered as a
+  raster preview on the selected plate, again without starting the kernel. It routes into the same import the
+  picker and a drop use, so it behaves identically — including the two things `gcode` does not do: it writes the
+  archive's own job description into your `settings` (`printer_technology` among them, per the paragraph above),
+  and it reconstructs a surface from the masks in the background. Set both and the G-code wins; one plate holds one
+  artifact. It re-injects on the value's IDENTITY, so hold the File in state rather than rebuilding it each render.
+- **The move scrub** (`panels.moveBar`) — the horizontal counterpart of the layer slider, under the canvas in
+  Preview: the vertical one picks WHICH layers are shown, this one walks inside the top one. It is upstream's
+  sequential view (`GCodeViewer`'s `update_sequential_view_current`) in this viewer's terms. On an FFF result it
+  cuts that layer at a move — extrusions and travels together, in the order the printer performs them, which the
+  two draw lists do not store and `moveCursor` recovers — and marks where the nozzle is: a solid cone at the
+  current position and a translucent one where the layer ends. Both are fixed SCREEN size and drawn over
+  everything, because a marker that scales with the scene is a speck zoomed out and a marker that respects depth
+  is buried in the bead it is pointing at. Position changes reach the host as the `moveScrub` event.
+  FFF only, and deliberately: mSLA cures a whole layer in one exposure, so a resin layer has no intra-layer
+  order to walk — the same conclusion upstream reaches, PrusaSlicer's SLA preview having a layer slider and no
+  horizontal one.
+- **`files`** — content imported once on mount, through the same extension dispatch as a drop: models and 3mf
+  projects, `.sl1` archives, and preset files. Mount-only on purpose — a host that rebuilds the array each render
+  must not re-import its models; runtime loading stays with the picker and drop.
 - **`defaultExtruderColors`**, **`defaultAutoSlice`** — initial values for state the component owns. Unlike the
   in-app toggle, `defaultAutoSlice` also performs the *first* slice, which is what makes a panel-less embed able to
   slice at all.

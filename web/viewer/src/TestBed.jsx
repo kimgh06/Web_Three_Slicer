@@ -63,8 +63,11 @@ export default function TestBed() {
   const [settings, setSettings] = useState({})
   const [events, setEvents] = useState([])
   const [saves, setSaves] = useState([])
-  const [swallow, setSwallow] = useState(true)
+  const [swallow, setSwallow] = useState(false)  // off by default: a save that silently vanishes reads as broken, not as the onExport demo
   const [gcode, setGcode] = useState(null)
+  const [sl1, setSl1] = useState(null)          // the File itself — a stable identity is what the prop asks for
+  // The `files` prop is read once on mount, so applying a new pick means a remount — `n` rides on the mount key.
+  const [initialFiles, setInitialFiles] = useState({ list: null, n: 0 })
   const [show, setShow] = useState('')          // which inspector is open
   const eventsRef = useRef(null)
 
@@ -148,15 +151,27 @@ export default function TestBed() {
   // The mount key also carries whether presets are applied at mount, so flipping that re-runs the first render
   //  with the settings already in place — which is the case being tested.
   const mountKey = MOUNT_ONLY.map(k => (off.has(k) ? '0' : '1')).join('') + (atMount ? `+${printer}${process}` : '')
+    + `+files${initialFiles.n}`
 
   const kernelParams = useMemo(() => { try { return deriveKernelParams(settings) } catch { return {} } }, [settings])
 
   const push = (line) => setEvents(prev => [`${new Date().toISOString().slice(11, 23)}  ${line}`, ...prev].slice(0, 200))
   useEffect(() => { if (eventsRef.current) eventsRef.current.scrollTop = 0 }, [events])
 
-  const onGcodeFile = async (event) => {
+  // One picker for both injection props, routed on the extension — which is also how the exclusivity gets
+  //  enforced rather than described: picking one clears the other, so "both set" cannot be built from here.
+  const onInjectFile = async (event) => {
     const file = event.target.files?.[0]
-    if (file) setGcode(await file.text())
+    event.target.value = ''
+    if (!file) return
+    if (file.name.toLowerCase().endsWith('.sl1')) { setSl1(file); setGcode(null) }
+    else { setGcode(await file.text()); setSl1(null) }
+  }
+
+  const onInitialFiles = (event) => {
+    const list = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (list.length) setInitialFiles(prev => ({ list, n: prev.n + 1 }))
   }
 
   return (
@@ -232,11 +247,26 @@ export default function TestBed() {
         </label>
         {saves.map((s, i) => <div key={i} className="tb-line">💾 {s}</div>)}
 
-        <h2>gcode <span className="tb-dim">render without slicing</span></h2>
-        <input type="file" accept=".gcode,.gco,.g,.nc,text/plain" onChange={onGcodeFile} />
+        <h2>files <span className="tb-dim">mount-time import (remounts) — models, .sl1, presets</span></h2>
+        <input type="file" multiple onChange={onInitialFiles}
+          accept=".stl,.obj,.3mf,.amf,.ply,.step,.stp,.sl1,.json,.orca_printer,.orca_bundle,.orca_filament,.zip" />
+        {initialFiles.list && (
+          <div className="tb-line">
+            {initialFiles.list.map(f => f.name).join(', ')}{' '}
+            <button onClick={() => setInitialFiles(prev => ({ list: null, n: prev.n + 1 }))}>clear</button>
+          </div>
+        )}
+
+        <h2>inject <span className="tb-dim">render without slicing — .gcode (FFF) / .sl1 (SLA)</span></h2>
+        <input type="file" accept=".gcode,.gco,.g,.nc,.sl1,text/plain" onChange={onInjectFile} />
         {gcode && (
           <div className="tb-line">
-            {(gcode.length / 1e6).toFixed(2)} MB loaded <button onClick={() => setGcode(null)}>clear</button>
+            gcode: {(gcode.length / 1e6).toFixed(2)} MB <button onClick={() => setGcode(null)}>clear</button>
+          </div>
+        )}
+        {sl1 && (
+          <div className="tb-line">
+            sl1: {sl1.name} — {(sl1.size / 1e6).toFixed(2)} MB <button onClick={() => setSl1(null)}>clear</button>
           </div>
         )}
 
@@ -252,7 +282,7 @@ export default function TestBed() {
           key={mountKey}
           settings={settings} setSettings={setSettings}
           panels={panels} features={features}
-          gcode={gcode}
+          gcode={gcode} sl1={sl1} files={initialFiles.list}
           processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings} />}
           motionPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings}
             only={{ builder: 'TabPrinter::build_kinematics_page' }} />}

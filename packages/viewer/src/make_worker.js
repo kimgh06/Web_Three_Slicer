@@ -14,3 +14,18 @@ export function makeSlicerWorker() {
 export function makeParse3mfWorker() {
   return new Worker(new URL('./parse_3mf.worker.js', import.meta.url), { type: 'module' })
 }
+
+// SL1 mesh-reconstruction workers — same dist-relative story as the 3mf parser above. The pipeline is N slice
+// producers (PNG -> occupancy) feeding one nets consumer; see sla_slice.worker.js for why it splits there.
+export function makeSlaReconstructWorker() {
+  return new Worker(new URL('./sla_reconstruct.worker.js', import.meta.url), { type: 'module' })
+}
+
+export function makeSlaSliceWorker() {
+  return new Worker(new URL('./sla_slice.worker.js', import.meta.url), { type: 'module' })
+}
+
+// SL1 export encoder — the write-side counterpart of the slice workers above, same dist-relative story.
+export function makeSl1EncodeWorker() {
+  return new Worker(new URL('./sl1_encode.worker.js', import.meta.url), { type: 'module' })
+}

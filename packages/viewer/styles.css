@@ -66,6 +66,15 @@
 .vtt-sep { width: 1px; align-self: stretch; background: #333c45; margin: 3px 3px; }
 
 /* Stage 29-2: plate tab bar + slice dropdown */
+/* Move scrub — inside the Preview card, directly under the layer slider: the two are the same question's two
+   axes (which layers / how far into the top one), so they read as one control rather than a floating overlay. */
+.move-bar { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.move-bar input[type=range] { flex: 1; min-width: 60px; }
+.move-label { font-size: 12px; white-space: nowrap; }
+.move-reset { height: 20px; padding: 0 7px; border: 1px solid #2c353d; background: #1a2027; color: #9fb3c0;
+  border-radius: 5px; cursor: pointer; font-size: 11px; }
+.move-reset:disabled { opacity: .45; cursor: default; }
+
 .plate-bar { position: absolute; right: 14px; bottom: 30px; display: flex; align-items: center; gap: 4px; z-index: 3;
   background: rgba(18,23,28,.85); border: 1px solid #2a323a; border-radius: 9px; padding: 4px; }
 .plate-bar button { min-width: 26px; height: 26px; border: 1px solid #2c353d; background: #1a2027; color: #9fb3c0;

@@ -2,6 +2,11 @@ import { log } from '../core/log.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from '../core/plate_layout.js'
+import { PRESET_ACCEPT } from './preset_actions.js'
+
+// The preset picker's accept list, as bare extensions — loadFiles routes these to loadPresetFile, so dropping a
+//  preset (or passing one through the `files` prop) behaves like picking it from the printer card.
+const PRESET_EXTS = PRESET_ACCEPT.split(',').map(s => s.replace('.', ''))
 
 // Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop.
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -90,7 +95,7 @@ function droppedFeatures(project, loaded) {
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings, importSl1, loadPresetFile,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   } = deps
@@ -148,13 +153,31 @@ export function makeModelLoad(deps) {
   }
 
   async function loadFiles(fileList) {
-    const files = Array.from(fileList || []).filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
-    const rejected = Array.from(fileList || []).length - files.length
-    if (!files.length) { if (rejected) setError('Supported formats: STL/OBJ/3MF/AMF/PLY'); return }
+    const all = Array.from(fileList || [])
+    // .sl1 is not a mesh: it routes to the raster-preview import, and deliberately AFTER the mesh block below —
+    //  loading meshes clears plateResultsRef, which is exactly where the import lands its result.
+    const sl1Files = importSl1 ? all.filter(f => fileExt(f.name) === 'sl1') : []
+    const presetFiles = loadPresetFile ? all.filter(f => PRESET_EXTS.includes(fileExt(f.name))) : []
+    const files = all.filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
+    const rejected = all.length - files.length - sl1Files.length - presetFiles.length
+    if (!files.length && !sl1Files.length && !presetFiles.length) {
+      if (rejected) setError('Supported formats: STL/OBJ/3MF/AMF/PLY' + (importSl1 ? '/SL1' : '') + (loadPresetFile ? ' + preset files' : ''))
+      return
+    }
+    if (!files.length) {
+      for (const f of presetFiles) await loadPresetFile(f)
+      if (sl1Files.length) setError('')
+      for (const f of sl1Files) await importSl1(f)
+      return
+    }
     setError(''); setTriWarn(''); setProgress(0)
     layersDataRef.current = null; segDataRef.current = null; plateResultsRef.current = {}; plateOffsetsRef.current = {}
     clearToolpaths(); refreshSlicedCount()
     setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setSliceNotice(''); setDowngradeOffer(null)
+    // Presets before the meshes they came with — those are the settings the model is meant to load under — but
+    //  AFTER the state reset above, or the reset's setSliceNotice('') wipes the "Loaded machine: …" notice
+    //  (measured: the notice never appeared when a preset and an STL arrived in one pass).
+    for (const f of presetFiles) await loadPresetFile(f)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return '' })
     setCanvasMode('prepare')   // S2: a new model goes back to Prepare
     apiRef.current?.showObjects()
@@ -182,6 +205,7 @@ export function makeModelLoad(deps) {
     }
     setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false })))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
+    for (const f of sl1Files) await importSl1(f)
     // Imported painting only reaches the kernel through the selector, and nothing else registers one until the user
     //  enters a brush — so a project could otherwise be sliced with its paint still sitting in JS. Registering here
     //  is also what makes the import one-shot: it consumes the pending marks (see support_paint.js).

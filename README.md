@@ -47,7 +47,7 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see
 
 ```bash
 # demo viewer (committed WASM — no emscripten needed)
-cd web/viewer && npm i && npm run dev
+cd web && make dev
 
 # kernel test suite (120+ invariants)
 node packages/wasm-core/test.mjs

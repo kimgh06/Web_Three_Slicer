@@ -57,8 +57,10 @@ export default function ResinCard({ settings, setSettings, stats }) {
       {row('initial_exposure_time', p.initial_exposure_time, 's', 'First exposure', 1)}
       {row('faded_layers', p.faded_layers, '', 'Fade layers', 1)}
       <div className="sc-info"><span>Display</span>
-        <b title="The resin printer's LCD — resolution and physical size, from the printer profile. This is the raster grid the SL1 export draws on.">
-          {p.display_pixels_x}×{p.display_pixels_y} px
+        {/* The mm figure is the PRINT AREA — without it on screen, a model judged over-bed against the display
+            while a larger printable_area bed is drawn looks like it fits and fails for no visible reason. */}
+        <b title="The resin printer's LCD — resolution and physical size, from the printer profile. The physical size is the print area; the pixel grid is what the SL1 export draws on.">
+          {p.display_pixels_x}×{p.display_pixels_y} px · {p.display_width}×{p.display_height} mm
         </b>
       </div>
       <label className="sc-info" title="Generate grid-pillar supports under overhangs and floating islands (kernel slice_sla) — they render in the preview and rasterize into the SL1 masks">

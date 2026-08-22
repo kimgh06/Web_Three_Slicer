@@ -1,5 +1,6 @@
 // three.js instanced mesh built from a buildSegmentData result. The only file here that touches three.
 import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
+import { moveCursor, topMoveLayer } from '../core/toolpath_segments.js'
 
 // Upstream SegmentTemplate.cpp:18 VERTEX_DATA (the 24 triangle indices of the 8-vertex diamond, verbatim).
 //   /1-------6\      cross-section = diamond (0=top, 3=bottom, 2/7=front/back spikes, 5/6/4/1=sides/top-bottom)
@@ -83,17 +84,46 @@ export function makeToolpath(THREE, data) {
   if (sphere) travGeo.boundingSphere = sphere
 
   let travelOn = false, visLo = 0, visHi = data.layerCount - 1
+  // The move scrub (upstream's sequential view): how far into the TOP visible layer the print has got. null =
+  //  the whole layer, which is what every caller that never scrubs leaves it at.
+  let moveAt = null
+  // Which layer the scrub walks — the topmost SHOWN layer that has moves (see topMoveLayer: the kernel's
+  //  trailing empty layer makes that routinely one below visHi).
+  const scrubLayer = () => topMoveLayer(data, visLo, visHi)
   const applyTravelRange = () => {
-    const ts = data.travelPrefix[visLo], te = data.travelPrefix[visHi + 1]
-    travGeo.setDrawRange(travelOn ? ts * 2 : 0, travelOn ? (te - ts) * 2 : 0)
+    const ts = data.travelPrefix[visLo]
+    const sl = scrubLayer()
+    const te = moveAt == null ? data.travelPrefix[visHi + 1]
+      : data.travelPrefix[sl] + moveCursor(data, sl, moveAt).travCount
+    const count = Math.max(0, te - ts)
+    travGeo.setDrawRange(travelOn ? ts * 2 : 0, travelOn ? count * 2 : 0)
+  }
+  const applyInstanceCount = () => {
+    const sl = scrubLayer()
+    geo.instanceCount = moveAt == null ? data.layerSegPrefix[visHi + 1]
+      : data.layerSegPrefix[sl] + moveCursor(data, sl, moveAt).segCount
   }
   // Stage 25: dual slider [lo..hi] layer range. Upper bound cut by instanceCount, lower bound clipped by the shader's layer_lo (both O(1)).
   const setLayerRange = (lo, hi) => {
     const L = data.layerCount
     visLo = Math.max(0, Math.min(L - 1, lo | 0)); visHi = Math.max(visLo, Math.min(L - 1, hi | 0))
     mat.uniforms.layer_lo.value = visLo; mat.uniforms.layer_hi.value = visHi
-    geo.instanceCount = data.layerSegPrefix[visHi + 1]
+    // The scrub's domain is the top layer's own move count, so moving that layer invalidates it — the caller
+    //  re-seeds it (use_move_scrub resets to the full layer), rather than carrying a count into a layer where
+    //  it means something else.
+    moveAt = null
+    applyInstanceCount()
     applyTravelRange()
+  }
+  /** Cut the scrub layer at move `at` (extrusions and travels together, emission order); null restores the range
+   *  whole. Returns `{layer, ...cursor}` — `point` is where the nozzle is, the marker's position. */
+  const setMoveRange = (at) => {
+    moveAt = at == null ? null : Math.max(0, at | 0)
+    applyInstanceCount()
+    applyTravelRange()
+    if (moveAt == null) return null
+    const sl = scrubLayer()
+    return { layer: sl, ...moveCursor(data, sl, moveAt) }
   }
   const setVisibleLayers = (n) => setLayerRange(0, (n | 0) - 1)   // backwards compatible: show the bottom n layers
   const setTravelVisible = (v) => { travelOn = !!v; travLines.visible = travelOn; applyTravelRange() }
@@ -107,5 +137,6 @@ export function makeToolpath(THREE, data) {
     geo.dispose(); mat.dispose(); posTex.dispose(); hwaTex.dispose()
     travGeo.dispose(); travLines.material.dispose()
   }
-  return { mesh, travLines, setVisibleLayers, setLayerRange, setTravelVisible, setColors, dispose, nSeg: data.nSeg, layerCount: data.layerCount }
+  return { mesh, travLines, setVisibleLayers, setLayerRange, setMoveRange, setTravelVisible, setColors, dispose,
+           data, nSeg: data.nSeg, layerCount: data.layerCount }
 }

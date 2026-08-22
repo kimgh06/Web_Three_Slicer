@@ -9,17 +9,35 @@ import { write3MFProject, writeSTL } from '../core/write_3mf.js'
 //  IMPORTED — losing the brush strokes is bad, losing the whole file because a worker was slow is worse.
 const PAINT_EXPORT_TIMEOUT_MS = 4000
 
+/**
+ * Is the click that started this still "recent" as far as the browser is concerned?
+ *
+ * Transient user activation expires after about five seconds. A download started once it has lapsed counts as
+ * an AUTOMATIC one, which Chrome blocks outright after the first, showing a small icon in the omnibox and
+ * nothing on the page. Measured here: an SL1 of a 1095-layer model takes ~12s to build, so EVERY such export
+ * lands on the wrong side of that line. Callers that take seconds must therefore check before saving and, when
+ * this says no, hold the finished bytes for a second click rather than dropping them into a blocked download.
+ *
+ * `undefined` (Safari before 16.4) is treated as lapsed: asking for one more click is the safe direction to
+ * be wrong in — a file that needs a click always arrives, a blocked one never does.
+ */
+export const saveWindowOpen = () =>
+  typeof navigator !== 'undefined' && navigator.userActivation?.isActive === true
+
 // The host can take the bytes instead of having the browser download them — an app that saves to its own server,
 //  or through the File System Access API, has no other way in: the toolbar's save buttons are inside this
 //  component. Returning anything truthy means "handled", and the anchor is never created.
-export function download(bytes, name, type, onExport) {
+export async function download(bytes, name, type, onExport) {
   const blob = new Blob([bytes], { type })
   if (onExport && onExport(blob, name)) return
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url; anchor.download = name; anchor.style.display = 'none'
   document.body.appendChild(anchor); anchor.click()
-  setTimeout(() => { anchor.remove(); URL.revokeObjectURL(url) }, 4000)
+  // Revoking is what frees the bytes, but doing it before the browser has finished READING them truncates the
+  //  download. 4s was fine for a G-code file and is not for a 100MB SL1, so the wait scales with the size
+  //  (~10MB/s, floor 4s) instead of being one constant tuned on the smallest case.
+  setTimeout(() => { anchor.remove(); URL.revokeObjectURL(url) }, Math.max(4000, blob.size / 10000))
 }
 
 function requestPaintExport(worker) {

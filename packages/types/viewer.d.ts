@@ -52,6 +52,29 @@ export interface ViewportProps {
    * shown on the selected plate; the kernel is never started. While it is set, auto re-slice leaves that plate alone.
    */
   gcode?: string | null
+  /**
+   * An `.sl1` archive rendered as a raster preview — the SLA half of {@link ViewportProps.gcode}'s contract: it
+   * lands on the selected plate and the kernel is never started. Set both and the G-code wins; one plate holds
+   * one artifact.
+   *
+   * Two things it does that `gcode` does not. It writes to your `settings` — the archive's own job description,
+   * `printer_technology` included, because an .sl1 opened in an FFF session has to switch it. And it reconstructs
+   * a surface from the masks in the background, so the preview fills in a moment after the layers appear.
+   *
+   * Re-injects whenever the value's IDENTITY changes, so hold the File/buffer in state rather than building it
+   * during render — a fresh `new Uint8Array(...)` each render re-imports each render. `{name, data}` exists
+   * because the name is the import notice's subject and the filename a re-export hands back.
+   */
+  sl1?: File | Blob | ArrayBuffer | Uint8Array | { name?: string, data: ArrayBuffer | Uint8Array } | null
+  /**
+   * Content imported once on mount, through the same extension dispatch as a drop: models (STL/OBJ/3MF/AMF/PLY —
+   * a 3mf project applies its settings, plates and painting), `.sl1` raster archives, and preset files
+   * (`.json` / `.orca_printer` / `.orca_bundle` / `.orca_filament` / `.zip`). The `{name, data}` form exists
+   * because the dispatch runs on the file NAME's extension. Deliberately mount-only — recreating the array on a
+   * later render does not re-import; runtime loading is the picker, drop, or a remount.
+   */
+  files?: Array<File | { name: string, data: ArrayBuffer | Uint8Array }>
+
   /** Initial filament colours (hex), one per extruder. Defaults to the built-in T1/T2 pair. */
   defaultExtruderColors?: string[] | null
   /**
@@ -97,6 +120,9 @@ export type LockablePanel =
 export type ViewportPanel =
   | 'topBar' | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
   | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'previewControls' | 'processCard' | 'sliceBar'
+  /** The horizontal move scrub under the canvas — how far into the top shown layer the print has got. Preview
+   *  and FFF only: a resin layer is cured in one exposure and has no intra-layer order to walk. */
+  | 'moveBar'
   /** The over-the-bed warning, shown in Prepare when something leaves the printable area. */
   | 'bedWarn'
   /** The prime tower card. Only rendered anyway once a second filament exists. */
@@ -119,6 +145,9 @@ export type ViewportEvent =
   | { type: 'paintMode'; value: 'off' | 'enforcer' | 'blocker' | 'material' }
   | { type: 'layerCount'; value: number }
   | { type: 'layerRange'; value: { lo: number; hi: number } }
+  /** The move scrub's position within the top shown layer; `max` is that layer's move count, extrusions and
+   *  travels together. Not fired while the whole layer is shown. */
+  | { type: 'moveScrub'; value: { at: number; max: number } }
   | { type: 'error'; value: string }
   | { type: 'notice'; value: string }
 
