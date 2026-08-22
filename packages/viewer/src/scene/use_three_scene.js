@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
 import { buildMergedSTL, exportObjects, stlToSoup } from '../core/model_geometry.js'
-import { buildOverhangGeometry } from './overhang_view.js'
+import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
 import { bedGridLines } from '../core/bed_grid.js'
@@ -602,6 +602,8 @@ export function useThreeScene(deps) {
       invalidate()
     }
 
+    const nozzle = makeNozzleMarker(toolpathGroup, invalidate)   // nozzle_marker.js
+
     apiRef.current = {
       /** SLA preview: replace the outline toolpath with SOLID meshes — the plate's model geometry (lifted by
        *  the elevation), the kernel's support tree mesh and the pad mesh, all in the kernel frame at the
@@ -643,6 +645,7 @@ export function useThreeScene(deps) {
         slaClipPlanes[1].constant = zLo == null ? 1e9 : -zLo
         invalidate()
       },
+      setNozzle: nozzle.set,
       setMode,
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },

@@ -11,6 +11,7 @@ import { makeKeyHandler } from './core/shortcut_keymap.js'
 import { setLogging } from './core/log.js'
 import { useStateRef } from './use_state_ref.js'
 import { useHostEvents } from './use_host_events.js'
+import { useMoveScrub } from './use_move_scrub.js'
 import { useViewportHistory, undoRedoDirection } from './use_viewport_history.js'
 import { useThreeScene } from './scene/use_three_scene.js'
 import {
@@ -415,6 +416,12 @@ export default function Viewport({
     return () => clearTimeout(autoTimerRef.current)
   }, [settings, autoSlice, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- The move scrub: how far into the top shown layer the print has got (use_move_scrub.js) ----
+  const moveScrub = useMoveScrub({
+    layerLo, layerHi, layerCount, canvasMode,
+    apiRef, toolpathRef, plateOffset: plateOffsetsRef.current[selectedPlate], onEventRef,
+  })
+
   // ---- G-code injection (the `gcode` prop) ----
   // Renders G-code without slicing: the parser produces the very layer stream the kernel produces, so the result
   //  goes into the plate cache and showPlateResult draws it exactly like a slice. The kernel is never started.
@@ -621,7 +628,8 @@ export default function Viewport({
       layerLo={layerLo} layerHi={layerHi} segCount={segCount} singleLayer={singleLayer}
       onLayerLo={onLo} onLayerHi={onHi} onToggleSingle={toggleSingle}
       showTravel={showTravel} onToggleTravel={onToggleTravel}
-      colorRange={colorRange} roleLegend={roleLegend} extruderColors={extruderColors} />
+      colorRange={colorRange} roleLegend={roleLegend} extruderColors={extruderColors}
+      moveScrub={!stats?.sla && showPanel('moveBar') ? moveScrub : null} />
   )
   // The per-tool filament split and the purge total are kernel stats of the focused plate's cached result
   //  (`filament_mm_by_tool` / `filament_mm_purge` — the names wasm-core/test.mjs asserts). The `stats` state was

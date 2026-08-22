@@ -97,6 +97,9 @@ export type LockablePanel =
 export type ViewportPanel =
   | 'topBar' | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
   | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'previewControls' | 'processCard' | 'sliceBar'
+  /** The horizontal move scrub under the canvas — how far into the top shown layer the print has got. Preview
+   *  and FFF only: a resin layer is cured in one exposure and has no intra-layer order to walk. */
+  | 'moveBar'
   /** The over-the-bed warning, shown in Prepare when something leaves the printable area. */
   | 'bedWarn'
   /** The prime tower card. Only rendered anyway once a second filament exists. */
@@ -119,6 +122,9 @@ export type ViewportEvent =
   | { type: 'paintMode'; value: 'off' | 'enforcer' | 'blocker' | 'material' }
   | { type: 'layerCount'; value: number }
   | { type: 'layerRange'; value: { lo: number; hi: number } }
+  /** The move scrub's position within the top shown layer; `max` is that layer's move count, extrusions and
+   *  travels together. Not fired while the whole layer is shown. */
+  | { type: 'moveScrub'; value: { at: number; max: number } }
   | { type: 'error'; value: string }
   | { type: 'notice'; value: string }
 

@@ -1,6 +1,7 @@
 import React from 'react'
 import { VIEW_TYPES } from '../core/toolpath_views.js'
 import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from '../core/toolpath_palette.js'
+import MoveBar from './MoveBar.jsx'
 
 const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`
 
@@ -9,6 +10,7 @@ const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Ma
 export default function PreviewControls({
   viewType, onViewType, layerCount, layerLo, layerHi, segCount, singleLayer,
   onLayerLo, onLayerHi, onToggleSingle, showTravel, onToggleTravel, colorRange, roleLegend, extruderColors,
+  moveScrub = null,
 }) {
   // The filament view is categorical like the feature view, so it takes the swatch legend rather than the gradient —
   //  but its categories are extruders, not roles, and roleLegend would otherwise label them Wall/Sparse/Solid.
@@ -28,6 +30,11 @@ export default function PreviewControls({
         <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerLo} onChange={onLayerLo} data-testid="layer-lo" title="Lowest layer to show (also adjustable with ↓/↑)" />
         <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerHi} onChange={onLayerHi} data-testid="layer-hi" title="Highest layer to show (↓/↑, hold Shift for steps of 10)" />
       </div>
+      {/* Directly under the layer slider, because it is the second axis of the same question: that one picks
+          which layers, this one how far into the top of them. null when the result has no move order (resin). */}
+      {moveScrub && (
+        <MoveBar value={moveScrub.at} max={moveScrub.max} point={moveScrub.point} onScrub={moveScrub.onScrub} />
+      )}
       <div className="layer-ctl">
         <button className={singleLayer ? 'on' : ''} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
         <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="Show non-extruding moves as gray lines (T)" /> Travel</label>

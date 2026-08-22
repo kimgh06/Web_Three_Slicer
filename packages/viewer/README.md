@@ -64,7 +64,7 @@ Every panel can be switched off, and the values the component owns can be seeded
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
   the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
   `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `objectList`, `previewControls`, `processCard`,
-  `sliceBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
+  `sliceBar`, `moveBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
   resin card, and slicing routes to the kernel's `slice_sla` — PrusaSlicer's ported support/pad chain — with an
   `.sl1` export instead of G-code (portrait masks, like every SL1-family machine). The preview lifts the model by
@@ -74,6 +74,17 @@ Every panel can be switched off, and the values the component owns can be seeded
   `;TYPE:` (OrcaSlicer/PrusaSlicer/Cura), from `;_EXTRUSION_ROLE:` tags and from this kernel's own feature comments;
   bead width comes from `;WIDTH:` or, absent that, from E. What the file never states cannot be recovered: an
   unmarked run reads as wall, and there is no print-time estimate (that needs the machine's acceleration limits).
+- **The move scrub** (`panels.moveBar`) — the horizontal counterpart of the layer slider, under the canvas in
+  Preview: the vertical one picks WHICH layers are shown, this one walks inside the top one. It is upstream's
+  sequential view (`GCodeViewer`'s `update_sequential_view_current`) in this viewer's terms. On an FFF result it
+  cuts that layer at a move — extrusions and travels together, in the order the printer performs them, which the
+  two draw lists do not store and `moveCursor` recovers — and marks where the nozzle is: a solid cone at the
+  current position and a translucent one where the layer ends. Both are fixed SCREEN size and drawn over
+  everything, because a marker that scales with the scene is a speck zoomed out and a marker that respects depth
+  is buried in the bead it is pointing at. Position changes reach the host as the `moveScrub` event.
+  FFF only, and deliberately: mSLA cures a whole layer in one exposure, so a resin layer has no intra-layer
+  order to walk — the same conclusion upstream reaches, PrusaSlicer's SLA preview having a layer slider and no
+  horizontal one.
 - **`defaultExtruderColors`**, **`defaultAutoSlice`** — initial values for state the component owns. Unlike the
   in-app toggle, `defaultAutoSlice` also performs the *first* slice, which is what makes a panel-less embed able to
   slice at all.

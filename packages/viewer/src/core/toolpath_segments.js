@@ -30,6 +30,13 @@ export function buildSegmentData(layers, defaultLineWidth) {
   const segIdA = [], segLayer = []
   const typeLengths = new Float64Array(16)   // stage 25 S6.3: total extruded length per type (for the role-share legend)
   const travel = [], travelLayer = []   // travels: [x0,y0,z0,x1,y1,z1] per seg
+  // How many of this LAYER's extrusion segments were already emitted when each travel happened. Extrusions and
+  //  travels are drawn from two separate lists, but the printer performs them in ONE order, and the move scrub
+  //  (setMoveRange) has to cut both at the same instant — cutting each list by the same count would show every
+  //  extrusion first and then the travels. This is the smallest thing that restores the interleaving: one int per
+  //  travel, from which moveCursor recovers the split by binary search. A full combined-index map would be one
+  //  int per MOVE, and the segment stream is already the largest array the viewer holds.
+  const travelSegBefore = []
   let lastIdx = -1, lastX = 0, lastY = 0, lastZ = 0, lastEncoded = -1, curLayer = 0
   const EPS = 1e-4
   const push = (x, y, z, t, tool, h, w) => { vx.push(x); vy.push(y); vz.push(z); vtype.push(t); vtool.push(tool); vh.push(h); vw.push(w); vlayer.push(curLayer); realNext.push(false); return vx.length - 1 }
@@ -38,11 +45,16 @@ export function buildSegmentData(layers, defaultLineWidth) {
     const paths = layers[li].paths, widths = layers[li].widths, h = layerH[li]
     curLayer = li
     if (!paths) continue
+    const segAtLayerStart = segIdA.length
     for (let k = 0; k < paths.length; k += 8) {
       const encoded = paths[k + 3]                                  // role + tool * 16 (see ROLE_MASK above)
       const type = encoded & ROLE_MASK, tool = encoded >>> TOOL_SHIFT
       const x0 = paths[k], y0 = paths[k + 1], z0 = paths[k + 2], x1 = paths[k + 4], y1 = paths[k + 5], z1 = paths[k + 6]
-      if (type === 0) { travel.push(x0, y0, z0, x1, y1, z1); travelLayer.push(li); continue }
+      if (type === 0) {
+        travel.push(x0, y0, z0, x1, y1, z1); travelLayer.push(li)
+        travelSegBefore.push(segIdA.length - segAtLayerStart)
+        continue
+      }
       const w = (widths && widths[k / 8] > 0) ? widths[k / 8] : lw
       typeLengths[type] += Math.hypot(x1 - x0, y1 - y0)   // accumulate length per role — the mask keeps the index in range
       let idA
@@ -111,9 +123,74 @@ export function buildSegmentData(layers, defaultLineWidth) {
   }
   const travelPrefix = new Int32Array(L + 1)
   { let s = 0; for (let n = 0; n < L; n++) { while (s < nTrav && travelLayer[s] === n) s++; travelPrefix[n + 1] = s } }
+  const travelSegBeforeArr = new Int32Array(nTrav)
+  for (let i = 0; i < nTrav; i++) travelSegBeforeArr[i] = travelSegBefore[i]
 
   const bbox = nV + nTrav > 0 ? { min: [bx0, by0, bz0], max: [bx1, by1, bz1] } : null
-  return { position, hwa, segIndex, nV, nSeg, layerSegPrefix, travelPos, travelPrefix, nTrav, layerCount: L, maxAbs, hasNaN, meta, typeLengths, bbox }
+  return { position, hwa, segIndex, nV, nSeg, layerSegPrefix, travelPos, travelPrefix, travelSegBefore: travelSegBeforeArr,
+           nTrav, layerCount: L, maxAbs, hasNaN, meta, typeLengths, bbox }
+}
+
+/** How many moves — extrusions and travels together — one layer performs. The move scrub's range. */
+export function layerMoveCount(data, layer) {
+  const li = Math.max(0, Math.min(data.layerCount - 1, layer | 0))
+  return (data.layerSegPrefix[li + 1] - data.layerSegPrefix[li])
+       + (data.travelPrefix[li + 1] - data.travelPrefix[li])
+}
+
+/**
+ * The layer the move scrub actually walks: the topmost one in [lo, hi] that HAS moves.
+ *
+ * Not a nicety — it is the normal case. The kernel streams one more layer than it prints (measured on a 20mm
+ * cube: 100 `onLayer` calls, `stats.layers` 99, the last one carrying an empty `paths`), so the layer slider's
+ * top position is routinely an empty layer and a scrub pinned to it would have nothing to walk on every fresh
+ * slice. The topmost layer with moves is also the topmost layer the user can SEE, which is what the scrub and
+ * the nozzle marker are about.
+ */
+export function topMoveLayer(data, lo, hi) {
+  const last = data.layerCount - 1
+  const a = Math.max(0, Math.min(last, lo | 0)), b = Math.max(a, Math.min(last, hi | 0))
+  for (let li = b; li >= a; li--) if (layerMoveCount(data, li) > 0) return li
+  return b
+}
+
+/**
+ * Where the nozzle is `at` moves into `layer`, and how much of each draw list that accounts for — upstream's
+ * sequential view (GCodeViewer's update_sequential_view_current) reduced to what the two lists here need.
+ *
+ * The interleaving is recovered rather than stored: within a layer, travel t sits at combined index
+ * `travelSegBefore[t] + (t - travelStart)`, which is ascending, so a binary search over the layer's travels
+ * counts how many of them precede `at`. Everything left is extrusions.
+ *
+ * Returns `{ segCount, travCount, point, onTravel }` — `point` is the nozzle position (kernel frame, the real
+ * z, not the diamond-centre z the position array holds), or null at `at === 0`.
+ */
+export function moveCursor(data, layer, at) {
+  const li = Math.max(0, Math.min(data.layerCount - 1, layer | 0))
+  const segStart = data.layerSegPrefix[li], travStart = data.travelPrefix[li]
+  const total = layerMoveCount(data, li)
+  const k = Math.max(0, Math.min(total, at | 0))
+  // Lower bound: the first travel of this layer whose combined index is >= k.
+  let lo = travStart, hi = data.travelPrefix[li + 1]
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (data.travelSegBefore[mid] + (mid - travStart) < k) lo = mid + 1
+    else hi = mid
+  }
+  const travCount = lo - travStart
+  const segCount = k - travCount
+  if (k === 0) return { segCount: 0, travCount: 0, point: null, onTravel: false }
+  // Which list the LAST move came from decides where the nozzle ended up.
+  const lastTravel = lo > travStart && data.travelSegBefore[lo - 1] + (lo - 1 - travStart) === k - 1
+  if (lastTravel) {
+    const t = (lo - 1) * 6
+    return { segCount, travCount, onTravel: true, point: [data.travelPos[t + 3], data.travelPos[t + 4], data.travelPos[t + 5]] }
+  }
+  const s = segStart + segCount - 1
+  const v = data.segIndex[s * 4] + 1          // .r = id_a; the segment's far endpoint is the next vertex
+  // The position array holds z - 0.5*height (upstream centres the diamond on the bead); hwa.x is that height.
+  return { segCount, travCount, onTravel: false,
+           point: [data.position[v * 4], data.position[v * 4 + 1], data.position[v * 4 + 2] + 0.5 * data.hwa[v * 4]] }
 }
 
 // S6.3: role-share legend data — length % per type (the kernel does not expose time per role -> approximated by length share, documented).
