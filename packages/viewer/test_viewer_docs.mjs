@@ -113,8 +113,10 @@ console.log('\n[viewer: exports are interceptable]')
 // Every file the viewer hands to the browser goes through one helper that offers it to the host first. A second
 //  path that builds its own anchor would be a save the `onExport` prop silently cannot see.
 const exportActions = srcFile('export_actions.js')
+// Async since the File System Access path writes through a stream — the host offer still happens first, and
+//  before any await, so an intercepted save never touches the browser.
 check('the download helper offers the blob to the host first',
-  /export function download\([^)]*onExport\)/.test(exportActions) && /if \(onExport && onExport\(/.test(exportActions))
+  /export async function download\([^)]*onExport/.test(exportActions) && /if \(onExport && onExport\(/.test(exportActions))
 const anchorSites = ['Viewport.jsx', 'export_actions.js', 'plate_actions.js', 'model_load.js', 'object_actions.js']
   .filter(name => srcFile(name).includes('document.body.appendChild'))
 check('and it is the only place that creates one', anchorSites.join(' ') === 'export_actions.js', anchorSites.join(' '))
@@ -130,7 +132,7 @@ const { download } = await import('./src/actions/export_actions.js')
   check('...and the host gets a Blob and the filename', seen[0]?.[0] instanceof Blob && seen[0][1] === 'part.3mf')
   check('...with the right content type', seen[0]?.[0]?.type === 'model/3mf')
   let threw = null
-  try { download(new Uint8Array([1]), 'x.stl', 'model/stl', () => false) } catch (error) { threw = error }
+  try { await download(new Uint8Array([1]), 'x.stl', 'model/stl', () => false) } catch (error) { threw = error }
   check('a declined export falls through to the download path', threw !== null,
     'expected the DOM path to be attempted (no URL.createObjectURL in Node)')
 }

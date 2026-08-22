@@ -7,6 +7,7 @@
 //  needs a canvas, which the caller INJECTS (`makeCanvas`) — the browser passes OffscreenCanvas, a test passes a
 //  recorder stub. Nothing here touches the DOM at import time, which is what keeps core/ under the layer guard.
 import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
+import { log } from './log.js'
 
 /** mm -> px mapping of the resin display. Model coordinates are plate-local (origin at the plate centre); the
  *  display's origin is its own centre, so the transform is scale + half-display offset. `mirrorX` is the default
@@ -51,6 +52,10 @@ export function drawLayer(ctx, paths, transform) {
     ctx.lineTo(...transform.map(x1, y1))
     lastX = x1; lastY = y1
   }
+  // even-odd, and NOT nonzero: measured on a self-intersecting mesh (two boxes fused at a corner) the two give
+  //  the SAME picture, because the slicer emits the overlap boundary with a hole's winding — so nonzero buys
+  //  nothing there while giving up even-odd's indifference to loop orientation. Clean meshes round-trip either
+  //  way: a 30x20 slab with a 10x6 hole rasterizes to 0.899 of its bbox against a theoretical 0.9.
   ctx.fill('evenodd')
   return loops
 }
@@ -92,27 +97,175 @@ export function sl1ConfigIni({ params, stats, jobName, timestamp }) {
 
 export const sl1LayerName = (jobName, index) => `${jobName}${String(index).padStart(5, '0')}.png`
 
+// The role sidecar. An SL1 mask is only "cure this pixel" — which pixels were SUPPORT (role 5) or PAD (role 6)
+//  is gone the moment it is rasterized, and that is why a reimported archive could only render one colour. Our
+//  own writer can carry it: an extra zip member holding the support/pad segments of each layer, which every
+//  other consumer (PrusaSlicer, printers) ignores as an unknown file. Model segments are NOT stored — model is
+//  simply "cured and not support/pad" — so the sidecar stays a fraction of the mask data.
+export const SL1_ROLES_MEMBER = 'Metadata/threeslicer_roles.bin'
+
+// The scene sidecar. The role sidecar answers "which pixels were support"; this one answers the bigger
+//  question the masks cannot: what the SURFACE was. Reconstructing a mesh from a voxelized mask grid is
+//  faithful but never smooth — the original triangles are analytic, the reconstruction is a 0.12mm sample of
+//  them. So our own writer stores the meshes the preview was showing (model STL, support tree, pad) and a
+//  reimport shows exactly the scene that was exported, with no reconstruction at all. Every other consumer
+//  ignores the unknown member; a foreign SL1 has none and still reconstructs from the masks.
+export const SL1_SCENE_MEMBER = 'Metadata/threeslicer_scene.bin'
+
+/** { modelSTL: Uint8Array, supportMesh/padMesh: Float32Array soups, lift: mm } -> the sidecar bytes:
+ *  'TSS1', f32 lift, then three u32-length sections (STL bytes, support floats, pad floats). Little-endian. */
+export function sl1SceneSidecar({ modelSTL, supportMesh, padMesh, lift = 0 }) {
+  const stl = modelSTL instanceof Uint8Array ? modelSTL : new Uint8Array(modelSTL ?? 0)
+  const sup = supportMesh instanceof Float32Array ? supportMesh : new Float32Array(supportMesh ?? 0)
+  const pad = padMesh instanceof Float32Array ? padMesh : new Float32Array(padMesh ?? 0)
+  const bytes = new Uint8Array(8 + 4 + stl.length + 4 + sup.length * 4 + 4 + pad.length * 4)
+  const dv = new DataView(bytes.buffer)
+  bytes.set([0x54, 0x53, 0x53, 0x31], 0)          // 'TSS1'
+  dv.setFloat32(4, lift, true)
+  let at = 8
+  dv.setUint32(at, stl.length, true); at += 4
+  bytes.set(stl, at); at += stl.length
+  for (const arr of [sup, pad]) {
+    dv.setUint32(at, arr.length, true); at += 4
+    for (let i = 0; i < arr.length; i++) { dv.setFloat32(at, arr[i], true); at += 4 }
+  }
+  return bytes
+}
+
+/** Layers -> the sidecar bytes: 'TSR1', u32 layer count, then per layer u32 float count + the stride-8
+ *  segments whose role (`paths[k+3] & 15`) is 5 or 6, in stream order (drawLayer's loop-continuity rule
+ *  survives filtering because loops close on themselves). Little-endian throughout, deterministic. */
+export function sl1RolesSidecar(layers) {
+  const kept = layers.map(({ paths }) => {
+    const out = []
+    for (let k = 0; k + 7 < paths.length; k += 8) {
+      const role = paths[k + 3] & 15
+      if (role === 5 || role === 6) for (let f = 0; f < 8; f++) out.push(paths[k + f])
+    }
+    return out
+  })
+  const total = 8 + kept.reduce((s, seg) => s + 4 + seg.length * 4, 0)
+  const bytes = new Uint8Array(total)
+  const dv = new DataView(bytes.buffer)
+  bytes.set([0x54, 0x53, 0x52, 0x31], 0)   // 'TSR1'
+  dv.setUint32(4, kept.length, true)
+  let at = 8
+  for (const seg of kept) {
+    dv.setUint32(at, seg.length, true); at += 4
+    for (const v of seg) { dv.setFloat32(at, v, true); at += 4 }
+  }
+  return bytes
+}
+
 /**
  * Build the .sl1 bytes. `layers` is the slice result's layer list ({paths} per layer), `makeCanvas(px, py)`
  * returns an OffscreenCanvas-compatible object (2d ctx + convertToBlob). Returns a Uint8Array of the archive.
  */
-export async function makeSL1({ layers, params, stats, jobName = 'plate', timestamp, makeCanvas }) {
+/** The parallel encoder: N workers, worker k taking layers k, k+N, 2N+k… (the stride keeps progress even and
+ *  the reassembly a plain index write). Layer paths are structured-clone COPIES — the main thread's arrays
+ *  stay untouched for the sidecars below. Any worker error kills the whole pool and rejects: a partial
+ *  archive is not an archive. */
+function encodeParallel({ layers, params, makeWorker, workerCount, onProgress }) {
+  return new Promise((resolve, reject) => {
+    const pngs = new Array(layers.length)
+    const progress = new Array(workerCount).fill(0)
+    let finished = 0, dead = false
+    const workers = []
+    const bail = (err) => { dead = true; workers.forEach(w => w.terminate()); reject(err) }
+    for (let w = 0; w < workerCount; w++) {
+      const indices = [], paths = []
+      for (let i = w; i < layers.length; i += workerCount) { indices.push(i); paths.push(layers[i].paths) }
+      const worker = makeWorker()
+      workers.push(worker)
+      worker.onerror = (event) => bail(new Error('SL1 encode worker: ' + (event?.message || 'failed')))
+      worker.onmessage = ({ data }) => {
+        if (dead) return
+        if (data.progress != null) {
+          progress[w] = data.progress
+          onProgress?.(progress.reduce((a, b) => a + b, 0), layers.length)
+          return
+        }
+        data.indices.forEach((layerIndex, k) => { pngs[layerIndex] = data.pngs[k] })
+        worker.terminate()
+        if (++finished === workerCount) resolve(pngs)
+      }
+      worker.postMessage({ indices, paths, params })
+    }
+  })
+}
+
+export async function makeSL1({ layers, params, stats, jobName = 'plate', timestamp, makeCanvas, onProgress, scene = null, makeWorker = null, workerCount = 0 }) {
   const canvasFactory = makeCanvas
     ?? (typeof OffscreenCanvas !== 'undefined' ? (w, h) => new OffscreenCanvas(w, h) : null)
-  if (!canvasFactory) throw new Error('SL1 export needs a canvas (OffscreenCanvas or an injected factory)')
   const transform = slaRasterTransform(params)
   const files = {}
-  for (let i = 0; i < layers.length; i++) {
+  // The worker pool is the fast path; the sequential loop below stays for callers without one (node tests
+  //  inject makeCanvas and never a worker). A pool that dies mid-build rejects rather than restarting
+  //  sequentially — the caller already reports export errors, and a silent 8x slowdown would read as a hang.
+  // The count is the CALLER's judgment (core/ cannot read navigator.hardwareConcurrency under the layer
+  //  guard); 4 is the floor a caller that passes a factory but no count gets.
+  const pool = makeWorker && typeof Worker !== 'undefined' && layers.length > 1 ? {
+    makeWorker,
+    workerCount: Math.max(1, Math.min(workerCount > 0 ? workerCount : 4, layers.length)),
+  } : null
+  if (!pool && !canvasFactory) throw new Error('SL1 export needs a canvas (OffscreenCanvas or an injected factory)')
+  // Per-stage cost, on the [vp-prof] channel the 3mf export and the sl1 import already use. One total says
+  //  nothing about which stage to attack, and the candidates have completely different fixes (a canvas pool,
+  //  a smaller mask, a worker pool, a different encoder). Caveat when reading it: a 2d context may defer its
+  //  raster work, in which case some of `draw` is charged to `encode` instead — treat the two as one budget
+  //  unless one of them is near zero.
+  const now = () => performance.now()
+  const spent = { canvas: 0, clear: 0, draw: 0, encode: 0, read: 0 }
+  const mark = (key, from) => { const t = now(); spent[key] += t - from; return t }
+  let pngBytes = 0, loops = 0
+  const encodeOne = async (i) => {
+    let t = now()
     const canvas = canvasFactory(transform.px, transform.py)
     const ctx = canvas.getContext('2d')
+    t = mark('canvas', t)
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, transform.px, transform.py)
+    t = mark('clear', t)
     ctx.fillStyle = '#fff'
-    drawLayer(ctx, layers[i].paths, transform)
+    loops += drawLayer(ctx, layers[i].paths, transform)
+    t = mark('draw', t)
     const blob = await canvas.convertToBlob({ type: 'image/png' })
-    // PNGs are already deflate-compressed — storing them beats re-deflating, same reasoning as write_3mf's level 3.
-    files[sl1LayerName(jobName, i)] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }]
+    t = mark('encode', t)
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    mark('read', t)
+    pngBytes += bytes.length
+    return bytes
   }
+  // The pool is where the time goes and the sequential loop is the contract: one at a time, deliberately —
+  //  encoding in same-thread batches of 8 was measured at 12% (convertToBlob never leaves the thread), so the
+  //  only real lever is other threads, and that is what `makeWorker` provides (8 workers: 9.3x on the raster
+  //  stage of a 960-layer Benchy). PNGs are already deflate-compressed — storing them beats re-deflating
+  //  (write_3mf's level-3 reasoning).
+  const tRaster = now()
+  if (pool) {
+    const pngs = await encodeParallel({ layers, params, onProgress, ...pool })
+    for (let i = 0; i < layers.length; i++) {
+      files[sl1LayerName(jobName, i)] = [pngs[i], { level: 0 }]
+      pngBytes += pngs[i].length
+    }
+  } else {
+    for (let i = 0; i < layers.length; i++) {
+      files[sl1LayerName(jobName, i)] = [await encodeOne(i), { level: 0 }]
+      if ((i & 31) === 0) onProgress?.(i, layers.length)
+    }
+  }
+  const tSidecar = now()
   files['config.ini'] = strToU8(sl1ConfigIni({ params, stats, jobName, timestamp }))
-  return zipSync(files)
+  files[SL1_ROLES_MEMBER] = [sl1RolesSidecar(layers), { level: 6 }]   // floats deflate well, unlike the PNGs
+  if (scene) files[SL1_SCENE_MEMBER] = [sl1SceneSidecar(scene), { level: 6 }]
+  const tZip = now()
+  const bytes = zipSync(files)
+  const ms = (v) => v.toFixed(0)
+  log.info(`[vp-prof] sl1 build: ${layers.length} layers ${transform.px}x${transform.py},`
+    + (pool ? ` raster ${ms(tSidecar - tRaster)}ms (${pool.workerCount} workers),`
+      : ` ${loops} loops, raster ${ms(tSidecar - tRaster)}ms (canvas ${ms(spent.canvas)} + clear ${ms(spent.clear)}`
+        + ` + draw ${ms(spent.draw)} + encode ${ms(spent.encode)} + read ${ms(spent.read)}),`)
+    + ` sidecar ${ms(tZip - tSidecar)}ms, zip ${ms(now() - tZip)}ms`
+    + ` -> ${(bytes.byteLength / 1e6).toFixed(1)}MB (png ${(pngBytes / 1e6).toFixed(1)}MB)`)
+  return bytes
 }

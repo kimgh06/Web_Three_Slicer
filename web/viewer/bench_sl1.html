@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sl1 build bench</title>
+<pre id="out">running…</pre>
+<script type="module">
+import createSlicer from 'three-slicer/wasm'
+import { makeSL1 } from '../../packages/viewer/src/core/sl1_write.js'
+import { zipSync } from 'three/examples/jsm/libs/fflate.module.js'
+
+const out = document.getElementById('out')
+const say = (s) => { out.textContent += '\n' + s; console.log(s) }
+
+const params = JSON.stringify({
+  layer_height: 0.05, initial_layer_height: 0.05,
+  bed_width: 120.96, bed_depth: 68.04,
+  printer_technology: 'SLA',
+})
+
+try {
+  const stl = new Uint8Array(await (await fetch(new URLSearchParams(location.search).get('stl'))).arrayBuffer())
+  const slicer = await createSlicer()
+  let t = performance.now()
+  const r = slicer.slice_sla(stl, params, undefined)
+  say(`slice_sla: ${(performance.now() - t).toFixed(0)}ms, ${r.layers?.length} layers, err=${r.error ?? '-'}`)
+  if (r.error) throw new Error(r.error)
+  // variant=opaque: a 2d context with alpha:false starts opaque black, so the per-layer full-canvas fillRect
+  //  has nothing to do, and the encoder has 3 channels instead of 4.
+  const opaque = new URLSearchParams(location.search).get('variant') === 'opaque'
+  const makeCanvas = opaque ? (w, h) => {
+    const c = new OffscreenCanvas(w, h)
+    const get = c.getContext.bind(c)
+    c.getContext = (type, opts) => get(type, { ...opts, alpha: false })
+    return c
+  } : undefined
+  // variant=verify: the pooled build against the sequential one, member by member.
+  if (new URLSearchParams(location.search).get('variant') === 'verify') {
+    const { makeSl1EncodeWorker } = await import('../../packages/viewer/src/make_worker.js')
+    const seq = await makeSL1({ layers: r.layers, params: {}, stats: r.stats, jobName: 'v', timestamp: 'T' })
+    const par = await makeSL1({ layers: r.layers, params: {}, stats: r.stats, jobName: 'v', timestamp: 'T', makeWorker: makeSl1EncodeWorker })
+    const { unzipSync } = await import('three/examples/jsm/libs/fflate.module.js')
+    const a = unzipSync(seq), b = unzipSync(par)
+    const names = Object.keys(a)
+    let bad = 0
+    for (const n of names) {
+      const x = a[n], y = b[n]
+      if (!y || x.length !== y.length) { bad++; say('MISMATCH size ' + n); continue }
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) { bad++; say('MISMATCH bytes ' + n + ' at ' + i); break }
+    }
+    say(`verify: ${names.length} members, ${Object.keys(b).length} in pooled, ${bad} mismatches, seq ${seq.length}B vs pooled ${par.length}B`)
+    say('BENCH_DONE'); throw new Error('__done__')
+  }
+  // variant=workers<N>: the same per-layer work fanned out N ways, main thread only zips.
+  const nWorkers = Number((new URLSearchParams(location.search).get('variant') || '').replace('workers', '')) || 0
+  if (nWorkers) {
+    const t0 = performance.now()
+    const jobs = []
+    for (let w = 0; w < nWorkers; w++) {
+      const indices = [], paths = []
+      for (let i = w; i < r.layers.length; i += nWorkers) { indices.push(i); paths.push(r.layers[i].paths) }
+      const worker = new Worker(new URL('./bench_sl1_worker.js', import.meta.url), { type: 'module' })
+      jobs.push(new Promise(res => {
+        worker.onmessage = (e) => { worker.terminate(); res(e.data) }
+        worker.postMessage({ indices, paths, params: {} })
+      }))
+    }
+    const done = await Promise.all(jobs)
+    const raster = performance.now() - t0
+    const sum = done.reduce((a, d) => ({ clear: a.clear + d.t.clear, draw: a.draw + d.t.draw, encode: a.encode + d.t.encode, read: a.read + d.t.read }), { clear: 0, draw: 0, encode: 0, read: 0 })
+    const files = {}
+    for (const d of done) d.indices.forEach((i, k) => { files[`bench${String(i).padStart(5, '0')}.png`] = [d.pngs[k], { level: 0 }] })
+    const tz = performance.now()
+    const zipped = zipSync(files)
+    say(`workers=${nWorkers}: raster ${raster.toFixed(0)}ms wall (cpu clear ${sum.clear.toFixed(0)} + draw ${sum.draw.toFixed(0)} + encode ${sum.encode.toFixed(0)} + read ${sum.read.toFixed(0)}), zip ${(performance.now() - tz).toFixed(0)}ms -> ${(zipped.length / 1e6).toFixed(1)}MB`)
+    say('BENCH_DONE'); throw new Error('__done__')
+  }
+  t = performance.now()
+  const bytes = await makeSL1({ layers: r.layers, params: {}, stats: r.stats, jobName: 'bench', timestamp: '', makeCanvas })
+  say(`makeSL1 total (${opaque ? 'opaque' : 'baseline'}): ${(performance.now() - t).toFixed(0)}ms -> ${(bytes.length / 1e6).toFixed(1)}MB`)
+} catch (e) { if (e?.message !== '__done__') say('FAILED: ' + (e?.stack || e)) }
+say('BENCH_DONE')
+</script>
