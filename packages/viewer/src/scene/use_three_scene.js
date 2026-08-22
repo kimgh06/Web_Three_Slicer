@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
+import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'; import { makeSlaRaster, indexedGeometry } from './sla_raster.js'
 import { buildMergedSTL, exportObjects, stlToSoup } from '../core/model_geometry.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
@@ -602,7 +602,7 @@ export function useThreeScene(deps) {
       invalidate()
     }
 
-    const nozzle = makeNozzleMarker(toolpathGroup, invalidate)   // nozzle_marker.js
+    const slaRaster = makeSlaRaster(toolpathGroup, invalidate); const nozzle = makeNozzleMarker(toolpathGroup, invalidate)   // sla_raster.js / nozzle_marker.js
 
     apiRef.current = {
       /** SLA preview: replace the outline toolpath with SOLID meshes — the plate's model geometry (lifted by
@@ -611,7 +611,7 @@ export function useThreeScene(deps) {
       setSlaPreview: (payload) => {
         clearSlaPreview()
         if (!payload) return
-        const { modelSTL, supportMesh, padMesh, lift = 0, offX = 0, offZ = 0 } = payload
+        const { modelSTL, modelIndexed, supportMesh, padMesh, lift = 0, offX = 0, offZ = 0 } = payload
         renderer.localClippingEnabled = true
         slaClipPlanes[0].constant = 1e9; slaClipPlanes[1].constant = 1e9
         slaGroup = new THREE.Group()
@@ -623,12 +623,12 @@ export function useThreeScene(deps) {
         const soup = (arr) => {
           const geo = new THREE.BufferGeometry()
           geo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
-          geo.computeVertexNormals()
-          return geo
-        }
-        const model = modelSTL ? stlToSoup(modelSTL) : null
-        if (model) {
-          const mesh = new THREE.Mesh(soup(model), material(0xd7862a))
+          geo.computeVertexNormals(); return geo }
+        // A reconstruction arrives pre-indexed with smooth normals averaged in the worker (indexedGeometry,
+        //  scene/sla_raster.js); a sliced result stays a flat-shaded STL soup.
+        const modelGeo = modelIndexed ? indexedGeometry(modelIndexed) : (modelSTL ? soup(stlToSoup(modelSTL)) : null)
+        if (modelGeo) {
+          const mesh = new THREE.Mesh(modelGeo, Object.assign(material(modelIndexed?.colors ? 0xffffff : 0xd7862a), { vertexColors: !!modelIndexed?.colors }))
           mesh.position.z = lift            // group is z-up: +z is world up
           slaGroup.add(mesh)
         }
@@ -645,7 +645,8 @@ export function useThreeScene(deps) {
         slaClipPlanes[1].constant = zLo == null ? 1e9 : -zLo
         invalidate()
       },
-      setNozzle: nozzle.set,
+      // Imported SL1 raster preview (scene/sla_raster.js): set(payload|null), setLayer(i) — contract in that file.
+      setSlaRaster: slaRaster.set, setSlaRasterLayer: slaRaster.setLayer, setNozzle: nozzle.set,
       setMode,
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },

@@ -1,10 +1,29 @@
 import { log } from '../core/log.js'
-import { deriveKernelParams } from 'three-slicer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer/settings'
 import { roleRatios } from '../core/toolpath_segments.js'
 import { MAX_PLATES } from '../core/plate_layout.js'
 import { makeSL1 } from '../core/sl1_write.js'
+import { parseSl1, sl1DisplayAffine, sl1SettingsFrom } from '../core/sl1_read.js'
+import { makeSlaReconstructWorker, makeSlaSliceWorker, makeSl1EncodeWorker } from '../make_worker.js'
 import { statsFromKernel } from './use_slicer.js'
-import { download } from './export_actions.js'
+import { download, saveWindowOpen } from './export_actions.js'
+
+// SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
+// click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
+//   producers   4: 2663ms | 6: 2421ms | 8: 2714ms   -- 8 loses; createImageBitmap runs on ONE shared browser
+//                                                      decode pool, so extra producers only add contention
+//   readback batch  6: 2106ms | 12: 2689ms          -- bigger batches make drawImage worse, not better
+//   ghost planes   64: 2106ms | 32: 2185ms | 0: 2484ms (measured before the other fixes) -- not the lever
+// What did work, in order of size: pipelining the fan-out (5.5s -> 2.5s), per-row occupancy ranges in the nets
+// sweep, halving the smoothing rounds (finish 609 -> 343ms), spawning the workers at import start so their
+// module load overlaps the unzip, and skipping the role pass for batches with no support/pad segments.
+// Together: 5.5s -> ~2.0s. The remaining cost is per-layer pixel work (decode/draw/readback), so the next real
+// gain is fewer pixels per layer, not more workers.
+const SL1_TUNE = (key, dflt) => {
+  const q = typeof location !== 'undefined' && Number(new URLSearchParams(location.search).get(key))
+  return Number.isFinite(q) && q > 0 ? q : dflt
+}
+const SL1_SLICE_WORKERS = SL1_TUNE('sl1Workers', 6)
 
 // Per-plate slicing/caching/export (stage 29-2) + the plate tabs (add/delete/select).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -15,7 +34,7 @@ export function makePlateActions(deps) {
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
     settings, canvasMode, downgradeOffer, onExport,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
-    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting,
+    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
     onSlicedRef,
@@ -37,6 +56,7 @@ export function makePlateActions(deps) {
       setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setRoleLegend([])
       setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return '' })
       apiRef.current?.setSlaPreview?.(null)
+      apiRef.current?.setSlaRaster?.(null)
       return
     }
     layersDataRef.current = r.layers
@@ -45,13 +65,19 @@ export function makePlateActions(deps) {
     // A resin result previews as SOLID meshes (the model lifted by its elevation + the kernel's support/pad
     //  meshes) — upstream's architecture; the layer stream stays raster-only. An FFF focus tears that down.
     const isSla = !!r.stats?.sla
-    apiRef.current?.setSlaPreview?.(isSla ? {
-      modelSTL: r.modelSTL, supportMesh: r.support_mesh, padMesh: r.pad_mesh,
+    // A raster import shows as meshes once it HAS any: the scene sidecar's originals arrive with the file,
+    //  a reconstruction lands seconds later. Until then, and if reconstruction failed, the ghost stack stands in.
+    apiRef.current?.setSlaPreview?.(isSla && (!r.slaRaster || r.modelIndexed || r.modelSTL) ? {
+      modelSTL: r.modelSTL, modelIndexed: r.modelIndexed, supportMesh: r.support_mesh, padMesh: r.pad_mesh,
       // lift_layers = pad zone + elevation (the kernel's whole-scene lift). elevation_layers alone is the
       // pre-pad fallback for results sliced by an older kernel.
       lift: (r.stats.lift_layers ?? r.stats.elevation_layers ?? 0) * (r.stats.layer_height || 0.05),
       offX: plateOffsetsRef.current[idx]?.offX ?? 0, offZ: plateOffsetsRef.current[idx]?.offZ ?? 0,
     } : null)
+    // Before reconstruction an imported SL1 has no meshes — the raster plane stack stands in for it.
+    const rasterOnly = !!r.slaRaster && !r.modelIndexed && !r.modelSTL
+    apiRef.current?.setSlaRaster?.(rasterOnly ? slaRasterPayload(r, idx) : null)
+    if (rasterOnly) apiRef.current?.setSlaRasterLayer?.(n - 1)
     const cached = plateTpRef.current[idx]
     const entry = isSla ? null : ((cached && cached.layers === r.layers) ? cached : buildPlateToolpath(idx, r.layers))
     if (entry) {
@@ -74,16 +100,255 @@ export function makePlateActions(deps) {
   // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
   //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
   //  the kernel warmup opt-out refuses. The `exporting` label is what keeps the button honest while it runs.
+  // What the scene needs to draw an imported archive's masks: sizes and the archive->display affine from the
+  //  params captured at import time, decode on demand (a whole archive as RGBA is gigabytes).
+  //  ponytail: no decode cache — every slider step re-decodes one PNG (tens of ms); add a small LRU if scrubbing stutters.
+  function slaRasterPayload(r, idx) {
+    const off = plateOffsetsRef.current[idx]
+      ?? (() => { const o = apiRef.current?.platePos?.(idx); return o ? { offX: o.x, offZ: o.z } : { offX: 0, offZ: 0 } })()
+    return {
+      width: r.slaRaster.params.display_width, height: r.slaRaster.params.display_height,
+      affine: sl1DisplayAffine(r.slaRaster.params),
+      zOf: (i) => r.layers[i]?.z ?? 0,
+      layerCount: r.layers.length,
+      getImage: (i) => createImageBitmap(new Blob([r.slaRaster.pngs[i]], { type: 'image/png' })),
+      offX: off.offX, offZ: off.offZ,
+    }
+  }
+
+  // Import an .sl1 archive onto the SELECTED plate as a raster preview — the counterpart of the `gcode` prop's
+  //  injection, not of model loading: the masks' mesh is gone, so nothing lands in Prepare. The archive's own
+  //  bytes are kept so a re-export hands back the file untouched. Physical size comes from the CURRENT printer's
+  //  display params — an SL1's config.ini records pixels and seconds, never millimetres.
+  // The reconstruction fleet. Spawned as early as possible — module load is ~200ms that otherwise lands
+  //  inside the pipeline; started here it overlaps the file read and unzip.
+  function spawnSl1Workers() {
+    const n = Math.max(1, Math.min(SL1_SLICE_WORKERS, (navigator.hardwareConcurrency || 4) - 1))
+    return { nets: makeSlaReconstructWorker(), producers: Array.from({ length: n }, () => makeSlaSliceWorker()) }
+  }
+
+  async function importSl1(file) {
+    const spawned = spawnSl1Workers()
+    try {
+      const __t0 = performance.now()   // [vp-prof] sl1 import timing
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const __tRead = performance.now()
+      const { config, layers, layerHeight, rolePaths, scene } = parseSl1(bytes)
+      log.info(`[vp-prof] sl1 import ${file.name}: read ${(__tRead - __t0).toFixed(0)}ms, unzip+parse ${(performance.now() - __tRead).toFixed(0)}ms`)
+      const idx = selectedPlateRef.current
+      const empty = new Float32Array(0)
+      // What the archive itself states, applied to the session — `printer_technology` above all: opening an
+      //  .sl1 in a fresh (FFF) session otherwise left the plate at the filament bed with the resin masks
+      //  stranded on it, and the sidebar offering filaments and a prime tower for a resin print.
+      const applied = sl1SettingsFrom(config, layers[0]?.png, settingRaw(settings, 'display_orientation'))
+      const merged = { ...settings, ...applied }
+      setSettings(s => ({ ...s, ...applied }))
+      plateResultsRef.current[idx] = {
+        // Synthetic layer list so the slider and labels see real heights; paths stay empty — raster masks
+        //  cannot be turned back into the segment stream without vectorizing them.
+        layers: layers.map((_, i) => ({ z: (i + 1) * layerHeight, paths: empty })),
+        gcode: '',
+        // MERGED, not `settings`: setSettings has not landed yet, and the payload's mm/orientation have to be
+        //  the ones just applied — the same trap the 3mf project import documents for its bed.
+        slaRaster: { pngs: layers.map(l => l.png), bytes, rolePaths, params: deriveSlaParams(merged), name: file.name },
+        // An archive of ours carries the meshes the preview was showing: take them verbatim — that IS the
+        //  original surface, so there is nothing to reconstruct and nothing to approximate.
+        ...(scene ? { modelSTL: scene.modelSTL, support_mesh: scene.supportMesh, pad_mesh: scene.padMesh } : {}),
+        stats: {
+          sla: true, sla_raster: true, layers: layers.length, layer_height: layerHeight,
+          time_estimate: Number(config.printTime) || 0, resin_ml: Number(config.usedMaterial) || 0,
+          path_segments: 0, over_bed: false,
+          lift_layers: scene ? scene.lift / layerHeight : 0,
+        },
+      }
+      refreshSlicedCount()
+      showPlateResult(idx)
+      setCanvasMode('preview')
+      // Naming the print area matters: it is the one number on screen the archive did NOT supply (an SL1
+      //  records pixels and seconds, never millimetres), so it comes from the printer set here.
+      const area = deriveSlaParams(merged)
+      setSliceNotice(`Imported ${file.name}: ${layers.length} layers @ ${layerHeight}mm — reconstructing the shape`
+        + ` on this printer's ${area.display_width}×${area.display_height}mm display…`)
+      if (scene) {
+        // Nothing to reconstruct — the fleet spawned for it is not needed.
+        spawned.nets.terminate(); for (const w of spawned.producers) w.terminate()
+        setSliceNotice(`Imported ${file.name}: ${layers.length} layers @ ${layerHeight}mm`
+          + ' — the original scene came with the archive, so this is the exported surface itself, not a reconstruction')
+      } else {
+        reconstructSl1Mesh(idx, spawned).catch(e => log.warn('[sl1] reconstruction failed, keeping the raster preview:', e?.message || e))
+      }
+    } catch (e) {
+      spawned.nets.terminate(); for (const w of spawned.producers) w.terminate()
+      setError(`Failed to import ${file.name}: ${e?.message || e}`)
+    }
+  }
+
+  // Turn the imported masks back into a SURFACE: every mask streamed through surface nets in a worker
+  //  (sla_reconstruct.worker.js). The streaming core keeps memory O(nx*ny), so z runs at the archive's OWN
+  //  layer height and xy at 768 columns (~0.16mm) — as close to "the original" as a mesh the GPU can still
+  //  hold allows; the full 0.047mm pixel grid would be a 4GB volume and a ~20M-face mesh, which no tab
+  //  survives. The result rides the normal solid SLA preview (setSlaPreview + the slider's section cut) as
+  //  r.modelIndexed, replacing the ghost stack — cross-sections alone read as smoke, not as the object. What
+  //  a mask CANNOT give back stays absent: which pixels were model vs support vs pad (one colour).
+  // One reconstruction pass at a given resolution. `NX` is the xy sample width; `KZ` takes every KZth layer.
+  //  Returns the indexed mesh, or null if the plate was replaced while it ran.
+  async function runSl1Pass(idx, spawned, { NX, KZ: kzWanted, smoothRounds, normalRounds = 0 }) {
+    const r = plateResultsRef.current[idx]
+    if (!r?.slaRaster) return null
+    const p = r.slaRaster.params
+    const affine = sl1DisplayAffine(p)
+    const scale = NX / affine.width
+    const NY = Math.max(2, Math.round(affine.height * scale))
+    const n = r.slaRaster.pngs.length
+    const KZ = Math.max(1, kzWanted)
+    const NZ = Math.ceil(n / KZ)
+    const lh = r.stats.layer_height || 0.05
+    // COPIES, because transferring would detach the archive bytes the byte-identical re-export depends on.
+    const __tCopy = performance.now()   // [vp-prof] reconstruction timing
+    const pngs = []
+    for (let j = 0; j < NZ; j++) pngs.push(r.slaRaster.pngs[Math.min(n - 1, j * KZ)].slice().buffer)
+    // The role sidecar (support/pad segments), sampled the same way — our own exports carry it, foreign
+    //  archives reconstruct without colours.
+    const rolePaths = r.slaRaster.rolePaths
+      ? Array.from({ length: NZ }, (_, j) => r.slaRaster.rolePaths[Math.min(n - 1, j * KZ)].slice())
+      : null
+    const __tWorker = performance.now()
+    // N slice producers -> one nets consumer. The producers take STRIDED layers so they stay in step and the
+    //  reorder buffer here holds a handful of slices rather than a third of the archive; this thread only
+    //  forwards (transfers, ~150KB each) and never touches the pixels.
+    // Workers are spawned by importSl1 the moment it knows the file is an SL1, so their module load overlaps
+    //  the unzip instead of adding to the pipeline (measured 234ms of spin-up when created here).
+    const { nets, producers } = spawned
+    const nWorkers = producers.length
+    const mesh = await new Promise((resolve, reject) => {
+      const fail = (e) => reject(e instanceof Error ? e : new Error(e?.message || 'reconstruction failed'))
+      nets.onmessage = (event) => {
+        if (event.data.error) fail(new Error(event.data.error))
+        else if (event.data.positions) resolve(event.data)
+      }
+      nets.onerror = fail
+      nets.postMessage({
+        init: true, nx: NX, ny: NY,
+        sx: p.display_width / NX, sy: p.display_height / NY, sz: KZ * lh,
+        ox: -p.display_width / 2, oy: -p.display_height / 2, oz: 0,
+      })
+      const pending = new Map()
+      let next = 0, live = producers.length
+      let firstSliceAt = 0, lastSliceAt = 0
+      const producerTimings = []
+      const drain = () => {
+        while (pending.has(next)) {
+          const s = pending.get(next); pending.delete(next); next++
+          const transfer = [s.slice.buffer, s.ranges.buffer]
+          if (s.roles) transfer.push(s.roles.buffer)
+          nets.postMessage({ slice: s.slice, ranges: s.ranges, roles: s.roles }, transfer)
+        }
+        if (next === NZ && live === 0) nets.postMessage({ finish: true, producerTimings, spin: { firstSliceAt, lastSliceAt }, smoothRounds, normalRounds })
+      }
+      producers.forEach((w, i) => {
+        w.onerror = fail
+        w.onmessage = (event) => {
+          const d = event.data
+          if (d.error) return fail(new Error(d.error))
+          if (d.done) { producerTimings.push(d.timings); live--; drain(); return }
+          if (!firstSliceAt) firstSliceAt = performance.now()
+          lastSliceAt = performance.now()
+          pending.set(d.index, d); drain()
+        }
+        const mine = []
+        for (let j = i; j < NZ; j += nWorkers) mine.push(j)
+        const myPngs = mine.map(j => pngs[j])
+        const myRoles = rolePaths ? mine.map(j => rolePaths[j]) : null
+        w.postMessage({
+          indices: Int32Array.from(mine), pngs: myPngs, rolePaths: myRoles, batch: SL1_TUNE('sl1Batch', 6),
+          nx: NX, ny: NY, matrix: affine.matrix, scale,
+          width: p.display_width, height: p.display_height,
+        }, myRoles ? [...myPngs, ...myRoles.map(a => a.buffer)] : myPngs)
+      })
+    })
+    if (!mesh.indices.length || plateResultsRef.current[idx] !== r) return null
+    const w = mesh.timings ?? {}
+    const pt = mesh.producerTimings ?? []
+    const sum = (k) => pt.reduce((a, x) => a + (x?.[k] ?? 0), 0)
+    const worst = pt.map(x => (x?.decode ?? 0) + (x?.draw ?? 0) + (x?.read ?? 0) + (x?.roles ?? 0)).sort((a, b) => b - a)[0] ?? 0
+    log.info(`[vp-prof] sl1 pass ${NX}px/z${KZ}: copy ${(__tWorker - __tCopy).toFixed(0)}ms, pipeline ${(performance.now() - __tWorker).toFixed(0)}ms`
+      + ` over ${nWorkers} slice workers (slowest producer ${worst.toFixed(0)}ms; summed decode ${sum('decode').toFixed(0)},`
+      + ` draw ${sum('draw').toFixed(0)}, read ${sum('read').toFixed(0)}, fill ${sum('fill').toFixed(0)}, roles ${sum('roles').toFixed(0)})`
+      + ` (nets ${(w.nets ?? 0).toFixed(0)}, finish ${(w.finish ?? 0).toFixed(0)})`
+      + (mesh.spin ? ` [spin-up ${(mesh.spin.firstSliceAt - __tWorker).toFixed(0)}ms]` : ''))
+    return { mesh, NX, KZ, lh, n, mm: p.display_width / NX }
+  }
+
+  // Two passes, coarse then fine. A full-resolution pass is seconds of pixel work and there is no way around
+  //  that — the producers already run at ~97% duty — but a quarter-resolution pass is ~16x less of it and lands
+  //  a real, shaded, correctly-coloured mesh in well under a second. So the coarse mesh replaces the ghost
+  //  stack first and the fine one replaces IT a few seconds later; the object is on screen either way, and only
+  //  the surface detail arrives late.
+  //  That split is also why the fine pass can afford to be SLOW and smooth. Measured (1095-layer archive,
+  //  coarse always ~0.66s):
+  //    768px / 2 rounds  2.8s, 4.57M faces, 0.16mm — visible layer ridges on curved walls
+  //    1024px / 5 rounds 4.0s, 6.54M faces, 0.12mm — ridges gone
+  //  The ridges come from xy voxels being ~2.4x coarser than the layer height, so each layer's contour
+  //  quantizes differently. Three knobs attack it, cheapest first: `?sl1NormalSmooth=` relaxes the NORMALS
+  //  (shading only, geometry untouched, and most of the visible ripple is shading), `?sl1Smooth=` adds Taubin
+  //  rounds, `?sl1Nx=` lowers the quantization at the source and costs faces and seconds quadratically.
+  async function reconstructSl1Mesh(idx, spawned = null) {
+    const fleet = spawned ?? spawnSl1Workers()
+    const r = plateResultsRef.current[idx]
+    if (!r?.slaRaster) return
+    const n = r.slaRaster.pngs.length
+    const apply = (pass, coarse) => {
+      if (!pass || plateResultsRef.current[idx] !== r) return
+      const { mesh, KZ, lh, mm } = pass
+      r.modelIndexed = { positions: mesh.positions, indices: mesh.indices, normals: mesh.normals, colors: mesh.colors ?? null }
+      const __tShow = performance.now()
+      if (selectedPlateRef.current === idx) showPlateResult(idx)
+      const __tGeom = performance.now()
+      requestAnimationFrame(() => log.info(`[vp-prof] sl1 render${coarse ? ' (coarse)' : ''}:`
+        + ` geometry+upload ${(__tGeom - __tShow).toFixed(0)}ms, first frame ${(performance.now() - __tShow).toFixed(0)}ms`))
+      setSliceNotice(`Imported ${r.slaRaster.name}: ${n} layers @ ${lh}mm — shape reconstructed from the masks`
+        + ` (${(mesh.indices.length / 3).toFixed(0)} faces at ~${mm.toFixed(2)}mm xy / ${(KZ * lh).toFixed(2)}mm z`
+        + (coarse ? '; refining…)' : '')
+        + (coarse ? '' : (mesh.colors ? '; support/pad coloured from the archive’s role sidecar)' : '; one colour — this archive carries no role sidecar)')))
+    }
+    try {
+      apply(await runSl1Pass(idx, fleet, { NX: SL1_TUNE('sl1CoarseNx', 384), KZ: Math.max(1, Math.ceil(n / SL1_TUNE('sl1CoarseZ', 260))), smoothRounds: 1, normalRounds: 2 }), true)
+      apply(await runSl1Pass(idx, fleet, { NX: SL1_TUNE('sl1Nx', 1024), KZ: 1, smoothRounds: SL1_TUNE('sl1Smooth', 4), normalRounds: SL1_TUNE('sl1NormalSmooth', 3) }), false)
+    } finally {
+      fleet.nets.terminate(); for (const w of fleet.producers) w.terminate()
+    }
+  }
+
   async function exportPlateSl1(idx = selectedPlateRef.current) {
     const r = plateResultsRef.current[idx]
+    const name = r?.slaRaster?.name || `plate_${idx + 1}.sl1`
+    // An imported archive re-exports as itself — its layers hold no geometry to rasterize.
+    if (r?.slaRaster?.bytes) { await download(r.slaRaster.bytes, name, 'application/zip', onExport); return }
     if (!r || r.error || !r.stats?.sla || !r.layers?.length) { setError('No resin slice on this plate — slice first'); return }
+    // A click that already carries finished bytes IS the save — see the hand-off below.
+    if (r.sl1Pending) { const pending = r.sl1Pending; r.sl1Pending = null; setSl1Ready?.(null); await download(pending, name, 'application/zip', onExport); return }
     setExporting?.('Building SL1…')
     try {
       const bytes = await makeSL1({
         layers: r.layers, params: r.slaParams ?? {}, stats: r.stats,
         jobName: `plate_${idx + 1}`, timestamp: new Date().toISOString(),
+        makeWorker: makeSl1EncodeWorker,
+        workerCount: SL1_TUNE('sl1Encode', Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 6) - 2))),
+        // The scene sidecar: what the preview is showing right now, so a reimport gets the ORIGINAL surface
+        //  back instead of a voxel reconstruction of it.
+        scene: r.modelSTL ? {
+          modelSTL: r.modelSTL, supportMesh: r.support_mesh, padMesh: r.pad_mesh,
+          lift: (r.stats.lift_layers ?? r.stats.elevation_layers ?? 0) * (r.stats.layer_height || 0.05),
+        } : null,
+        onProgress: (done, total) => setExporting?.(`Building SL1… ${Math.round(done / total * 100)}%`),
       })
-      download(bytes, `plate_${idx + 1}.sl1`, 'application/zip', onExport)
+      // Rasterizing a thousand masks takes ~12s and a browser's user activation lapses after ~5, so a download
+      //  fired now would be the AUTOMATIC kind Chrome blocks without saying so. When the window has closed the
+      //  finished bytes wait for one more click instead of being thrown at a blocked download.
+      if (onExport || saveWindowOpen()) { await download(bytes, name, 'application/zip', onExport); return }
+      r.sl1Pending = bytes
+      setSl1Ready?.(name)
+      setSliceNotice(`${name} is ready (${(bytes.length / 1048576).toFixed(0)} MB) — click Save SL1 to keep it`)
     } catch (e) {
       setError('SL1 export failed: ' + (e?.message || e))
     } finally {
@@ -211,5 +476,5 @@ export function makePlateActions(deps) {
     if (canvasMode === 'preview') showPlateResult(i)   // switching plates in Preview -> show that plate's cached result
   }
 
-  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
+  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
 }

@@ -4,13 +4,13 @@ import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import { SUPPORTED_EXT } from './scene/model_loaders.js'
-import { MAX_PLATES, platePosition } from './core/plate_layout.js'
-import { parseGcode } from './core/gcode_parse.js'
+import { MAX_PLATES } from './core/plate_layout.js'
 import { objectTools } from './core/toolbar_items.js'
 import { makeKeyHandler } from './core/shortcut_keymap.js'
 import { setLogging } from './core/log.js'
 import { useStateRef } from './use_state_ref.js'
 import { useHostEvents } from './use_host_events.js'
+import { useInjection } from './use_injection.js'
 import { useMoveScrub } from './use_move_scrub.js'
 import { useViewportHistory, undoRedoDirection } from './use_viewport_history.js'
 import { useThreeScene } from './scene/use_three_scene.js'
@@ -59,12 +59,15 @@ const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
 // Embedding surface (all optional — omitting every one of them is the standalone app this component has always been):
 //  · panels    — per-panel visibility, {name: false} hides. Everything defaults to visible, so a host opts OUT only.
 //  · gcode     — G-code text rendered instead of a slice result (no kernel run). See the injection effect below.
+//  · sl1       — the SLA half of the same contract: an .sl1 archive rendered as a raster preview, no kernel run.
+//  · files     — content imported once on mount (File or {name,data}), through the same extension dispatch as a
+//                drop: models/3mf projects, .sl1 raster archives, and preset files.
 //  · default*  — initial value for state this component owns; the host reads changes back through onEvent.
 //  · onEvent   — one channel for every value change ({type, value}), rather than a prop per value.
 //  · onSliced  — the finished slice ({plate, stats, gcode}), the one payload too big to belong on onEvent.
 export default function Viewport({
   settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null,
-  panels = null, features = null, gcode = null, defaultExtruderColors = null, defaultAutoSlice = false,
+  panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
   onEvent = null, onSliced = null, onExport = null,
 }) {
   // Which slicing technology the printer profile declares — the one switch the FFF/SLA routing hangs off.
@@ -131,6 +134,8 @@ export default function Viewport({
   // The label an export is currently showing, or null when idle. A string rather than a boolean because the two
   //  export buttons say different things, and the one that is running is the one that has to say it.
   const [exporting, setExporting] = useState(null)
+  // Set to the filename once an SL1 is BUILT but could not be downloaded on the same click (see exportPlateSl1).
+  const [sl1Ready, setSl1Ready] = useState(null)
   const [autoSlice, setAutoSlice] = useState(!!defaultAutoSlice)   // G004: debounced auto re-slice on settings change
   const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
@@ -220,7 +225,7 @@ export default function Viewport({
     selectedPlateRef, plateCountRef, placeXRef, canvasModeRef, selectorGeomRef, registerSelectorRef,
     paintXformRef, paintOverlayRef, paintModeRef, paintToolRef, paintStateCountsRef,
     brushRadiusRef, materialExtruderRef, extruderColorsRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef,
-    setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setObjects, setTriWarn, setDragOver, setExporting,
+    setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setObjects, setTriWarn, setDragOver, setExporting, setSl1Ready,
     setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
     setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
     setPaintCounts, setPaintModeState, setPaintStateCounts,
@@ -344,7 +349,7 @@ export default function Viewport({
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
@@ -384,18 +389,30 @@ export default function Viewport({
     place(n)
   }
 
-  // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker and drag-and-drop ----
-  const { onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
-    ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments,
+  // Presets before model loading: loadFiles routes preset extensions to loadPresetFile, so the reader has to
+  //  exist first. (The file side of the printer card; also reached by drop and the `files` prop.)
+  const { exportPrinterPreset, loadPresetFile, openPresetPicker } = makePresetActions({
+    ...wiring, onExport, settingsRef: settingsForPresetRef, fileInputRef: presetInputRef,
   })
+
+  // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker, drag-and-drop
+  //  and the `files` prop ----
+  const { loadFiles, onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
+    ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments, importSl1, loadPresetFile,
+  })
+
+  // Initial content (the `files` prop): one loadFiles pass on mount, through the same extension dispatch as a
+  //  drop. Deliberately mount-only — a host that recreates the array each render must not re-import its models;
+  //  runtime loading stays with the picker/drop (and an imperative handle, when one lands).
+  useEffect(() => {
+    if (!files?.length) return
+    loadFiles(files.map(f => (typeof File !== 'undefined' && f instanceof File) ? f : new File([f.data], f.name)))
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Project export: "save as" a 3mf project, or the plain geometry as an STL ----
   //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
   //  must use the values in effect when they FINISH, not when the button was bound.
   const settingsRef = useRef(settings); settingsRef.current = settings
-  const { exportPrinterPreset, loadPresetFile, openPresetPicker } = makePresetActions({
-    ...wiring, onExport, settingsRef: settingsForPresetRef, fileInputRef: presetInputRef,
-  })
   const { exportProject, exportSTL, exportSelectedProject, exportSelectedSTL } = makeExportActions({
     ...wiring, onExport, getWorker, settingsRef, bedRef: kpRef,
   })
@@ -406,7 +423,10 @@ export default function Viewport({
   //  autoSlice unusable without the slice bar: a host that hides the panels has no other way to start one, so
   //  "auto" that cannot perform the first slice is just off. Turning it on with a model loaded now slices.
   useEffect(() => {
-    if (!autoSlice || !objects.length || gcode != null) return   // an injected G-code plate is not ours to overwrite
+    // An injected plate (G-code or .sl1) is not ours to overwrite. The sl1 half matters more than it looks: its
+    //  import writes the archive's own settings through setSettings, which is exactly what wakes this debounce —
+    //  without the guard the injection would trigger the slice that erases it.
+    if (!autoSlice || !objects.length || gcode != null || sl1 != null) return
     clearTimeout(autoTimerRef.current)
     const fire = () => {
       if (pendingSliceRef.current) { cancelSlice(); autoTimerRef.current = setTimeout(fire, 300); return }
@@ -422,28 +442,11 @@ export default function Viewport({
     apiRef, toolpathRef, plateOffset: plateOffsetsRef.current[selectedPlate], onEventRef,
   })
 
-  // ---- G-code injection (the `gcode` prop) ----
-  // Renders G-code without slicing: the parser produces the very layer stream the kernel produces, so the result
-  //  goes into the plate cache and showPlateResult draws it exactly like a slice. The kernel is never started.
-  // Coordinates: a slice is centred on the origin and offset back by its own centre (use_three_scene buildMergedSTL),
-  //  but G-code is already in absolute bed millimetres — so the offset is the bed's own corner, per the plate grid
-  //  laid out by setPlates (plate i sits at (i%cols)*step, floor(i/cols)*step; model y maps to three -z).
-  useEffect(() => {
-    if (gcode == null || tech === 'SLA') return   // injected G-code is an FFF artifact — a resin profile has no path that renders it
-    const idx = selectedPlateRef.current
-    try {
-      const parsed = parseGcode(String(gcode), { filamentDiameter: Number(kp.filament_diameter) || 1.75 })
-      if (!parsed.layers.length) { setError('No printable moves found in the G-code'); return }
-      const bw = kp.bed_width, bd = kp.bed_depth
-      const origin = platePosition(idx, plateCountRef.current, bw, bd)
-      plateOffsetsRef.current[idx] = { offX: origin.x - bw / 2, offZ: origin.z + bd / 2 }
-      lineWidthRef.current = kp.line_width || 0.42
-      plateResultsRef.current[idx] = { stats: parsed.stats, layers: parsed.layers, gcode: String(gcode) }
-      refreshSlicedCount()
-      setError(''); setSliceNotice('')
-      showPlateResult(idx)
-    } catch (e) { setError('G-code parse failed: ' + (e?.message || e)) }
-  }, [gcode])   // eslint-disable-line react-hooks/exhaustive-deps
+  // ---- Injection: the `gcode` and `sl1` props, rendered on the selected plate without running the kernel ----
+  useInjection({
+    gcode, sl1, importSl1, tech, kp, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
+    lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult,
+  })
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.
   //  Under SLA the same inputs edit the resin display's physical size instead: display_width/display_height are
@@ -467,9 +470,14 @@ export default function Viewport({
     // A resin preview is solid meshes, so the slider becomes a section cut: clip below the lower layer's
     //  bottom and above the upper layer's top. Fully-open ends pass null (no plane on that side).
     const L = layersDataRef.current
-    if (L && plateResultsRef.current[selectedPlateRef.current]?.stats?.sla)
-      apiRef.current?.setSlaClip?.(lo <= 0 ? null : (L[lo - 1]?.z ?? null),
-                                   hi >= L.length - 1 ? null : (L[hi]?.z ?? null))
+    const slaRes = plateResultsRef.current[selectedPlateRef.current]
+    if (L && slaRes?.stats?.sla) {
+      // Until an imported SL1's mesh is reconstructed, the slider shows ONE mask (the upper thumb) instead of
+      //  a section cut; once r.modelIndexed exists the solid path's clipping takes over like any sliced result.
+      if (slaRes.slaRaster && !slaRes.modelIndexed && !slaRes.modelSTL) apiRef.current?.setSlaRasterLayer?.(hi)
+      else apiRef.current?.setSlaClip?.(lo <= 0 ? null : (L[lo - 1]?.z ?? null),
+                                        hi >= L.length - 1 ? null : (L[hi]?.z ?? null))
+    }
   }
   function onLo(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(v, layerHiRef.current) }
   function onHi(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(layerLoRef.current, v) }
@@ -667,7 +675,10 @@ export default function Viewport({
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.
-  const EXT_LABEL = SUPPORTED_EXT.map(e => e.toUpperCase()).join(' · ')
+  // .sl1 rides on the same picker but is not in SUPPORTED_EXT — that list is the MESH loaders', and an archive
+  //  of raster masks must not reach them (model_load routes it to importSl1 instead).
+  const PICKER_EXT = [...SUPPORTED_EXT, 'sl1']
+  const EXT_LABEL = PICKER_EXT.map(e => e.toUpperCase()).join(' · ')
 
   return (
     <ShadowHost css={shadowCss}>
@@ -677,7 +688,7 @@ export default function Viewport({
         canvas is given a tabIndex below so that clicking it counts as being inside. */}
     <div className="app-shell" onKeyDown={onShellKey}>
       {/* Shared hidden file input */}
-      <input ref={fileInputRef} type="file" accept={SUPPORTED_EXT.map(e => '.' + e).join(',')} multiple onChange={e => { recordHistory(); onFiles(e) }} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept={PICKER_EXT.map(e => '.' + e).join(',')} multiple onChange={e => { recordHistory(); onFiles(e) }} title={`${EXT_LABEL} (multiple files allowed)`} data-testid="stl-input" style={{ display: 'none' }} />
       <input ref={presetInputRef} type="file" accept={PRESET_ACCEPT}
         onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadPresetFile(f) }}
         data-testid="preset-input" style={{ display: 'none' }} />
@@ -861,7 +872,7 @@ export default function Viewport({
                 canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
-                onExportSl1={() => exportPlateSl1()} exporting={exporting}
+                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready}
                 bedWarning={bedOver || overBed
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the ${tech === 'SLA' ? 'resin display' : 'bed'}`
                     + (bedOverText ? ` by ${bedOverText}` : '')

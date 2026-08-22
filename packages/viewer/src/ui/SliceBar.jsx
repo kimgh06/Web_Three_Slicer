@@ -5,7 +5,7 @@ import React from 'react'
 export default function SliceBar({
   autoSlice, onAutoSlice, slicing, progress, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
   slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl, bedWarning,
-  slaResult = false, slaTech = false, onExportSl1 = null, exporting = null,
+  slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null,
 }) {
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
@@ -38,8 +38,11 @@ export default function SliceBar({
       {slaResult
         ? <button className="export-btn" disabled={!!bedWarning || !!exporting} onClick={onExportSl1} data-testid="sl1-dl"
             title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
+              : sl1Ready ? `${sl1Ready} is built and waiting — click to save it`
               : 'Save the SL1 archive (per-layer PNG masks + config) of the plate you are viewing'}>
-            {exporting || 'Export SL1'}
+            {/* Built-but-unsaved is its own state: the archive takes longer to rasterize than a browser keeps a
+                click "recent", so the save needs a second one. Saying so beats a download that never appears. */}
+            {exporting || (sl1Ready ? 'Save SL1' : 'Export SL1')}
           </button>
         : gcodeUrl && !bedWarning
         ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</a>
