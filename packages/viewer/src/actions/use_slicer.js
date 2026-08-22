@@ -12,7 +12,10 @@ export function statsFromKernel(s) {
     layers: s.layers, segments: s.path_segments, filament: s.filament_mm, timeSec: s.time_estimate,
     engine: s.time_engine, limits: s.machine_limits,
     overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },
-    overBedModel: !!s.over_bed_model,     // true = the model itself is off the bed, not just what was printed around it
+    // true = the model itself is off the bed, not just what was printed around it. slice_sla reports only
+    //  `over_bed`, which IS the model verdict (prepare_model, before supports exist) — reading the absent
+    //  over_bed_model as false there mislabelled a mispositioned model as "support/skirt/brim".
+    overBedModel: s.sla ? true : !!s.over_bed_model,
     // A resin slice's own figures ride along; the card switches its filament line on `sla`.
     ...(s.sla ? { sla: true, resinMl: s.resin_ml ?? 0 } : {}),
   }

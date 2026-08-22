@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { deriveKernelParams, printerTechnology, settingRaw, settingScalar } from 'three-slicer/settings'
+import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw, settingScalar } from 'three-slicer/settings'
 import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
@@ -259,12 +259,23 @@ export default function Viewport({
     },
   })
 
-  // Refresh the bed grid from the value derived from settings (printable_area)
-  const kp = deriveKernelParams(settings)
+  // Refresh the bed grid from the value derived from settings (printable_area).
+  //  Under SLA the print area is the resin DISPLAY's physical size, not printable_area — slice_sla judges
+  //  over-bed against display_width/height (deriveSlaParams maps them onto bed_width/depth), so drawing the
+  //  printable_area bed here showed a 200mm plate while the kernel enforced 120.96x68.04: a model that looked
+  //  well inside came back over_bed with no visible reason. The grid, checkBed and the printer card now all
+  //  follow the frame the kernel actually enforces.
+  const kpFFF = deriveKernelParams(settings)
+  const kp = tech === 'SLA'
+    ? (({ display_width, display_height }) => ({ ...kpFFF, bed_width: display_width, bed_depth: display_height, bed_height: 0 }))(deriveSlaParams(settings))
+    : kpFFF
   // The bed size the tower drag needs, in a ref because the handler is installed once by the scene effect.
   const kpRef = useRef({ bedW: 200, bedD: 200, bedH: 0 })
   kpRef.current = { bedW: kp.bed_width, bedD: kp.bed_depth, bedH: kp.bed_height }
-  useEffect(() => { apiRef.current?.setPlates(plateCount, kp.bed_width, kp.bed_depth, selectedPlate) }, [kp.bed_width, kp.bed_depth, plateCount, selectedPlate])
+  // checkBed rides along because the bed can change WITHOUT anything moving — a printer pick, or the FFF->SLA
+  //  switch (the resin display is a fraction of a filament bed); a stale null here hid the over-bed state until
+  //  the slice reported it, which surfaced as an Export button disabled for no visible reason.
+  useEffect(() => { apiRef.current?.setPlates(plateCount, kp.bed_width, kp.bed_depth, selectedPlate); checkBed() }, [kp.bed_width, kp.bed_depth, plateCount, selectedPlate])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-answer "does this fit on the bed?" for the plate on screen. Called from every path that can move, add or
   //  remove something — a gizmo drop, a keyboard nudge, a load/delete, a plate switch, a bed resize. Reads refs
@@ -428,8 +439,11 @@ export default function Viewport({
   }, [gcode])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.
+  //  Under SLA the same inputs edit the resin display's physical size instead: display_width/display_height are
+  //  what slice_sla judges over-bed against and what the SL1 raster maps mm onto — printable_area never reaches it.
   function setBedSize(w, d) {
     if (!(w > 0) || !(d > 0)) return
+    if (tech === 'SLA') { setSettings(s => ({ ...s, display_width: w, display_height: d })); return }
     const pa = settingRaw(settings, 'printable_area')
     const ok = Array.isArray(pa) && pa.length >= 3
     const x0 = ok ? Math.min(...pa.map(p => p[0])) : 0, y0 = ok ? Math.min(...pa.map(p => p[1])) : 0
@@ -838,10 +852,10 @@ export default function Viewport({
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
-                slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla}
+                slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
                 onExportSl1={() => exportPlateSl1()} exporting={exporting}
                 bedWarning={bedOver || overBed
-                  ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the bed`
+                  ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the ${tech === 'SLA' ? 'resin display' : 'bed'}`
                     + (bedOverText ? ` by ${bedOverText}` : '')
                   : ''} />
               </Panel>

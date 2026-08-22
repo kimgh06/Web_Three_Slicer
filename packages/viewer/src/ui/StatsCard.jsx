@@ -83,8 +83,9 @@ export default function StatsCard({ stats, overBed, overBedText, overBedModel = 
           "it is the support/skirt/brim" — the second is fixed by moving inward a few mm, not by rescaling. */}
       {overBed && (
         <div className="slice-warn" data-testid="over-bed">
-          ⚠ {overBedModel ? 'Model extends' : 'Support/skirt/brim extends'} beyond the bed
-          {overBedText ? ` by ${overBedText}` : ''} — G-code export is blocked
+          {/* A resin print area is the display panel, and the file is an SL1 — "bed" and "G-code" are FFF words. */}
+          ⚠ {overBedModel ? 'Model extends' : 'Support/skirt/brim extends'} beyond the {stats?.sla ? 'resin display' : 'bed'}
+          {overBedText ? ` by ${overBedText}` : ''} — {stats?.sla ? 'SL1' : 'G-code'} export is blocked
         </div>
       )}
     </>

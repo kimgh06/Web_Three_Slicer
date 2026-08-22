@@ -5,7 +5,7 @@ import React from 'react'
 export default function SliceBar({
   autoSlice, onAutoSlice, slicing, progress, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
   slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl, bedWarning,
-  slaResult = false, onExportSl1 = null, exporting = null,
+  slaResult = false, slaTech = false, onExportSl1 = null, exporting = null,
 }) {
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
@@ -44,8 +44,11 @@ export default function SliceBar({
         : gcodeUrl && !bedWarning
         ? <a className="export-btn" href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</a>
         : <button className="export-btn" disabled data-testid="gcode-dl-blocked"
-            title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.` : 'Export G-code — enabled after slicing'}>
-            Export G-code
+            title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
+              : `Export ${slaTech ? 'SL1' : 'G-code'} — enabled after slicing`}>
+            {/* The blocked button names what slicing WILL produce — under an SLA profile that is an SL1 archive,
+                and a placeholder that says "G-code" there reads as the wrong export being offered. */}
+            Export {slaTech ? 'SL1' : 'G-code'}
           </button>}
     </div>
   )
