@@ -8,8 +8,37 @@ import './step_loader.js'   // registers the .step/.stp loader (the OCCT WASM on
 // share one settings map.
 // It lives in its own module so App.jsx can reach it through React.lazy: three.js and the settings panel
 // are the bulk of the bundle, and the landing page has no use for either.
+// Googlebot's renderer (WRS) has no WebGL. Mounting Viewport there clears the pre-render fallback in
+// slice/index.html and leaves an empty dark page — which Google reads as a contentless page and refuses
+// to index (measured: the no-WebGL rendered DOM was 2.6KB with zero text). So detect before mounting and
+// keep readable content on screen; the text mirrors the slice/index.html fallback it replaces.
+const webglAvailable = (() => {
+  try {
+    const probeCanvas = document.createElement('canvas')
+    return !!(probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl'))
+  } catch { return false }
+})()
+
 export default function Prepare() {
   const [settings, setSettings] = useState({})   // sparse map (edited keys only). Reset on reload.
+  if (!webglAvailable) return (
+    <div className="prepare" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#101418', color: '#c9d3de', font: '16px/1.6 system-ui,sans-serif', textAlign: 'center', padding: '2rem' }}>
+      <div style={{ maxWidth: '38rem' }}>
+        <h1 style={{ fontSize: '1.4rem', fontWeight: 600 }}>Three Slicer — slice STL to G-code in the browser</h1>
+        <p>
+          Open an STL, OBJ, 3MF, AMF, PLY or STEP model and slice it to G-code without leaving the
+          browser. Supports, infill, multi-material and the full toolpath preview run on a WebAssembly
+          build of the OrcaSlicer kernel, on this machine — nothing is uploaded to a server.
+        </p>
+        <p>This browser has WebGL disabled, which the 3D viewport needs — enable it or open this page in another browser.</p>
+        <p>
+          <a href="/" style={{ color: '#7aa7d8' }}>About Three Slicer</a>
+          {' · '}
+          <a href="/demos" style={{ color: '#7aa7d8' }}>integration demos</a>
+        </p>
+      </div>
+    </div>
+  )
   return (
     <div className="prepare">
       <Viewport settings={settings} setSettings={setSettings}
