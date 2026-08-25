@@ -81,8 +81,36 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 .lp-links span { color: var(--lp-text); font-weight: 700; }
 .lp-links small { color: var(--lp-subtle); font-size: 12.5px; }
 
+.lp-lede { color: var(--lp-text) !important; font-size: 18px !important; font-weight: 600; margin-bottom: 6px !important; }
+
+.lp-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 26px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--lp-border-subtle);
+  list-style: none;
+}
+.lp-stats li { display: flex; align-items: baseline; gap: 7px; }
+.lp-stats b { color: var(--lp-text); font-size: 15px; }
+.lp-stats small { color: var(--lp-subtle); font-size: 12.5px; }
+
 .lp-shot { margin: 0 0 48px; border: 1px solid var(--lp-border); border-radius: 8px; overflow: hidden; background: var(--lp-panel); }
 .lp-shot img { display: block; width: 100%; height: auto; }
+/* The live embed. Viewport fills its nearest positioned ancestor, so the frame must own a real height. */
+.lp-live-frame { position: relative; height: min(72vh, 640px); }
+.lp-live-bar { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-top: 1px solid var(--lp-border-subtle); }
+.lp-live-bar .lp-btn[disabled] { opacity: .6; cursor: default; }
+.lp-live-bar .lp-btn.primary { min-width: 158px; }
+.lp-live-check { display: inline-flex; align-items: center; gap: 6px; color: var(--lp-body); font-size: 14px; cursor: pointer; }
+.lp-live-check input { accent-color: var(--lp-accent); }
+.lp-live-check input[disabled] { cursor: default; }
+.lp-live-veil {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(14, 18, 22, .55); color: var(--lp-text); font-weight: 700;
+}
+.lp-shot figcaption a { color: var(--lp-muted); }
 .lp-shot figcaption { padding: 10px 16px; border-top: 1px solid var(--lp-border-subtle); color: var(--lp-subtle); font-size: 12.5px; word-break: keep-all; }
 
 .lp-section { margin: 0 0 48px; }
@@ -120,6 +148,16 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 .lp-route-card h3 { margin: 0 0 4px; color: var(--lp-text); font-size: 14px; line-height: 1.4; }
 .lp-route-card p { margin: 10px 0 0; color: var(--lp-muted); font-size: 14px; line-height: 1.55; word-break: keep-all; }
 
+.lp-demo-card { display: block; text-decoration: none; transition: border-color 140ms ease-out, transform 140ms ease-out; }
+.lp-demo-card:hover { border-color: var(--lp-accent); transform: translateY(-1px); }
+.lp-demo-sells { color: var(--lp-accent); font-size: 12px; font-weight: 700; display: block; margin-bottom: 4px; }
+
+.lp-faq { margin: 0; }
+.lp-faq > div { padding: 13px 0; border-top: 1px solid var(--lp-border-subtle); }
+.lp-faq > div:first-child { border-top: 0; padding-top: 0; }
+.lp-faq dt { color: var(--lp-text); font-weight: 700; margin-bottom: 4px; }
+.lp-faq dd { margin: 0; color: var(--lp-muted); font-size: 14px; line-height: 1.65; word-break: keep-all; }
+
 .lp-feat { margin: 0; }
 .lp-row { display: flex; gap: 22px; padding: 13px 0; border-top: 1px solid var(--lp-border-subtle); }
 .lp-row:first-child { border-top: 0; }
@@ -156,9 +194,11 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 
 @media (prefers-reduced-motion: reduce) {
   .lp-btn,
-  .lp-links a { transition: none; }
+  .lp-links a,
+  .lp-demo-card { transition: none; }
   .lp-btn:hover,
-  .lp-links a:hover { transform: none; }
+  .lp-links a:hover,
+  .lp-demo-card:hover { transform: none; }
 }
 
 @media (max-width: 640px) {
