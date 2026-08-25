@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.2 — 2026-08-22
+
+### Added
+
+- SL1 import in the viewer: an `.sl1` archive opens through the file picker, drag & drop, or the new `files`
+  prop — rendered as a raster preview, with the model shape reconstructed from the masks in the background
+  (two passes: a coarse mesh in under a second, then full resolution). This viewer's own exports carry scene
+  and role sidecars, so reopening one shows the exported surface itself, in the sliced preview's colours, and
+  re-exports byte-identical. Opening an `.sl1` applies the archive's job description to the settings
+  (`printer_technology` first), so a fresh FFF session switches to the SLA route.
+- SL1 export: role/scene sidecar members, off-thread mask encoding, and a save window.
+- Move scrub in Preview: a horizontal slider that walks the top layer move by move with a screen-fixed nozzle
+  marker — upstream's sequential view. Position changes reach the host as the `moveScrub` event.
+- `files` and `sl1` Viewport props: models, `.3mf` projects, `.sl1` archives and preset files handed in once
+  at mount.
+
+### Fixed
+
+- The SLA print area is the resin display size, not `printable_area`.
+
+## 0.2.1 — 2026-08-21
+
+### Added
+
+- `pad_around_object` (embed) is now supported in the SLA path — the `SLA_PAD_AROUND_OBJECT_UNSUPPORTED`
+  capability gate is gone. It forces zero elevation (upstream `is_zero_elevation`), and an empty embed pad is
+  legal: the ring survives only where supports stand.
+
+### Performance
+
+- SLA slicing: the raster fallback was rewritten, and slicing/prepare run layer-parallel on the multithreaded
+  kernel — byte-identical output, with progress bands matched to measured time.
+
 ## 0.2.0 — 2026-08-19
 
 SLA (resin) printing lands as a second technology in the same kernel, routed by `printer_technology`.

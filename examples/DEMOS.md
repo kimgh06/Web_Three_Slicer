@@ -17,7 +17,7 @@ export가 publish되어야 시작할 수 있다.
 | Printer Showcase | 제조사 페이지 임베드 | `viewer`, `settings` | **구현됨** | [명세](./printer-showcase.md) · [앱](./printer-showcase/) |
 | CAD Embed | 설계 중 출력성 피드백 | `client`, `settings`, `toggle`, `viewer/toolpath` | **구현됨** | [명세](./cad-embed.md) · [앱](./cad-embed/) |
 | Marketplace | 3MF project 보존·재타기팅 | project codec, `viewer`, `settings` | API 선행 작업 필요 | [marketplace.md](./marketplace.md) |
-| Farm Dashboard | 브라우저 분산 slicing | `client`, `settings`, `viewer/gcode`, `viewer/toolpath` | **구현됨** | [명세](./farm-dashboard.md) · [앱](./farm-dashboard/) |
+| Farm Dashboard | 브라우저 분산 slicing | `client`, `settings`, `viewer/gcode`, `viewer/toolpath`, `viewer/loaders` | **구현됨** | [명세](./farm-dashboard.md) · [앱](./farm-dashboard/) |
 
 각 데모는 하나의 질문에만 답한다.
 
@@ -53,8 +53,7 @@ examples/
 ├── instant-quote/        # 각각 독립 프로젝트 (자체 node_modules, 자체 배포)
 ├── printer-showcase/
 ├── cad-embed/
-├── marketplace/
-└── farm-dashboard/
+└── farm-dashboard/        # marketplace는 명세만 있다 (marketplace.md)
 ```
 
 ### 설치

@@ -5,7 +5,7 @@
 > **현재 상태:** 구현됨 — [`printer-showcase/`](./printer-showcase/) (`npm i && npm run dev`).
 > 실행 방법·측정치·격리 검증 결과는 앱의 [README](./printer-showcase/README.md)에 있다.
 > 실측: A1 mini(180 베드) 15m vs P1S(256 베드) 12m — 같은 20mm 큐브, 프로파일 모션 리밋 차이.
-> **미충족 1건**: sample model 자동 load. `<Viewport/>`에 호스트가 모델 바이트를 넣는 prop이 없어
+> **미충족 1건 (해소 가능)**: sample model 자동 load. 0.2.2의 `files` prop으로 이제 가능하다 — 의존성을 올린 뒤 적용하면 된다. 작성 당시에는 prop이 없어
 > public API만으로는 불가능하다(0.1.7과 로컬 소스 모두). 테스트 큐브 다운로드 + 뷰어 자체
 > 드롭/파일 선택으로 대체했고, 우회는 하지 않았다.
 > 남은 것: 배포 URL, 대표 GIF, 모델 입력 prop.

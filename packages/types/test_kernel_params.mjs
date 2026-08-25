@@ -1,4 +1,4 @@
-// Guards the kernel-parameter reference in engine/README.md.
+// Guards the kernel-parameter reference in engine/PARAMS.md.
 //
 // Two failure modes, both silent without this: the kernel gains a parameter and the table stops being the full
 // contract, or a parameter stops being reachable from a setting and nothing tells a reader what it now is. The
@@ -20,14 +20,14 @@ const check = (label, condition, detail = '') => {
 console.log('\n[kernel params: the table is current]')
 try {
   execFileSync(process.execPath, [join(here, 'gen_kernel_params.mjs'), '--check'], { stdio: 'pipe' })
-  check('engine/README.md matches the generator', true)
+  check('engine/PARAMS.md matches the generator', true)
 } catch (err) {
-  check('engine/README.md matches the generator', false,
+  check('engine/PARAMS.md matches the generator', false,
     String(err.stderr ?? err.message).trim() || 'run `node packages/types/gen_kernel_params.mjs`')
 }
 
 console.log('\n[kernel params: every unreachable parameter is classified]')
-const readme = readFileSync(join(here, '..', 'engine', 'README.md'), 'utf8')
+const readme = readFileSync(join(here, '..', 'engine', 'PARAMS.md'), 'utf8')
 const table = readme.slice(readme.indexOf('KERNEL-PARAMS:BEGIN'), readme.indexOf('KERNEL-PARAMS:END'))
 const rows = [...table.matchAll(/^\| `([a-z0-9_]+)` \|[^|]*\|[^|]*\| (—|`[^|]*) \|/gm)]
 const unreachable = rows.filter(row => row[2] === '—').map(row => row[1])
@@ -39,7 +39,7 @@ check('some parameters are reachable only by hand', unreachable.length > 0)
 //  additions. Every `—` row has to appear in it by name.
 // Bounded at the next top-level heading: the sections after it discuss reachable parameters by name
 //  (`support_filament` under Materials), which the reverse check below would otherwise read as a stale claim.
-const proseStart = readme.indexOf('### The parameters no setting reaches')
+const proseStart = readme.indexOf('## The parameters no setting reaches')
 const proseEnd = readme.indexOf('\n## ', proseStart)
 const prose = readme.slice(proseStart, proseEnd < 0 ? undefined : proseEnd)
 const unclassified = unreachable.filter(key => !prose.includes(`\`${key}\``))

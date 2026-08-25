@@ -23,7 +23,9 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 - Support painting and material painting, plus per-tool filament and purge statistics.
 - 3MF **project** import in the viewer: a slicer-written `.3mf` (OrcaSlicer/BambuStudio save, MakerWorld download) restores its plate layout, project settings, and painted facets — not just the meshes.
 - Extracted data files for custom UIs: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament catalogs.
-- SLA (resin) slicing: PrusaSlicer 2.9.6's ported support-point generator, support tree and pad, a resin material catalog, and `.sl1` mask export — routed by `printer_technology`, with typed capability errors for what the port does not cover.
+- SLA (resin) slicing: PrusaSlicer 2.9.6's ported support-point generator, support tree and pad, a resin material catalog, and `.sl1` mask export *and import* — routed by `printer_technology`, with typed capability errors for what the port does not cover.
+- Preview move scrub: a position slider with a nozzle marker that walks the toolpath inside a layer (upstream's sequential view).
+- Host injection props on the viewer: `files` hands models, `.3mf` projects, `.sl1` archives and preset files in at mount; `gcode` injects a sliced result for preview-only use.
 - Automatic multithreaded WASM selection on cross-origin-isolated browser pages.
 
 ## Installation
@@ -42,8 +44,8 @@ npm i three-slicer react react-dom three
 
 | Import path | Needs react/three |
 | --- | --- |
-| `three-slicer`, `/settings`, `/toggle`, `/client`, `/worker`, `/wasm`, `/data` | no |
-| `three-slicer/viewer`, `/viewer/toolpath`, `/viewer/loaders`, `/viewer/gcode` | yes |
+| `three-slicer`, `/settings`, `/toggle`, `/client`, `/worker`, `/wasm`, `/data`, `/viewer/gcode`, `/viewer/toolpath` | no — `makeToolpath(THREE, data)` takes `three` as an argument |
+| `three-slicer/viewer`, `/viewer/loaders` | yes |
 | `three-slicer/components` | react only |
 
 ## Quick Start: Headless Slicing
@@ -71,7 +73,7 @@ console.log(result.gcode)
 slicer.dispose()
 ```
 
-`slice()` accepts a binary STL as an `ArrayBuffer` or `Uint8Array`. Parameters can be either a kernel params object or a JSON string — every accepted parameter is listed in the [kernel parameter reference](engine/README.md#kernel-parameter-reference), which is generated from the kernel's own reader.
+`slice()` accepts a binary STL as an `ArrayBuffer` or `Uint8Array`. Parameters can be either a kernel params object or a JSON string — every accepted parameter is listed in the [kernel parameter reference](engine/PARAMS.md), which is generated from the kernel's own reader.
 
 A runnable version of the above ships with the package: `node node_modules/three-slicer/engine/examples/headless.mjs` writes a cube, slices it batch and streamed, and prints the stats.
 
@@ -211,7 +213,7 @@ Available subpaths:
 
 ## TypeScript
 
-Type declarations ship with the package — no `@types/*` needed. All 923 setting keys are typed from the config schema, enum values included:
+Type declarations ship with the package — no `@types/*` needed. All 976 setting keys are typed from the config schema, enum values included:
 
 ```ts
 import { createSlicer, type SlicerSettings } from 'three-slicer'
@@ -252,7 +254,7 @@ const params = deriveKernelParams(settings)
 const result = slicer.slice(stlArrayBuffer, params)
 ```
 
-`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel (92 today). Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
+`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel — 131 of its 159 parameters are reachable from 127 schema keys today; the [generated reference](engine/PARAMS.md) is the authoritative list. Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
 
 ## 3MF Projects
 
@@ -386,6 +388,8 @@ The kernel reloads the loaded-filament settings at every tool change and reports
 
 A single-material slice sends none of these keys and produces exactly the G-code it produced before multi-material existed.
 
+Besides per-extruder arrays and painting, a per-feature filament assignment is the third way a slice becomes multi-tool: `outer_wall_filament_id`, `inner_wall_filament_id`, `sparse_infill_filament_id`, `top_surface_filament_id`, `bottom_surface_filament_id` and `internal_solid_filament_id` are 1-based filament indices ("print the outer wall with filament 2"). Values of 0 (default) and 1 (the default extruder) add no second tool, so existing single-material slices are unaffected.
+
 ### Painting a region onto another extruder
 
 Painting is the only way a single object can print in two materials. Painting states follow OrcaSlicer's own enum, in which state `1` is both the support enforcer and Extruder 1, state `2` is both the support blocker and Extruder 2, and `3..16` are Extruders 3 to 16. The state-addressed protocol is on the worker; `slicer.paint()` on the direct handle is the original enforcer/blocker boolean pair.
@@ -398,12 +402,12 @@ worker.postMessage({ cmd: 'erase', facet, hx, hy, hz, cx, cy, cz, radius })
 
 `erase` is a separate command rather than `state: 0`, because a JS `false` coerces to `0` at the WASM boundary and the legacy blocker brush sends exactly that — so the state path refuses `0` outright.
 
-Because a single enum serves both jobs, a support blocker paint and an Extruder 2 paint are the same mark on a facet, and painted materials only take effect with support turned off (the painted multi-material path emits no support). Support painting is unaffected: a support-enabled slice stays on the single-material path.
+Painting and support now coexist: the painted multi-material path runs the same support pass the single-material path does, so enabling support no longer costs the material paint (or the other way round). What remains is the ambiguity a single enum creates — a support **blocker** paint and an Extruder 2 paint are the same mark on a facet, so on a model that uses both brushes the blocker reads as "print with T1".
 
 ## SLA (Resin) Slicing
 
 SLA is a second printer technology, not an FFF mode. `printer_technology` in the settings map routes it —
-apply an SLA machine profile from the catalog (`printersByVendor` marks the technology) or set the key
+apply an SLA machine profile from the catalog (`printerTechByVendor` marks the technology) or set the key
 yourself, then derive SLA params and call the SLA entry:
 
 ```js
@@ -596,11 +600,12 @@ The package includes extracted OrcaSlicer metadata for custom interfaces:
 
 | File | Use |
 | --- | --- |
-| `three-slicer/data/config-schema.json` | Setting definitions, defaults, labels, units, and option metadata (923 options) |
+| `three-slicer/data/config-schema.json` | Setting definitions, defaults, labels, units, and option metadata (976 options) |
 | `three-slicer/data/ui-tree.json` | Tab, page, group, and option layout |
 | `three-slicer/data/toggle-rules.json` | Original enable/disable rule metadata |
 | `three-slicer/data/invalidation-map.json` | Setting invalidation/dependency metadata |
-| `three-slicer/data/printers.json` | 1,035 vendor machine profiles across 64 vendors: motion limits, bed, nozzle |
+| `three-slicer/data/preset-keys.json` | The option keys belonging to each preset type — what `presetOptionKeys(type)` reads |
+| `three-slicer/data/printers.json` | 1,041 vendor machine profiles across 66 vendors: motion limits, bed, nozzle — plus the resin catalog and each vendor's printer technology |
 | `three-slicer/data/processes.js` | 2,243 print presets (speeds, accelerations) |
 | `three-slicer/data/filaments.js` | 5,999 material presets over 81 filament types, plus each printer model's recommended list |
 
@@ -640,6 +645,7 @@ the layout by hand.
 | `readPresetFile(raw, opts)` | A preset `.json` → a settings map; follows `inherits` via `resolveParent` |
 | `presetOptionKeys(type)` | The option keys belonging to `machine` / `process` / `filament` |
 | `printersByVendor` | Vendor → profile name → entry, for building a picker |
+| `printerTechByVendor` | Vendor → printer technology (`'FFF'` / `'SLA'`) |
 | `printerSettings(name)` | Settings a vendor machine profile applies |
 | `printerKeys` | Every key a printer profile can set — clear these before applying another |
 | `printerDefaultPreset(name)` | The vendor's recommended process preset for that printer |
@@ -678,7 +684,7 @@ the layout by hand.
 
 | API | Description |
 | --- | --- |
-| `schema`, `uiTree`, `toggleRules`, `invalidationMap`, `printers` | The extracted metadata, import attributes already applied |
+| `schema`, `uiTree`, `toggleRules`, `invalidationMap`, `printers`, `presetKeys` | The extracted metadata, import attributes already applied |
 | `loadProcesses()` / `loadFilaments()` | The two large catalogs, on demand — prefer the `settings` facades |
 
 ## Runtime Support
@@ -698,7 +704,7 @@ the layout by hand.
 - `registerLoader(exts, fn)` from `three-slicer/viewer/loaders` adds any other format. Formats needing a heavy dependency are kept out of the package so it stays runtime-dependency-free — see `web/viewer/src/step_loader.js` for a STEP loader built on `occt-import-js` (OCCT WASM).
 - Not every OrcaSlicer schema key is wired into the WASM kernel yet.
 - Some vector settings are simplified to their first element.
-- Material painting and support cannot currently produce two materials on the same slice: the painted multi-material path emits no support, and one triangle selector serves both brushes.
+- One triangle selector serves both the support brush and the material brush (upstream's shared enum), so a support **blocker** paint and an Extruder 2 paint are the same mark — the two brushes cannot mark the same model independently.
 - The multi-material prime tower is a real ported wipe tower, but the fallback square ring used when it fails is not.
 - SLA hollowing and drain-hole geometry are refused with `SLA_UNSUPPORTED_HOLLOWING` (the OpenVDB chain is not ported); the records still round-trip through `.3mf`.
 - The `.sl1` export lives in the viewer (its masks need a canvas); there is no headless `.sl1` writer export yet.

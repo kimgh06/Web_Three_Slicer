@@ -47,7 +47,7 @@
           "license": "https://www.gnu.org/licenses/agpl-3.0.html",
           "softwareHelp": "https://github.com/kimgh06/Web_Three_Slicer",
           "screenshot": "https://slicer.kimgh06.com/og-cover.png",
-          "description": "A browser-based 3D printing slicer built on a WebAssembly port of the OrcaSlicer kernel. It converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code locally, without uploading anything to a server.",
+          "description": "A browser-based 3D printing slicer built on a WebAssembly port of the OrcaSlicer kernel. It converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code locally, without uploading anything to a server. Resin printers are supported as a second technology, sliced to an .sl1 archive through PrusaSlicer's ported support and pad chain.",
           "featureList": [
             "STL, OBJ, 3MF, AMF, PLY and STEP model import",
             "3MF project import with plate layout, settings and painting",
@@ -55,8 +55,10 @@
             "Gyroid, honeycomb and crosshatch infill",
             "Tree and grid supports, with support painting",
             "Multi-material printing with a prime tower",
+            "Resin (SLA) slicing with PrusaSlicer's ported support points, support tree and pad",
             "Toolpath preview by feature, speed, layer height, width, fan and temperature",
-            "G-code export with print time and filament usage estimates"
+            "G-code export with print time and filament usage estimates",
+            "SL1 archive export and import for resin printers"
           ],
           "sameAs": [
             "https://github.com/kimgh06/Web_Three_Slicer",
@@ -75,12 +77,12 @@
             {
               "@type": "Question",
               "name": "Which file formats can it slice?",
-              "acceptedAnswer": { "@type": "Answer", "text": "STL, OBJ, 3MF, AMF and PLY are read directly, and STEP is read through a loader that only downloads when a STEP file is actually opened. The output is G-code." }
+              "acceptedAnswer": { "@type": "Answer", "text": "STL, OBJ, 3MF, AMF and PLY are read directly, and STEP is read through a loader that only downloads when a STEP file is actually opened. An .sl1 resin archive can be opened as well. The output is G-code for filament printers, or an .sl1 archive for resin ones." }
             },
             {
               "@type": "Question",
               "name": "Is it based on a real slicer?",
-              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The kernel is a port of OrcaSlicer, which is itself a PrusaSlicer/Slic3r descendant. Arachne wall generation, tree supports, multi-material segmentation and the prime tower are ported from that source rather than reimplemented." }
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The kernel is a port of OrcaSlicer, which is itself a PrusaSlicer/Slic3r descendant. Arachne wall generation, tree supports, multi-material segmentation and the prime tower are ported from that source rather than reimplemented, and the resin support-point generator, support tree and pad are ported from PrusaSlicer 2.9.6." }
             },
             {
               "@type": "Question",
@@ -116,11 +118,15 @@
         <li><strong>Slice</strong> — Arachne variable-width walls, gyroid / honeycomb / crosshatch
           infill, tree and grid supports, support painting and material painting, skirt, brim, raft,
           ironing, arc fitting, and multi-material printing with a real prime tower.</li>
+        <li><strong>Resin</strong> — mSLA printers are a second technology in the same kernel: support
+          points, support tree and pad come from PrusaSlicer 2.9.6's own chain, previewed as layer masks
+          and written out as an <code>.sl1</code> archive, which can also be opened again.</li>
         <li><strong>Preview</strong> — a layer slider and single-layer view, travel moves, and toolpath
           colouring by feature, speed, layer height, extrusion width, fan speed or temperature.</li>
-        <li><strong>Export</strong> — G-code with print-time and filament-usage estimates, or a
-          <code>.3mf</code> project that keeps the plate layout, settings and painting.</li>
-        <li><strong>Settings</strong> — the full OrcaSlicer option set, 923 options, with search and a
+        <li><strong>Export</strong> — G-code with print-time and filament-usage estimates, an
+          <code>.sl1</code> archive for resin, or a <code>.3mf</code> project that keeps the plate
+          layout, settings and painting.</li>
+        <li><strong>Settings</strong> — the full OrcaSlicer option set, 976 options, with search and a
           simple/advanced/expert filter.</li>
       </ul>
 
@@ -133,14 +139,16 @@
       <h3>Which file formats can it slice?</h3>
       <p>
         STL, OBJ, 3MF, AMF and PLY are read directly, and STEP is read through a loader that is only
-        fetched when a STEP file is actually opened. The output is G-code for FDM printers.
+        fetched when a STEP file is actually opened; an <code>.sl1</code> resin archive can be opened as
+        well. The output is G-code for filament printers, or an <code>.sl1</code> archive for resin ones.
       </p>
       <h3>Is it based on a real slicer?</h3>
       <p>
         Yes. The kernel is a port of <a href="https://github.com/OrcaSlicer/OrcaSlicer">OrcaSlicer</a>,
         itself a PrusaSlicer and Slic3r descendant. Arachne wall generation, tree supports,
         multi-material segmentation and the prime tower are ported from that source rather than
-        reimplemented, so the toolpaths come from the same code a desktop slicer runs.
+        reimplemented, so the toolpaths come from the same code a desktop slicer runs. The resin
+        support-point generator, support tree and pad are ported from PrusaSlicer 2.9.6 the same way.
       </p>
       <h3>Can I use the slicer in my own site or app?</h3>
       <p>

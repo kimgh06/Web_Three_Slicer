@@ -16,16 +16,15 @@ coloring을 하나의 3MF로 보존하는 구조. three-slicer는 이를 일반�
 ## 선행 작업 (구현 전 필수)
 
 1. `parse3MFProject` / `write3MFProject`는 현재 **public export가 아니다** — viewer 내부
-(`packages/viewer/src/parse_3mf.js`, `packages/viewer/src/write_3mf.js`)에만 있다. DEMOS.md의 public
+(`packages/viewer/src/core/parse_3mf.js`, `packages/viewer/src/core/write_3mf.js`)에만 있다. DEMOS.md의 public
 export 규칙
 ("private API가 필요하면 데모에서 우회하지 말고 package API를 먼저 개선한다")에 따라
 **subpath export 추가(예: `three-slicer/viewer/project`) + 타입 정의가 이 데모의 첫 작업이다.**
 상대경로 import로 우회하는 순간 데모의 존재 이유가 사라진다.
 
-2. `<Viewport/>`는 host가 model/project를 주입하는 prop이나 imperative handle을 제공하지 않는다.
-정적 fixture를 페이지 첫 화면에 복원하려면 package에 programmatic project-load surface를 추가하거나,
-`viewer/loaders`와 `viewer/toolpath` 위에 이 데모 전용 scene을 구성해야 한다. synthetic drop event나
-private scene 접근은 금지한다. 선택한 방향을 package 문서와 타입에도 반영한다.
+2. ~~`<Viewport/>`는 host가 model/project를 주입하는 prop을 제공하지 않는다~~ — 0.2.2의 `files`
+prop이 이 블로커를 해소했다: 모델·3MF project·`.sl1`·preset 파일을 mount 시점에 주입할 수 있다
+(`packages/types/viewer.d.ts`). 정적 fixture의 첫 화면 복원은 `files`로 구현한다.
 
 ## 타깃
 
@@ -51,7 +50,7 @@ three-slicer/client                방문자 프로파일로 재슬라이스
 npm i three-slicer three react react-dom
 ```
 
-**단, `three-slicer/viewer/project`가 아직 배포된 패키지에 없다.** 현재 npm의 최신은 `0.1.7`이고
+**단, `three-slicer/viewer/project`가 아직 배포된 패키지에 없다.** 현재 npm의 최신은 `0.2.2`이고
 project codec은 그 안에 export되어 있지 않으므로, 이 데모는 위의 선행 작업이 반영된 버전이
 publish된 뒤에야 `npm i`만으로 성립한다. 그 전에 착수하려면 `npm pack`으로 만든 tarball을
 설치해 개발하고(`npm i ../../packages/three-slicer-<next>.tgz`), 배포는 publish 이후로 미룬다.
@@ -62,7 +61,7 @@ publish된 뒤에야 `npm i`만으로 성립한다. 그 전에 착수하려면 `
 
 이 데모용 3MF는 반드시 포함한다: **2 plates · 3+ objects · 2+ filament assignments · painted
 region · printer profile · process settings · object transforms.**
-단순 STL의 확장자만 바꾼 파일 금지. 현재 `fixtures/`가 없으므로 제작이 필요하다 — 이 뷰어
+단순 STL의 확장자만 바꾼 파일 금지. `fixtures/`에 이 3MF가 아직 없으므로 제작이 필요하다 — 이 뷰어
 자체로 만들어 저장하면 된다 (페인팅 포함 저장은 이미 동작).
 
 ## 화면

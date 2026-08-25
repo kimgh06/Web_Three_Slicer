@@ -4,7 +4,7 @@ Web_Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. T
 
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 - **`packages/`** — the published npm package `three-slicer` (a single one) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
-- **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md`, `web/GUIDE.md`, `web/SPECS.md`.
+- **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`.
 
 The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`) — a single `npm i` at the root installs everything.
 
@@ -26,7 +26,7 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   the JS side instead; and the tree-support shape options exist upstream under two spellings (`…_organic` and
   suffix-less), which the kernel accepts both of and prefers `_organic`, so both are passed as written.
 - **The kernel parameter reference is generated, and must stay that way** (`types/gen_kernel_params.mjs` ->
-  `engine/README.md`). Its key column comes from the `j*(j,"…")` reader call sites in `params.cpp`, which are the
+  `engine/PARAMS.md`). Its key column comes from the `j*(j,"…")` reader call sites in `params.cpp`, which are the
   definition of the accepted set; its *From setting* column comes from PROBING `deriveKernelParams` with one schema
   key at a time rather than parsing it, because that mapping includes renames, rescales (`sparse_infill_density` 15
   -> `infill_density` 0.15) and a bbox over a point list, and a regex would have to re-implement each. Hand-written
@@ -34,7 +34,7 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   fails the build if the table is stale or if a parameter no setting reaches is left unclassified in the prose
   below it.
 - One material per extruder. Upstream stores every filament option as one entry per extruder, so the kernel takes per-extruder vectors and reads them **positionally** — a hole must be filled with the value tool 0 resolved to, because the kernel cannot tell "absent" from 0. On every `T` change `slice_multimaterial` reloads the whole loaded-filament set (diameter, flow, retraction length/speed, z-hop, and `M109` when the temperatures actually disagree).
-- Support painting and material painting are **one** ported TriangleSelector, because upstream's `EnforcerBlockerType` is one enum: `ENFORCER`==Extruder1, `BLOCKER`==Extruder2, `Extruder3..16`==3..16. So a facet holds one integer, and a support BLOCKER paint is indistinguishable from an Extruder2 paint. `slice()` therefore routes a painted model to the multi-material path only when support is **off** (`slicer_core.cpp`) — `slice_multimaterial` emits no support at all, so routing a support-enabled slice there would silently drop it. Consequence to state plainly: **paint and support cannot currently produce two materials together.**
+- Support painting and material painting are **one** ported TriangleSelector, because upstream's `EnforcerBlockerType` is one enum: `ENFORCER`==Extruder1, `BLOCKER`==Extruder2, `Extruder3..16`==3..16. So a facet holds one integer, and a support BLOCKER paint is indistinguishable from an Extruder2 paint. The routing gate that used to send painted models to `slice_multimaterial` only when support was **off** is gone: `slice_mm.cpp` now runs the same `support_run` pass the single-material path does, so paint and generated support coexist on one slice (`slicer_core.cpp`). What remains is the ambiguity the gate papered over: a support BLOCKER paint and an Extruder2 paint are the same mark, so the two brushes cannot mark one model independently — upstream avoids this by keeping `supported_facets` and `mmu_segmentation_facets` as separate per-volume annotations (`Model.hpp:869`), and splitting the selector the same way is what would lift it.
 - Painted regions come from upstream's exact per-layer segmentation, `MultiMaterialSegmentation.cpp`, ported to `packages/wasm-core/treesupport_port/libslic3r/`. Everything above its driver is upstream verbatim; the driver was rewritten because upstream's takes a `PrintObject` (nothing in this kernel has one) — it now takes the sliced contour of every layer plus the selector's painted facets, through `selector_bridge::segment_prepare` / `segment_regions`. Two consequences: `slice_mm.cpp` must slice **every** layer up front (the segmentation is a whole-object pass, and it reuses those contours so nothing is sliced twice), and a painted flat face reaches the print only through `segmentation_top_and_bottom_layers` — a horizontal facet cuts no slicing plane, so that pass is not optional. Its Voronoi/EdgeGrid/MutablePolygon dependencies were already linked for Arachne; only the one new TU was added to `build.sh`.
 - **One coordinate frame per plate.** The viewer hands the kernel plate-local coordinates (world minus the plate
   origin) and nothing else. It used to subtract the content's own bbox centre instead, so the slice frame moved
@@ -215,7 +215,7 @@ npm run test:viewer    # every packages/viewer/test_*.mjs — the layer guard, t
 #   tower_layout    prime-tower placement, auto and chosen
 #   bed_bounds gcode_parse history loaders overhang scale_box 3mf_export 3mf_project
 
-# Regenerate the kernel parameter reference (params.cpp/params.h -> engine/README.md). build runs this automatically
+# Regenerate the kernel parameter reference (params.cpp/params.h -> engine/PARAMS.md). build runs this automatically
 node packages/types/gen_kernel_params.mjs
 
 # 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
@@ -247,7 +247,7 @@ bash packages/wasm-core/build.sh
 # Regenerate the extracted JSON (slicers/slicer sources -> packages/data/)
 python3 web/extract_all.py
 
-# Regenerate the settings key types (config-schema.json -> types/settings-keys.d.ts, 923 keys). build runs this automatically
+# Regenerate the settings key types (config-schema.json -> types/settings-keys.d.ts, 976 keys). build runs this automatically
 node packages/types/gen_settings_types.mjs
 
 # Standalone tarball verification (4 consumers: Node/types/Vite/Next) — must live inside packages/
@@ -287,6 +287,6 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   - `src/` itself — the entry (`Viewport.jsx`), its own hooks, and `make_worker.js`/`parse_3mf.worker.js`, which
     the **build resolves by path** (the vite lib entry and the `cp` in the package build script). Moving those two
     breaks the published tarball rather than a test, which is why `test_layers.mjs` pins them where they are.
-- `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (923 keys) which `gen_settings_types.mjs` generates
+- `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (976 keys) which `gen_settings_types.mjs` generates
 - `packages/wasm-core/` — the kernel C++ sources + `third_party/` (a copy of the deps, for standalone builds) — not published to npm; its output lands in `packages/engine/src/`
 - `web/viewer/` — the demo app (Vite + React) — a workspace member that references the package by name
