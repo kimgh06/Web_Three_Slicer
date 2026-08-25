@@ -4,12 +4,13 @@ OrcaSlicer configuration metadata extracted from the original C++ sources, shipp
 
 | File | Contents |
 |---|---|
-| `config-schema.json` | 923 print options: type, label, category, tooltip, min/max, mode, enum values/labels, defaults, source line numbers |
-| `config-schema-builddump.json` | Build-verified cross-check: the real `print_config_def` (817 options) dumped from a WASM compile of the original `PrintConfig.cpp` |
-| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (20 pages, 542 option references) |
+| `config-schema.json` | 976 print options: type, label, category, tooltip, min/max, mode, enum values/labels, defaults, source line numbers |
+| `config-schema-builddump.json` | Build-verified cross-check: the real `print_config_def` (817 options) dumped from a WASM compile of the original `PrintConfig.cpp` — repo-only, excluded from the npm tarball |
+| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (34 pages, 618 option references — the SLA tabs included) |
 | `toggle-rules.json` | 231 enable/disable rules with original C++ `enable_if` condition source |
 | `invalidation-map.json` | Option-change → re-slice step mapping (Print/PrintObject invalidation branches) |
-| `printers.json` | 1,035 vendor machine profiles across 64 vendors: motion limits, bed and nozzle |
+| `preset-keys.json` | The option keys belonging to each preset type (`machine`/`process`/`filament`) — what `presetOptionKeys(type)` reads |
+| `printers.json` | 1,041 vendor machine profiles across 66 vendors: motion limits, bed and nozzle — plus the resin catalog and each vendor's printer technology |
 | `processes.js` | 2,243 print presets (speeds, accelerations), joined to printers by `compatible_printers` |
 | `filaments.js` | 5,999 material presets over 81 filament types, plus each printer model's recommended list |
 
@@ -18,10 +19,10 @@ The last two are column-oriented and deduplicated, and load on demand. Read them
 
 ## Material presets
 
-`filaments.js` carries only the keys the kernel actually reads (14 today: temperatures, flow, diameter, cooling,
-and the retraction/z-hop overrides a material is allowed to apply on top of the machine's). That column set is
-disjoint from `processes.js`' 59, which is what lets a material pick and a process pick be applied independently —
-neither clears the other's values.
+`filaments.js` carries only the keys the kernel actually reads (18 today: temperatures, flow, diameter, cooling,
+pressure advance, cost/density, and the retraction/z-hop overrides a material is allowed to apply on top of the
+machine's). That column set is disjoint from `processes.js`' 85, which is what lets a material pick and a process
+pick be applied independently — neither clears the other's values.
 
 `filamentPresets()` is the facade:
 
@@ -37,7 +38,7 @@ filaments.keys                                        // clear these before appl
 
 `recommendedFor()` intersects with the compatible list rather than returning the raw recommendation, and the
 filtering is not cosmetic: the recommendation is declared on the machine **model** and so is nozzle-agnostic,
-while its entries name nozzle-specific presets. Across all 1,035 printer profiles, 1,749 of 4,259 raw
+while its entries name nozzle-specific presets. Across all 1,041 printer profiles, 1,749 of 4,259 raw
 recommendation entries (41%) name a material whose own compatible list excludes that profile.
 
 `type` and `vendor` are empty strings when the profile chain declares neither — 265 of the 5,999 presets. That is

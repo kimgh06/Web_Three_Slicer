@@ -2,6 +2,8 @@
 
 A 3D-printing slicer that runs entirely in the browser — reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) into a WASM kernel + npm packages. STL/OBJ/3MF/AMF/PLY in (STEP via a pluggable loader), G-code out; no server, no install. A slicer-written `.3mf` project restores its plate layout, settings and support/material painting, and multi-material printing works through per-extruder filament presets and facet painting with a real ported prime tower.
 
+Resin printing is a second technology in the same kernel, routed by `printer_technology`. The support-point generator, support tree and pad are PrusaSlicer 2.9.6's own chain ported verbatim; the result previews in the same viewer with the pad-lifted layer frame and writes out as an `.sl1` archive, which the viewer also reads back. What the port does not cover — hollowing, organic trees — fails with a typed capability error instead of an approximation.
+
 ![A sliced Benchy in the Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](web/viewer/public/usage.png)
 
 ## Links
@@ -16,10 +18,10 @@ A 3D-printing slicer that runs entirely in the browser — reverse-engineered fr
 
 | Package | What it is |
 |---|---|
-| `three-slicer` | WASM slicing kernel SDK — batch/streaming slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
-| `three-slicer/data` | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map |
+| `three-slicer` | WASM slicing kernel SDK — FFF batch/streaming slice, SLA slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
+| `three-slicer/data` | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament/resin preset catalogs |
 | `three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only, Shadow DOM isolated |
-| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview, Shadow DOM isolated |
+| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview, SLA support/pad preview and `.sl1` import/export, Shadow DOM isolated |
 
 Quick taste:
 
@@ -37,7 +39,7 @@ function App() {
 }
 ```
 
-Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see [`packages/README.md`](packages/README.md).
+Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)`, or `s.sliceSla(stl, slaParams)` for resin — see [`packages/README.md`](packages/README.md).
 
 ## Repository layout
 
@@ -49,14 +51,14 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)` — see
 # demo viewer (committed WASM — no emscripten needed)
 cd web && make dev
 
-# kernel test suite (120+ invariants)
-node packages/wasm-core/test.mjs
+# full gate: kernel invariants (FFF + SLA), the generated param table, the viewer's pure modules
+npm test
 
 # tarball independence gate (packs three-slicer, builds Vite+Next consumers outside the repo)
 bash packages/pack_check.sh
 ```
 
-Development docs (stage-by-stage log, reverse-engineering guide, format specs): [`web/README.md`](web/README.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
+Development docs (demo app, stage-by-stage log, reverse-engineering guide, format specs): [`web/README.md`](web/README.md), [`web/HISTORY.md`](web/HISTORY.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
 
 ## License
 

@@ -1,14 +1,14 @@
 # fixtures
 
-데모가 쓰는 샘플 모델. 전부 이 저장소에서 자체 생성한 것이며 외부 마켓플레이스 모델은 포함하지
-않는다. 라이선스는 저장소와 같다 (AGPL-3.0-or-later).
+Sample models the demos use. All of them are generated inside this repository — no external marketplace
+models are included. Licensed the same as the repository (AGPL-3.0-or-later).
 
-각 데모는 저장소 밖으로 복사해도 동작해야 하므로 (DEMOS.md §11) 필요한 fixture를 자기
-`public/` 아래에 복사해 둔다. 이 디렉터리가 원본이다.
+Each demo has to work when copied out of the repository (DEMOS.md §11), so it copies the fixtures it
+needs under its own `public/`. This directory is the source of truth.
 
-| 파일 | 내용 | 생성 방법 |
+| File | Contents | How it is made |
 | --- | --- | --- |
-| `calibration-cube.stl` | 20 × 20 × 20 mm 정육면체, 12 facet, 684 B | 아래 스크립트 |
+| `calibration-cube.stl` | 20 × 20 × 20 mm cube, 12 facets, 684 B | the script below |
 
 ```bash
 node -e '
@@ -23,13 +23,13 @@ faces.forEach(([a,b,c],t)=>{const o=84+t*50, A=corners[a],B=corners[b],C=corners
 require("fs").writeFileSync("calibration-cube.stl",Buffer.from(view.buffer))'
 ```
 
-## 아직 없는 것
+## Not here yet
 
-DEMOS.md §3이 요구하는 나머지 fixture는 해당 데모를 구현할 때 만든다.
+The remaining fixtures DEMOS.md §3 calls for are made when the demo that needs them is implemented.
 
-| 파일 | 필요한 데모 | 만드는 방법 |
+| File | Demo that needs it | How to make it |
 | --- | --- | --- |
-| `benchy-small.stl` | instant-quote (중간 크기 슬라이스) | 자체 제작 모델 — 외부 Benchy 파일을 그대로 넣지 않는다 |
-| `multi-object.3mf` | printer-showcase, farm-dashboard | 뷰어에서 객체 여러 개 배치 후 프로젝트 저장 |
-| `multi-color.3mf` | marketplace | 뷰어에서 페인팅 후 프로젝트 저장 |
-| `multi-plate.3mf` | marketplace | 뷰어에서 플레이트 2장 구성 후 프로젝트 저장 |
+| `benchy-small.stl` | instant-quote (a medium-size slice) | a model of our own — no external Benchy file is dropped in as-is |
+| `multi-object.3mf` | printer-showcase, farm-dashboard | arrange several objects in the viewer, save the project |
+| `multi-color.3mf` | marketplace | paint in the viewer, save the project |
+| `multi-plate.3mf` | marketplace | set up two plates in the viewer, save the project |

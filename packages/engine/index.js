@@ -20,7 +20,7 @@ export const engineWorkerURL = () => new URL('./src/slicer.worker.js', import.me
 //  paintPrepare/paint/paintClear/overlay: manual support enforcer/blocker painting (TriangleSelector).
 //  heapSize(): current WASM heap bytes (peak, monotonic). module: escape hatch. dispose(): drop the module.
 export async function createSlicer() {
-  // Loaded here rather than at module scope so the 3.5MB emscripten glue is a separate chunk: a host that imports
+  // Loaded here rather than at module scope so the ~4.8MB emscripten glue is a separate chunk: a host that imports
   //  this module only for engineWorkerURL() — the recommended browser path, where the kernel runs in the worker —
   //  used to pull the whole thing into its bundle for a function that returns a URL.
   const M = await (await import('./src/slicer_core.js')).default()

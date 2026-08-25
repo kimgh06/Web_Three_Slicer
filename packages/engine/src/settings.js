@@ -23,7 +23,7 @@ const KERNEL_PATTERNS = ['rectilinear', 'grid', 'triangles', 'zigzag', 'gyroid',
 const KERNEL_SEAMS = ['nearest', 'aligned', 'back', 'random']
 
 // ---- Pass-through kernel parameters -----------------------------------------------------------------------
-// The kernel reads 159 parameters (see the reference table in engine/README.md, generated from its own reader).
+// The kernel reads 159 parameters (see the reference table in engine/PARAMS.md, generated from its own reader).
 //  These are the ones whose schema key carries the SAME name, so the mapping is the identity and the only real
 //  decision is WHEN to send them. They are sent only when the settings map actually holds the key — never filled
 //  in from the schema default — because the two defaults disagree for several of them:

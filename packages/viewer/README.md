@@ -38,9 +38,10 @@ Slice parameters are derived from `settings` via `three-slicer`'s schema mapping
 
 A `.3mf` written by a slicer (OrcaSlicer/BambuStudio save, MakerWorld download) imports as a **project**: plate layout, project settings, and support/material painting are restored, not just the meshes. Where a facet carries both paint kinds, material paint wins and the dropped support paint is reported.
 
-Props: `settings`, `setSettings`, and three optional React-node slots rendered in the right sidebar —
-`processPanel` (the process card), `motionPanel` (folded into the printer card) and `filamentPanel`
-(folded into the filament card, next to the material picker).
+Props: `settings`, `setSettings`, and three optional sidebar slots — `processPanel` (the process card) and
+`motionPanel` (folded into the printer card) take a React node; `filamentPanel` (folded into the filament card,
+next to the material picker) takes a **function** `(settings, setSettings) => ReactNode`, because the filament
+card binds each extruder's per-extruder values.
 
 Subpath exports for custom UIs (framework-free, no React):
 - `three-slicer/viewer/toolpath` — GPU toolpath renderer (`buildSegmentData`, `makeToolpath`, view-type colorers)
@@ -63,8 +64,8 @@ Every panel can be switched off, and the values the component owns can be seeded
 - **`panels`** — `{name: false}` hides one. Everything is visible by default, so a host only ever opts out and a
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
   the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
-  `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `objectList`, `previewControls`, `processCard`,
-  `sliceBar`, `moveBar`. Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
+  `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `towerCard`, `objectList`, `previewControls`,
+  `processCard`, `sliceBar`, `moveBar`, `bedWarn` (the off-bed warning strip). Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
   resin card, and slicing routes to the kernel's `slice_sla` — PrusaSlicer's ported support/pad chain — with an
   `.sl1` export instead of G-code (portrait masks, like every SL1-family machine). The preview lifts the model by
@@ -120,8 +121,8 @@ Every panel can be switched off, and the values the component owns can be seeded
   slice at all.
 - **`onEvent`** — one channel for every change: `canvasMode`, `objects`, `selectedPlate`, `plateCount`,
   `extruderColors`, `autoSlice`, `slicing`, `progress`, `viewType`, `paintMode`, `layerCount`, `layerRange`,
-  `error`, `notice`. Initial values are not announced — the host passed them. `progress` fires several times a
-  second while slicing.
+  `moveScrub`, `error`, `notice`. Initial values are not announced — the host passed them. `progress` fires several
+  times a second while slicing.
 - **`onSliced`** — `{plate, stats, gcode}` when a slice is cached. Switching plate tabs does not re-fire it.
 
 ## Keyboard and mouse
@@ -250,8 +251,8 @@ download.
 ### Taking the saves
 
 The save buttons are inside the component, so `onExport` is the only way to send a file somewhere other than the
-browser's download folder. It sees the 3mf project, the STL and each plate's G-code. Return truthy to say you
-handled it:
+browser's download folder. It sees every save: the 3mf project, the STL, each plate's G-code, an SLA plate's
+`.sl1` archive, and preset files. Return truthy to say you handled it:
 
 ```jsx
 <Viewport onExport={(file, filename) => { uploadToServer(file, filename); return true }} />
@@ -264,9 +265,10 @@ Return nothing and the download happens as well, which is useful for logging wha
 The component owns its scene, and the props are the whole interface — there is no ref, no imperative handle, and no
 `models` prop. Worth knowing before you design around it:
 
-- **Models enter through the UI only** — the file dialog or drag and drop. A host cannot hand a mesh in, and cannot
-  remove or transform one. What it *can* do is watch: the `objects` event reports `{id, name, extruder, visible}`
-  for every object as the set changes.
+- **Models enter through the UI, or once at mount through `files`** — after mount, runtime loading stays with the
+  file dialog and drag and drop. A host cannot remove or transform an object, or hand a mesh in mid-session. What
+  it *can* do is watch: the `objects` event reports `{id, name, extruder, visible}` for every object as the set
+  changes.
 - **Slicing is triggered from the UI or by `defaultAutoSlice`**, which unlike the in-app toggle also performs the
   first slice — that is what makes a panel-less embed able to slice at all. The result arrives on `onSliced`.
 - **`gcode` is one-way**: pass G-code text and it is drawn on the selected plate instead of a slice result, and

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extractor for the OrcaSlicer reverse-engineering artifacts.
-Output: web/{ui-tree,config-schema,invalidation-map,toggle-rules}.json
-Stage 33 restructure: upstream sources live in slicers/slicer/, generated JSON in web/ (where this script lives). Paths are derived from __file__ (no hardcoded absolute paths).
+Output: packages/data/{ui-tree,config-schema,invalidation-map,toggle-rules,preset-keys}.json + printers.json/processes.js/filaments.js
+Upstream sources live in slicers/slicer/; paths are derived from __file__ (no hardcoded absolute paths).
 """
 import re, json, os, sys
 

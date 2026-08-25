@@ -4,7 +4,7 @@ import { Link } from 'react-router'
 // Written out rather than imported: `Object.keys(config-schema.json).length` pulled all 382KB of the schema
 // into the landing chunk to produce one integer, on the one page that has no other use for it.
 // The generator of record is packages/types/gen_settings_types.mjs — it prints the same count.
-const OPTION_COUNT = 923
+const OPTION_COUNT = 976
 
 const LINKS = [
   ['npm', 'https://www.npmjs.com/package/three-slicer', 'package'],
@@ -14,7 +14,7 @@ const LINKS = [
 ]
 
 const ROUTES = [
-  ['Engine', 'three-slicer', 'Slice a binary STL into G-code, in Node or the browser'],
+  ['Engine', 'three-slicer', 'Slice a binary STL into G-code, or into SLA layer masks, in Node or the browser'],
   ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
   ['Viewer', 'three-slicer/viewer', 'React 3D viewer: model loading, worker slicing, toolpath preview'],
   ['Components', 'three-slicer/components', `React SettingsPanel driven by the ${OPTION_COUNT}-option schema`],
@@ -23,15 +23,19 @@ const ROUTES = [
 ]
 
 const GROUPS = [
-  ['Input', ['STL', 'OBJ', '3MF project (layout · settings · painting)', 'AMF', 'PLY', 'STEP', 'drag and drop', 'multiple models']],
+  ['Input', ['STL', 'OBJ', '3MF project (layout · settings · painting)', 'AMF', 'PLY', 'STEP', '.sl1 archive', 'drag and drop', 'multiple models']],
   ['Arrange', ['move', 'rotate', 'scale', 'duplicate', 'split to objects', 'place on bed', 'multi-plate']],
   ['Slicing', [
     'Arachne variable-width walls', 'gyroid / honeycomb / crosshatch infill',
     'tree · grid support', 'support painting', 'material painting',
     'skirt', 'brim', 'raft', 'ironing', 'arc fitting', 'multi-material', 'prime tower',
   ]],
-  ['Preview', ['layer slider', 'single layer', 'travel', 'feature / speed / height / width / fan / temperature views']],
-  ['Output', ['G-code download', 'print time', 'filament usage']],
+  ['Resin', [
+    'PrusaSlicer support points', 'support tree', 'pad', 'pad around object',
+    'resin catalog', 'layer mask preview', '.sl1 import',
+  ]],
+  ['Preview', ['layer slider', 'single layer', 'travel', 'move scrub', 'feature / speed / height / width / fan / temperature views']],
+  ['Output', ['G-code download', '.3mf project save', '.sl1 archive', 'print time', 'filament usage']],
   ['Settings', [`${OPTION_COUNT} options`, 'search', 'mode filter']],
 ]
 
@@ -41,7 +45,9 @@ export default function Landing() {
       <header className="lp-head">
         <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
         <h1>Web Three Slicer</h1>
-        <p>An OrcaSlicer-based WASM slicing engine, React viewer and settings panel, shipped as a single npm package.</p>
+        <p>An OrcaSlicer-based WASM slicing engine, React viewer and settings panel, shipped as a single npm package.
+          Filament printers slice to G-code; resin printers route through PrusaSlicer&rsquo;s ported support and pad
+          chain to an <code>.sl1</code> archive.</p>
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
           <Link className="lp-btn" to="/demos">Demos</Link>
