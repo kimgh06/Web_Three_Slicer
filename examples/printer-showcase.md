@@ -1,80 +1,88 @@
-# printer-showcase — 제조사 제품 페이지용 Embedded Slicer
+# printer-showcase — an embedded slicer for a manufacturer product page
 
-> 공통 규칙은 [DEMOS.md](./DEMOS.md)를 따른다. 이 문서는 이 데모 고유의 것만 서술한다.
+> The shared rules are in [DEMOS.md](./DEMOS.md). This document covers only what is specific to this demo.
 
-> **현재 상태:** 구현됨 — [`printer-showcase/`](./printer-showcase/) (`npm i && npm run dev`).
-> 실행 방법·측정치·격리 검증 결과는 앱의 [README](./printer-showcase/README.md)에 있다.
-> 실측: A1 mini(180 베드) 15m vs P1S(256 베드) 12m — 같은 20mm 큐브, 프로파일 모션 리밋 차이.
-> **미충족 1건 (해소 가능)**: sample model 자동 load. 0.2.2의 `files` prop으로 이제 가능하다 — 의존성을 올린 뒤 적용하면 된다. 작성 당시에는 prop이 없어
-> public API만으로는 불가능하다(0.1.7과 로컬 소스 모두). 테스트 큐브 다운로드 + 뷰어 자체
-> 드롭/파일 선택으로 대체했고, 우회는 하지 않았다.
-> 남은 것: 배포 URL, 대표 GIF, 모델 입력 prop.
+> **Current status:** implemented — [`printer-showcase/`](./printer-showcase/) (`npm i && npm run dev`).
+> How to run it, the measurements and the isolation-verification results are in the app's
+> [README](./printer-showcase/README.md).
+> Measured: A1 mini (180 bed) 15m vs P1S (256 bed) 12m — the same 20mm cube, the profiles' motion-limit difference.
+> **1 unmet item (now solvable)**: automatic sample-model load. The 0.2.2 `files` prop makes this possible —
+> apply it after bumping the dependency. At the time of writing no such prop existed, so it could not be done
+> through the public API alone (neither 0.1.7 nor the local source). A test-cube download plus the viewer's own
+> drop/file picker stood in for it, and no workaround was used.
+> Remaining: a deployment URL, a representative GIF, the model-injection prop.
 
 ## What this demonstrates
 
-3D 프린터 제조사가 제품 상세 페이지에 넣을 수 있는 **"이 프린터에서 실제로 어떻게 출력되는지 체험하는 embeddable slicer"**.
+An **"embeddable slicer that lets a visitor experience how a model actually prints on this printer"** that a
+3D-printer manufacturer can put on a product detail page.
 
-파는 것은 slicer 자체가 아니라 **기존 웹페이지에 slicer experience를 embed할 수 있다**는 사실이다. 따라서 전체화면 slicer처럼 만들지 않는다 — 가상의 제조사 랜딩 페이지(마케팅 카피, Buy now 버튼) 안의 한 섹션으로 존재한다.
+What it sells is not the slicer itself but the fact that **a slicer experience can be embedded into an existing
+web page**. So it is deliberately not built like a full-screen slicer — it exists as one section inside a
+fictional manufacturer landing page (marketing copy, a Buy now button).
 
-## 타깃
+## Target
 
-3D 프린터 OEM · 리셀러 · 제품 비교 사이트 · 프린터 랜딩 페이지.
+3D-printer OEMs · resellers · product-comparison sites · printer landing pages.
 
 ## Package APIs used
 
 ```
 three-slicer/viewer      <Viewport settings setSettings panels features defaultExtruderColors/>
-three-slicer/settings    printersByVendor / printerSettings(name) — 기종 목록과 프로파일 스왑
-three-slicer/components  <SettingsPanel embedded/> — 노출 옵션은 소수로 제한
+three-slicer/settings    printersByVendor / printerSettings(name) — the machine list and profile swap
+three-slicer/components  <SettingsPanel embedded/> — the exposed options kept to a few
 ```
 
-직접 `three-slicer/client`를 호출하지 않는다. Viewport가 worker와 slice lifecycle을 소유하고,
-호스트는 `onEvent`와 `onSliced`로 상태·통계를 받는다.
+`three-slicer/client` is not called directly. Viewport owns the worker and the slice lifecycle; the host
+receives state and statistics through `onEvent` and `onSliced`.
 
-## 설치
+## Install
 
-이 데모는 저장소와 다른 사이트에 배포하는 독립 프로젝트다 ([DEMOS.md §2](./DEMOS.md#2-독립-프로젝트와-설치)).
+This demo is an independent project deployed to a different site than the repository
+([DEMOS.md §2](./DEMOS.md#2-independent-projects-and-installation)).
 
 ```bash
 npm i three-slicer three react react-dom
 ```
 
-세 peer 모두 필요하다 — Viewport와 SettingsPanel이 React 컴포넌트이고 three로 렌더한다.
-실제 제조사 페이지가 React가 아닐 수 있으므로, 임베드 지점을 한 파일(`slicer_section.jsx`)로
-격리해 "이 파일만 마운트하면 된다"는 형태로 만든다.
+All three peers are needed — Viewport and SettingsPanel are React components and render with three.
+A real manufacturer page may not be React, so the embed point is isolated into one file
+(`slicer_section.jsx`), shaped as "mount this one file and you are done".
 
-## 화면
+## Screen
 
-가상 제조사 "ACME" 랜딩 페이지. 와이어프레임은 [DEMOS.md](./DEMOS.md) §2 참조.
+A fictional manufacturer "ACME" landing page. For the wireframe see [DEMOS.md](./DEMOS.md) §2.
 
-- 히어로: 제품명 + 마케팅 카피 + [Buy now] (동작 안 함, mock)
-- "Try it with your model" 섹션: Viewport 임베드 + layer height/infill 두 개만 노출
-- 슬라이스 후 같은 viewport가 toolpath 모드로 전환, print time · filament · layer slider 표시
+- Hero: product name + marketing copy + [Buy now] (inert, mock)
+- A "Try it with your model" section: the Viewport embed, with only layer height/infill exposed
+- After slicing the same viewport switches to toolpath mode, showing print time · filament · the layer slider
 
-## 기종 전환
+## Switching machines
 
-상단에 실제 catalog의 3기종만 둔다: `[A1 mini] [P1S] [X1 Carbon]` (모두 0.4mm nozzle).
-선택 시 `printerSettings()`로 얻은 실제 프로파일로
-`settings`를 갈아끼운다 — build volume, nozzle, machine limits, build plate가 함께 바뀐다.
-임의 값 금지: `three-slicer/settings`가 공개하는 실제 vendor 프로파일 데이터만 사용한다.
+The top bar holds only 3 machines from the real catalog: `[A1 mini] [P1S] [X1 Carbon]` (all 0.4mm nozzle).
+Selecting one swaps `settings` for the real profile obtained through `printerSettings()` — build volume,
+nozzle, machine limits and build plate change together. No made-up values: only the real vendor profile data
+`three-slicer/settings` exposes is used.
 
-정확한 profile key는 각각 `Bambu Lab A1 mini 0.4 nozzle`, `Bambu Lab P1S 0.4 nozzle`,
-`Bambu Lab X1 Carbon 0.4 nozzle`이다. UI label과 lookup key를 분리한다.
+The exact profile keys are `Bambu Lab A1 mini 0.4 nozzle`, `Bambu Lab P1S 0.4 nozzle` and
+`Bambu Lab X1 Carbon 0.4 nozzle`. The UI label and the lookup key are kept separate.
 
-## 구현 노트
+## Implementation notes
 
-- **호스트가 `settings`/`setSettings`를 소유**하고 기종 버튼이 그 state를 바꾼다 — Viewport의
-  호스트-프롭 경계가 그대로 임베드 패턴 예제가 된다.
-- **`panels`로 옵트아웃**: 프린터 카드는 `'readonly'`로 두고 필요 없는 카드·도구는 `false`로 숨긴다.
-  SettingsPanel은 임의 key 목록 필터가 없으므로 layer height/infill 두 control은 host UI로 직접 만든다.
-  (기종은 위의 버튼으로만 바꾸게 하되, readonly는 host의 settings 쓰기를 막지 않는다.)
-- **`features`로 옵트아웃**: 페이지 키보드 점유 등 호스트 페이지와 충돌할 동작을 끈다.
-- 방문자 STL 업로드와 기본 sample model 자동 로드 둘 다 지원.
-- 현재 `<Viewport/>`에는 host가 model bytes를 주입하는 prop이 없다. “sample 자동 load”를 만족하려면
-  public imperative/model prop을 먼저 추가하거나, 첫 화면에 명시적인 **Load sample** 사용자 동작을 둔다.
-  private scene 접근이나 synthetic drop event로 우회하지 않는다.
+- **The host owns `settings`/`setSettings`** and the machine buttons mutate that state — Viewport's
+  host-prop boundary becomes the embed-pattern example as-is.
+- **Opt out via `panels`**: the printer card stays `'readonly'` and unneeded cards/tools are hidden with
+  `false`. SettingsPanel has no arbitrary key-list filter, so the two layer height/infill controls are built
+  as host UI. (Machines change only through the buttons above — but readonly does not block the host's own
+  settings writes.)
+- **Opt out via `features`**: behaviours that would clash with the host page, such as claiming the page's
+  keyboard, are switched off.
+- Both a visitor STL upload and an automatic default sample-model load are supported.
+- At the time of writing `<Viewport/>` had no prop for the host to inject model bytes. Satisfying "automatic
+  sample load" means first adding a public imperative/model prop, or putting an explicit **Load sample** user
+  action on the first screen. No private scene access and no synthetic drop events.
 
-## 최소 embed 예시
+## Minimal embed example
 
 ```jsx
 <div className="slicer-frame">
@@ -90,12 +98,12 @@ npm i three-slicer three react react-dom
 </div>
 ```
 
-`.slicer-frame`에는 `position: relative`와 실제 height가 반드시 있어야 한다. Viewport는 가장 가까운
-positioned ancestor를 채우며 자체 width/height prop은 없다.
+`.slicer-frame` must have `position: relative` and a real height. Viewport fills its nearest positioned
+ancestor and has no width/height props of its own.
 
-## Embed 검증 (이 데모의 핵심 완료조건)
+## Embed verification (this demo's key completion criterion)
 
-host page에 의도적으로 충돌 가능성이 높은 전역 CSS를 둔다:
+The host page carries global CSS deliberately chosen to collide:
 
 ```css
 button { border-radius: 0; }
@@ -103,47 +111,48 @@ canvas { max-width: 300px; }
 input  { font-size: 24px; }
 ```
 
-Viewport와 SettingsPanel은 Shadow DOM 격리이므로 영향을 받지 않아야 한다 — 실제로 렌더된
-화면으로 isolation을 검증한다.
+Viewport and SettingsPanel are Shadow DOM isolated, so they must be unaffected — the isolation is verified
+against the actually rendered screen.
 
 ## What is intentionally mocked
 
-- 제조사 브랜딩(가상의 "ACME"), Buy now, 로그인, cloud, telemetry, firmware, 실기기 연결 — 전부 없음.
+- Manufacturer branding (the fictional "ACME"), Buy now, login, cloud, telemetry, firmware, a real machine
+  connection — none of it exists.
 
-## 완료 조건
+## Definition of done
 
-- [ ] product page 안에 embed (전체화면 아님)
-- [ ] 3종 printer 전환 + build plate 변경 확인
-- [ ] sample model 자동 load / visitor STL upload
-- [ ] 최소 settings만 노출 (`panels` 옵트아웃)
-- [ ] browser slicing, model ↔ toolpath 화면 전환
-- [ ] layer slider, print time · filament 표시
-- [ ] host CSS isolation 확인 (위의 충돌 CSS 하에서)
-- [ ] 모바일 width(360px)에서 layout 유지
+- [ ] embedded inside a product page (not full-screen)
+- [ ] 3-machine switching + the build plate change confirmed
+- [ ] automatic sample-model load / visitor STL upload
+- [ ] only a minimal settings surface exposed (`panels` opt-out)
+- [ ] browser slicing, model ↔ toolpath view switching
+- [ ] layer slider, print time · filament shown
+- [ ] host CSS isolation confirmed (under the colliding CSS above)
+- [ ] layout holds at mobile width (360px)
 
-## E2E 시나리오
+## E2E scenario
 
 ```
-페이지 로드 → sample model 표시 → [X1 Carbon] 클릭 → build plate 크기 변경 확인
-→ Slice → toolpath 표시 → layer slider 동작 → print time > 0
+page load → sample model shown → click [X1 Carbon] → confirm the build plate size changes
+→ Slice → toolpath shown → layer slider works → print time > 0
 ```
 
-추가 embed 시나리오:
+An additional embed scenario:
 
 ```text
-host CSS 충돌 규칙 적용 → 360px viewport → keyboard tab으로 Load model과 Slice 실행
-→ viewer canvas가 300px로 축소되지 않고 내부 button 모양도 유지
+apply the colliding host CSS rules → 360px viewport → run Load model and Slice by keyboard tab
+→ the viewer canvas does not shrink to 300px and the buttons inside keep their shape
 ```
 
-## 구현 후 문서에 추가할 항목
+## To add to the docs after implementation
 
-- live URL, desktop/mobile screenshot
-- 실제 실행·build·E2E 명령
-- 노출하는 host control과 대응 settings key
-- CSP와 COOP/COEP 배포 헤더
+- live URL, desktop/mobile screenshots
+- the actual run/build/E2E commands
+- the exposed host controls and their corresponding settings keys
+- CSP and COOP/COEP deployment headers
 
 ## Production considerations
 
-실서비스 임베드는 CSP/iframe 정책, 번들 크기 예산, WASM 로딩 지연 처리(위 `features`로 지연
-로드 제어), 접근성(키보드 포커스가 호스트 페이지와 공존)을 추가로 다뤄야 한다. README/landing의
-대표 GIF는 이 데모로 만든다 (DEMOS.md §8 Phase 1).
+A production embed additionally has to handle CSP/iframe policy, a bundle-size budget, WASM loading latency
+(deferred loading is controlled through `features` above), and accessibility (keyboard focus coexisting with
+the host page). The representative GIF for the README/landing is made with this demo (DEMOS.md §8 Phase 1).
