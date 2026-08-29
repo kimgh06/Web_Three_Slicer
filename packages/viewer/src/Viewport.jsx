@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw, settingScalar } from 'three-slicer/settings'
 import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
+import { useSliceRequest } from './use_slice_request.js'
+import { useInitialFiles } from './use_initial_files.js'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import { SUPPORTED_EXT } from './scene/model_loaders.js'
 import { MAX_PLATES } from './core/plate_layout.js'
@@ -63,12 +65,14 @@ const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
 //  · files     — content imported once on mount (File or {name,data}), through the same extension dispatch as a
 //                drop: models/3mf projects, .sl1 raster archives, and preset files.
 //  · default*  — initial value for state this component owns; the host reads changes back through onEvent.
+//  · sliceRequest — the host's Slice button: an identity CHANGE requests one slice of the current plate,
+//                the mount value is inert (use_slice_request.js has the full contract).
 //  · onEvent   — one channel for every value change ({type, value}), rather than a prop per value.
 //  · onSliced  — the finished slice ({plate, stats, gcode}), the one payload too big to belong on onEvent.
 export default function Viewport({
   settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null,
   panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
-  onEvent = null, onSliced = null, onExport = null,
+  sliceRequest = null, onEvent = null, onSliced = null, onExport = null,
 }) {
   // Which slicing technology the printer profile declares — the one switch the FFF/SLA routing hangs off.
   //  Everything downstream derives from it: the panels shown, the slicing path (use_slicer), the export format.
@@ -401,13 +405,8 @@ export default function Viewport({
     ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments, importSl1, loadPresetFile,
   })
 
-  // Initial content (the `files` prop): one loadFiles pass on mount, through the same extension dispatch as a
-  //  drop. Deliberately mount-only — a host that recreates the array each render must not re-import its models;
-  //  runtime loading stays with the picker/drop (and an imperative handle, when one lands).
-  useEffect(() => {
-    if (!files?.length) return
-    loadFiles(files.map(f => (typeof File !== 'undefined' && f instanceof File) ? f : new File([f.data], f.name)))
-  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+  // Initial content (the `files` prop): mount-only import + a warning on a later change (use_initial_files.js).
+  useInitialFiles({ files, loadFiles })
 
   // ---- Project export: "save as" a 3mf project, or the plain geometry as an STL ----
   //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
@@ -435,6 +434,9 @@ export default function Viewport({
     autoTimerRef.current = setTimeout(fire, 800)
     return () => clearTimeout(autoTimerRef.current)
   }, [settings, autoSlice, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The host's Slice button — an identity change on the prop requests one slice (use_slice_request.js).
+  useSliceRequest({ sliceRequest, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
 
   // ---- The move scrub: how far into the top shown layer the print has got (use_move_scrub.js) ----
   const moveScrub = useMoveScrub({

@@ -74,6 +74,14 @@ export interface ViewportProps {
    * later render does not re-import; runtime loading is the picker, drop, or a remount.
    */
   files?: Array<File | { name: string, data: ArrayBuffer | Uint8Array }>
+  /**
+   * A token whose identity CHANGE requests one slice of the current plate — the host's Slice button:
+   * keep a counter in state and bump it. The mount value is inert (0 and null both slice nothing), so is
+   * setting it back to `null`. Ignored while a `gcode`/`sl1` injection holds the plate or the scene is
+   * empty — the same conditions under which the built-in slice bar is not pressable. A change while a
+   * slice is running cancels it and re-slices: the last request wins.
+   */
+  sliceRequest?: number | string | object | null
 
   /** Initial filament colours (hex), one per extruder. Defaults to the built-in T1/T2 pair. */
   defaultExtruderColors?: string[] | null

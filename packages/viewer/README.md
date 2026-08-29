@@ -116,6 +116,10 @@ Every panel can be switched off, and the values the component owns can be seeded
 - **`files`** — content imported once on mount, through the same extension dispatch as a drop: models and 3mf
   projects, `.sl1` archives, and preset files. Mount-only on purpose — a host that rebuilds the array each render
   must not re-import its models; runtime loading stays with the picker and drop.
+- **`sliceRequest`** — the host's Slice button: a token whose identity change requests one slice of the current
+  plate. The mount value is inert, so hold a counter in state and bump it. Ignored under the same conditions
+  the built-in slice bar is not pressable (empty scene, an injected `gcode`/`sl1` plate); a change during a
+  running slice cancels and re-slices, so the last request wins.
 - **`defaultExtruderColors`**, **`defaultAutoSlice`** — initial values for state the component owns. Unlike the
   in-app toggle, `defaultAutoSlice` also performs the *first* slice, which is what makes a panel-less embed able to
   slice at all.
@@ -269,8 +273,9 @@ The component owns its scene, and the props are the whole interface — there is
   file dialog and drag and drop. A host cannot remove or transform an object, or hand a mesh in mid-session. What
   it *can* do is watch: the `objects` event reports `{id, name, extruder, visible}` for every object as the set
   changes.
-- **Slicing is triggered from the UI or by `defaultAutoSlice`**, which unlike the in-app toggle also performs the
-  first slice — that is what makes a panel-less embed able to slice at all. The result arrives on `onSliced`.
+- **Slicing is triggered from the UI, by `defaultAutoSlice`, or by bumping `sliceRequest`** — a token prop whose
+  identity change requests one slice of the current plate (the mount value is inert), which is what a host with
+  the built-in chrome hidden wires its own Slice button to. The result arrives on `onSliced`.
 - **`gcode` is one-way**: pass G-code text and it is drawn on the selected plate instead of a slice result, and
   auto re-slice leaves that plate alone while it is set.
 - Everything else the component owns — camera, selection, plate count, paint state — is reported through `onEvent`
