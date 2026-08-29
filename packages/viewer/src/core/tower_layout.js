@@ -2,6 +2,31 @@
 //  sliced tower are the same tower. Pure arithmetic on settings + the plate's model bounds, kept out of the
 //  component because "the box shows where it will actually print" is a claim only an assertion can hold up.
 
+/**
+ * Will this plate actually change tools — the question the tower exists to answer.
+ *
+ * Loading a second filament is not it. A prime tower purges the nozzle ACROSS a tool change, so with two filaments
+ * loaded and everything printing on T1 the slice never emits a `T` command and never builds a tower — but the
+ * stand-in used to draw for the whole session anyway, a green box beside a model that would print without it.
+ *
+ * The two conditions are the ones `buildParams` raises `extruder_count` on (use_slicer.js), which is in turn what
+ * the kernel gates its multi-tool path on: whole-object assignment to more than one extruder, or material paint
+ * reaching extruder 2 or higher. Selector state 1 is the default tool (ENFORCER == Extruder1), so painting in
+ * state 1 alone switches nothing.
+ *
+ * `support_filament` is deliberately not a third condition: on its own it does not raise `extruder_count`, so the
+ * kernel emits no tool change for it either, and a box drawn for it would promise a tower the slice will not build.
+ *
+ * @param objects the object list as the component holds it (`{extruder, visible}`)
+ * @param paintStateCounts painted facet count per selector state, as the paint brush reports it
+ */
+export function usesMultipleTools(objects, paintStateCounts) {
+  const assigned = new Set((objects ?? []).filter(o => o?.visible !== false).map(o => Number(o?.extruder) || 1))
+  if (assigned.size > 1) return true
+  return Object.entries(paintStateCounts ?? {})
+    .some(([state, facets]) => facets > 0 && Number(state) >= 2)
+}
+
 /** Read a per-plate tower coordinate out of the settings map. `wipe_tower_x`/`_y` are upstream's per-plate
  *  ARRAYS, so each plate reads its own entry — a hole (null) means auto for that plate only. A legacy scalar
  *  still applies to every plate alike. NaN means "not chosen", which is what turns on auto placement. */

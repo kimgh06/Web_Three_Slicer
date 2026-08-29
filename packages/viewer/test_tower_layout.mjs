@@ -1,7 +1,7 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
 //   Run: node packages/viewer/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord } from './src/core/tower_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools } from './src/core/tower_layout.js'
 import { platePosition } from './src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
@@ -95,6 +95,29 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
     modelBounds: () => cubeOn(0) })
   assert.equal(box.size, 30)
   assert.equal(box.x, -10 - 5 - 15)
+}
+
+// ---- a tower exists for a TOOL CHANGE, not for a second filament being loaded ----
+// The stand-in used to draw whenever two filaments existed, so a single model on T1 printed beside a green box
+//  the slice would never build: `extruder_count` stays 1, no `T` command is emitted, no tower is generated.
+{
+  const onT1 = [{ extruder: 1, visible: true }, { extruder: 1, visible: true }]
+  assert.equal(usesMultipleTools(onT1, {}), false, 'everything on one extruder switches nothing')
+  assert.equal(usesMultipleTools([{ extruder: 1, visible: true }, { extruder: 2, visible: true }], {}), true,
+    'two objects on different extruders do')
+  // A hidden object is not sliced, so it cannot cause a tool change either.
+  assert.equal(usesMultipleTools([{ extruder: 1, visible: true }, { extruder: 2, visible: false }], {}), false,
+    'a hidden object on the second extruder does not')
+  // Material paint assigns tools per facet, which whole-object assignment cannot see — state s addresses
+  //  extruder s, and state 1 IS the default tool, so only 2 and up are a switch.
+  assert.equal(usesMultipleTools(onT1, { 1: 500 }), false, 'painting in state 1 alone is still the default tool')
+  assert.equal(usesMultipleTools(onT1, { 2: 12 }), true, 'paint reaching extruder 2 does')
+  assert.equal(usesMultipleTools(onT1, { 3: 0 }), false, 'a state with no painted facets does not')
+  // An unassigned object defaults to T1 rather than to "unknown", which would otherwise read as a second tool.
+  assert.equal(usesMultipleTools([{ visible: true }, { extruder: 1, visible: true }], {}), false,
+    'an object with no extruder set counts as T1')
+  assert.equal(usesMultipleTools([], {}), false, 'an empty plate switches nothing')
+  assert.equal(usesMultipleTools(undefined, undefined), false, 'missing inputs do not throw')
 }
 
 console.log('tower_layout: ok')
