@@ -203,9 +203,13 @@ import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import Viewport from 'three-slicer/viewer'
 import SettingsPanel from 'three-slicer/components'
+// The no-argument client, which is the path a first-time consumer takes: it must reach dist as a real worker
+//  chunk whose kernel imports were emitted too (see the dist integrity check below).
+import { createSlicerClient } from 'three-slicer/client'
 function App() {
   const [settings, setSettings] = useState({})
-  return (<><Viewport settings={settings} setSettings={setSettings} />
+  return (<><button onClick={() => createSlicerClient().warmup()}>warm</button>
+    <Viewport settings={settings} setSettings={setSettings} />
     <SettingsPanel settings={settings} setSettings={setSettings} /></>)
 }
 createRoot(document.getElementById('root')).render(<App />)
@@ -214,6 +218,28 @@ npm i --no-audit --no-fund react@18 react-dom@18 three@0.160.1 "${T[@]}" >/dev/n
 npm i --no-audit --no-fund -D vite@5 @vitejs/plugin-react@4 >/dev/null
 npm run build >/dev/null
 ls dist/assets/ | grep -q "slicer.worker" || { echo "FAIL: no worker chunk in the vite consumer's dist"; exit 1; }
+# The worker chunk EXISTING is not the same as the worker WORKING, and that gap shipped once: with the URL split
+#  across a function call, Vite matched its plain-asset rule and copied slicer.worker.js in verbatim — a hashed
+#  filename holding the untouched source, still importing `./slicer_core.js`, `./slicer_core.mt.js` and
+#  `./sla_request.js` while dist contained none of them. Measured: a 21KB copy in a 40KB dist, i.e. no kernel at
+#  all, and it 404s on the first message. The dev server serves the sources, so this is invisible until `vite build`.
+#  So: every relative import the worker chunk makes must name a file that was actually emitted.
+node - <<'EOF'
+const { readdirSync, readFileSync } = require('node:fs')
+const assets = readdirSync('dist/assets')
+const workers = assets.filter(f => /slicer\.worker.*\.js$/.test(f))
+if (!workers.length) { console.log('FAIL: no worker chunk'); process.exit(1) }
+let missing = []
+for (const w of workers) {
+  const source = readFileSync(`dist/assets/${w}`, 'utf8')
+  for (const [, spec] of source.matchAll(/(?:from\s*|import\(\s*)["'](\.\/[^"']+)["']/g)) {
+    const name = spec.replace(/^\.\//, '')
+    if (!assets.includes(name)) missing.push(`${w} -> ${spec}`)
+  }
+}
+if (missing.length) { console.log('FAIL: the worker chunk imports files dist does not contain:\n  ' + missing.join('\n  ')); process.exit(1) }
+console.log(`  worker chunk ${workers[0]} resolves every import it makes`)
+EOF
 echo "OK: vite build + worker chunk"
 
 echo "== next consumer"
