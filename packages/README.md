@@ -93,6 +93,31 @@ A runnable version of the above ships with the package: `node node_modules/three
 
 `result.error` is set instead of a result when a slice fails or is cancelled — check it before reading `gcode`.
 
+`result.warnings` is the other half of that: a `string[]`, empty when nothing, naming what a **successful** slice
+got away with. Today the one entry is `'over_bed_model'` — the model sliced outside the printable area, which
+otherwise reports plausible time and material and no error (see [Before You Ship](#before-you-ship)). Every path
+carries it: the direct handle, `createSlicerClient()`, and the raw worker's `done` reply.
+
+`result.throughput` says how fast it ran, measured around the call on the same three paths:
+
+```js
+result.throughput.ms               // wall time, incl. the STL crossing into WASM and the layer stream out
+result.throughput.kernelMs         // the kernel's own phase total; ms − kernelMs is the boundary cost
+result.throughput.layersPerSecond  // the figure to show a person
+result.throughput.msPerMsegment    // the figure to COMPARE runs with
+```
+
+Compare runs on `msPerMsegment`, not on `ms`. The kernel is not deterministic in segment count — the same input
+has been measured 15% apart between runs — so two raw millisecond figures describe two different amounts of work,
+and the difference reads as a regression that is not there. In the viewer the same throughput is live: the slice
+bar shows layers/second while slicing, and the host receives it as the `sliceRate` event.
+
+SLA slices carry it too (`sliceSla`, the object-aware job, and the JS contour fallback). `kernelMs` sums that
+technology's own passes — contours, sample, tree, raster, emit — because the two share only the name `t_emit_ms`,
+and reading an SLA result through the FFF phase list would report its emit pass as the entire kernel time
+(measured on a 10mm cube: 2.99ms summed correctly, 1.42ms if mis-read). Compare SLA runs against SLA runs: its
+`path_segments` counts mask segments, not toolpath segments.
+
 ## Streaming Layers
 
 For large models, pass callbacks to receive each sliced layer as it is produced. This avoids keeping the full G-code and layer payload in memory at once.
@@ -523,7 +548,11 @@ and its out-of-memory retry ladder, both of which are UI policy rather than prot
 ### Driving the worker directly
 
 `createSlicerClient` is a thin wrapper; the protocol underneath is a plain message contract, fully typed in
-`three-slicer/worker`.
+`three-slicer/worker`. A slice request is the message with **no `cmd`**, and its `params` takes an object or a
+JSON string (object accepted since 0.2.3 — the kernel parses JSON text, so it is stringified for you).
+
+The worker below is created with `engineWorkerURL()`, which suits a no-bundler page; under Vite or webpack
+create it the way [Bundler Notes](#bundler-notes) describes and drive that instance instead.
 
 ```js
 import { engineWorkerURL } from 'three-slicer'
@@ -587,6 +616,19 @@ Without cross-origin isolation the engine runs single-threaded, no `supsab` mess
 progress cannot be interrupted — terminate the worker instead.
 
 ## Bundler Notes
+
+**Creating the slice worker.** `createSlicerClient()` with no argument is the supported path under Vite and
+webpack: the default is written as the literal `new Worker(new URL('./slicer.worker.js', import.meta.url),
+{ type: 'module' })` that both bundlers recognize as a worker entry, so the worker reaches `dist` together
+with the kernel chunks it dynamically imports. Verified in `pack_check.sh`, which builds a Vite consumer and
+asserts every relative import the emitted worker chunk makes names a file the build actually produced.
+
+Through 0.2.2 that default went through `engineWorkerURL()`, and a function call does not match the pattern —
+Vite fell back to its plain-asset rule and copied the worker source in verbatim, still importing an unhashed
+`./slicer_core.js`. Measured on a Vite 5 app importing `three-slicer/client` and nothing else: a 21KB copy in
+a 40KB `dist` — no kernel emitted at all, a 404 on the worker's first message, and only after `vite build`,
+since the dev server serves the sources. `engineWorkerURL()` remains for no-bundler setups (native ESM, an
+import map, a CDN); under a bundler use the no-argument client or `three-slicer/worker?worker`.
 
 Vite consumers should enable ES module workers and an ES2022 build target:
 
@@ -666,7 +708,7 @@ the layout by hand.
 | `slicer.overlay(enforcer)` | The painted overlay triangles for one state, as a `Float32Array` |
 | `slicer.heapSize()` | Current WASM heap size, bytes (peak, monotonic) |
 | `slicer.dispose()` | Releases the slicer handle for garbage collection |
-| `engineWorkerURL()` | Returns a browser worker URL |
+| `engineWorkerURL()` | Worker URL for a **no-bundler** browser setup. Under Vite/webpack use `createSlicerClient()` or `three-slicer/worker?worker` — see [Bundler Notes](#bundler-notes) |
 
 ### `three-slicer/settings`
 
@@ -742,34 +784,36 @@ the layout by hand.
 
 The traps below were all hit while building the [integration demos](https://github.com/kimgh06/Web_Three_Slicer/tree/main/examples)
 and the live landing embed — each one returns something plausible instead of an error, which is why they
-are listed **in the order they bite**, not by topic. The later a trap fires, the more it costs: the first
-two do not show up in `npm run dev` at all.
+are listed **in the order they bite**, not by topic. The later a trap fires, the more it costs — and none of
+them fails a build or throws, so nothing surfaces them for you.
 
-1. **Your first production build: the worker 404s (dev passes).** `createSlicerClient()` with no argument
-   builds its worker via `new URL(...)`, which Vite copies as an unprocessed asset — the copy imports an
-   unhashed `./slicer_core.js` and fails only after `vite build`. Create the worker yourself and pass it in:
-   `import SlicerWorker from 'three-slicer/worker?worker'` → `createSlicerClient(new SlicerWorker())`.
-   Details: [Bundler Notes](#bundler-notes).
-2. **Your first real model: hand it over origin-centered, not bed-centered.** The kernel takes plate-local
+1. **Your first real model: hand it over origin-centered, not bed-centered.** The kernel takes plate-local
    coordinates and seats the model on the bed itself; pre-centering on the bed adds the offset twice and the
-   part slices *off the bed* — with plausible time and material and no error. The only signal is
-   `stats.over_bed_model`: check it after every slice.
-3. **Reading the results: `filament_mm` is a length, and the time depends on the kernel.** Grams are your
+   part slices *off the bed* — with plausible time and material and no error. Since 0.2.3 the result says so:
+   `result.warnings` carries `'over_bed_model'` (the `stats.over_bed_model` flag is still there too). Check
+   `result.warnings.length` after every slice; it is the channel every future condition of this kind uses.
+2. **Reading the results: `filament_mm` is a length, and the time depends on the kernel.** Grams are your
    conversion (`filament_mm × π × (diameter/2)² × density / 1000`, from the filament preset's
    `filament_diameter`/`filament_density`). `time_estimate` differs ~25% between the single- and
    multi-threaded kernels on identical geometry, so your COOP/COEP headers change the number — pin one as
    the reference if you price on it.
-4. **Drawing toolpaths: the role field is encoded, and G-code round-trips lose roles.** `paths[k+3]` holds
+3. **Drawing toolpaths: the role field is encoded, and G-code round-trips lose roles.** `paths[k+3]` holds
    `role + tool*16` — mask with `& 15` / `>>> 4`. `SegmentData.position` is stride 4 (x, y, z, w). The
    kernel's G-code carries no `;TYPE:` comments, so `parseGcode` collapses roles into wall — draw
    `result.layers` directly when the slicing side is yours.
-5. **Settings: presets are sparse, and unread keys are silent.** Apply presets with
+4. **Settings: presets are sparse, and unread keys are silent.** Apply presets with
    [`applyPreset`](#materials-and-multi-material) (clear-then-merge — a plain merge keeps the previous
    material's leftovers). A key the FFF derivation does not read is accepted and does nothing:
    `ignoredKernelSettings(settings)` names them.
-6. **Cancel is conditional.** `client.cancel()` works only on a cross-origin-isolated page (the mt kernel);
+5. **Cancel is conditional.** `client.cancel()` works only on a cross-origin-isolated page (the mt kernel);
    otherwise it returns `false` — terminate and recreate the client instead.
    Details: [Cancelling a slice](#cancelling-a-slice).
+
+Gone as of 0.2.3, and listed here only because it bit every consumer before then: `createSlicerClient()` with
+no argument used to build a worker Vite copied as a plain asset, which 404'd on its own kernel import in
+production while `npm run dev` passed. The no-argument form now emits a real worker chunk — see
+[Bundler Notes](#bundler-notes). On 0.2.2 or earlier, pass the worker in yourself
+(`import SlicerWorker from 'three-slicer/worker?worker'`).
 
 ## Known Limits
 

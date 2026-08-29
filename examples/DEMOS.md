@@ -204,11 +204,17 @@ Measured (250 × 210 bed, 20mm cube, `Prusa MK4 0.4 nozzle`):
 
 This is the silently-wrong kind of mistake. Time and material come out plausible (a 2% difference), no
 error is raised, and nothing shows until the toolpath is actually **drawn** — in farm-dashboard it was
-discovered only when the part appeared as a dot in a screen corner. So always check
-`stats.over_bed_model` after a slice.
+discovered only when the part appeared as a dot in a screen corner. So always check after a slice.
 
 ```js
 if (result.stats.over_bed_model) throw new Error('slices outside the printable area')
+```
+
+All four demos ended up writing that same line, which is why 0.2.3 names it on the result itself. The flag
+stays where it is; `warnings` is the version that does not require knowing it exists.
+
+```js
+if (result.warnings.length) throw new Error(result.warnings.join(', '))   // 0.2.3+
 ```
 
 The bed size is still needed — as the up-front filter for whether the model fits the machine at all (§4's
@@ -253,13 +259,16 @@ the headers.
 
 ## 5. The worker usage contract
 
-**Under Vite, create the worker yourself and pass it in.** Called with no argument,
-`createSlicerClient()` makes the worker with `new URL('./src/slicer.worker.js', import.meta.url)`, and
-Vite treats that expression **as an asset reference, copying the original file verbatim**. The copy still
-imports an unhashed `./slicer_core.js`, so the production build 404s. The dev server serves sources as-is
-and passes, which makes this **a trap that only shows after `vite build`** (measured in instant-quote: dev
-fine, build fails the worker's `/assets/slicer_core.js` fetch). Importing with `?worker` lets Vite bundle
-the kernel chunks properly.
+**These demos pin `three-slicer` ^0.1.7 and create the worker themselves. On 0.2.3 and later that is no
+longer necessary** — `createSlicerClient()` with no argument builds its worker through the literal
+`new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })` that Vite and webpack
+recognize as a worker entry, so it reaches dist with its kernel chunks.
+
+Before that, the default went through `engineWorkerURL()`, and a function call does not match the pattern:
+Vite treated the file **as an asset reference and copied it verbatim**. The copy still imported an unhashed
+`./slicer_core.js`, so the production build 404'd, while the dev server served the sources and passed —
+**a trap that only showed after `vite build`** (measured in instant-quote: dev fine, build fails the
+worker's `/assets/slicer_core.js` fetch). The workaround, still correct and still needed on ≤0.2.2:
 
 ```js
 import SlicerWorker from 'three-slicer/worker?worker'   // Vite
@@ -270,10 +279,12 @@ How the worker is created is the bundler's concern, so the integration file **ta
 argument** and stays bundler-neutral (the same reason as §2.1's "the integration file imports only
 `three-slicer/*`").
 
-One side effect of the same cause: that asset copy drags in its own chunk graph, so **the multithreaded
-kernel lands in dist twice** (+4.3 MB). Confirmed in all four demos, including printer-showcase which uses
-only `three-slicer/viewer`. At runtime only one is fetched, so it is a deployment-size issue rather than
-user bandwidth (19 MB per demo). Making `engineWorkerURL` a lazy reference on the package side removes it.
+**The multithreaded kernel lands in dist twice** (+4.3 MB, confirmed in all four demos including
+printer-showcase, which uses only `three-slicer/viewer`). This was originally attributed to the asset copy
+above; it is not. It is emscripten's own pthread bootstrap: `allocateUnusedWorker()` inside the mt glue
+creates its thread workers from the glue's own module URL, which the bundler emits a second time as a worker
+entry. At runtime only one copy is fetched per context, so it is a deployment-size issue rather than user
+bandwidth (19 MB per demo), and removing it means changing the emscripten build, not the JS surface.
 
 The minimal browser slicing flow:
 

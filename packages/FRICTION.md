@@ -94,10 +94,11 @@ multi-material example in the docs has this shape. **Fix**: document as the inte
 PARAMS.md's classification); consider schema-side keys for the few that hosts routinely need
 (`extruder_count` above all).
 
-### 2.5 Serialization contract differs per call path — severity: low
+### 2.5 Serialization contract differs per call path — severity: low — FIXED 2026-08-29 (the worker takes an object too)
 
-The direct handle's `slice()` accepts an object and stringifies it; the raw worker requires `params`
-as a JSON **string** (the kernel parses text). Same object, two shapes, discovered at the boundary.
+The direct handle's `slice()` accepts an object and stringifies it; the raw worker required `params`
+as a JSON **string** (the kernel parses text). Same object, two shapes, discovered at the boundary —
+and arbitrary rather than principled, since the worker's own SLA branch had always taken either.
 Below that sits the percent trap the JS side pre-resolves: `support_line_width` is `coFloatOrPercent`
 but the kernel reads it with a plain number reader, so a raw `"120%"` would reach `strtod` and
 resolve to 0 == auto (`AGENTS.md`). **Fix**: accept objects at the worker boundary too.
@@ -113,22 +114,42 @@ lines, but it is the five lines every consumer writes.
 
 ## Layer 3 — results and environment
 
-### 3.1 The production-only worker 404 — severity: high (first-run experience)
+### 3.1 The production-only worker 404 — severity: high (first-run experience) — FIXED 2026-08-29 (the client's default worker uses the bundler-recognized pattern)
 
-`createSlicerClient()` with no argument builds its worker via `new URL(...)`, which Vite copies as
-an unprocessed asset; the copy imports an unhashed `./slicer_core.js` and 404s **only after
-`vite build`** — dev passes (measured in instant-quote; all four demos hand-create the worker via
-`three-slicer/worker?worker` as the workaround). Side effect of the same cause: the mt kernel lands
-in dist twice, +4.3MB per demo. **Fix**: make `engineWorkerURL` a lazy reference (already noted in
-`examples/DEMOS.md` §5).
+`createSlicerClient()` with no argument built its worker through `engineWorkerURL()`, and a function
+call does not match the `new Worker(new URL('literal', import.meta.url))` shape bundlers treat as a
+worker entry — so Vite fell back to its plain-asset rule and copied the source in verbatim; the copy
+imports an unhashed `./slicer_core.js` and 404s **only after `vite build`** — dev passes (measured in
+instant-quote; all four demos hand-create the worker via `three-slicer/worker?worker` as the
+workaround).
 
-### 3.2 Silent off-bed slicing — severity: high
+Reproduced on a Vite 5 app importing `three-slicer/client` and nothing else: dist held a 21KB
+`slicer.worker-<hash>.js` — the untouched source — importing `./slicer_core.js`,
+`./slicer_core.mt.js`, `./sla_request.js` and `./sla_core.js`, **none** of which were emitted; total
+dist 40KB, i.e. no kernel at all. With the literal expression inline in `client.js`: a 12KB minified
+worker chunk importing the hashed kernels beside it, dist 18MB. `pack_check.sh` now fails when a
+worker chunk imports a file the build did not emit — verified against both builds, it fails on the
+first and passes on the second.
+
+One claim above was wrong, and is corrected rather than deleted: the mt kernel appearing twice in dist
+is **not** a side effect of this. It is emscripten's own pthread bootstrap — `allocateUnusedWorker()`
+in the mt glue does `new Worker(new URL("…/slicer_core.mt-<hash>.js", import.meta.url), {type:
+"module"})`, so the bundler emits that module a second time as a worker entry. Removing it means
+changing the emscripten build, not the JS surface.
+
+### 3.2 Silent off-bed slicing — severity: high — FIXED 2026-08-29 (`result.warnings`)
 
 Hand the kernel a bed-centered model and the plate-local contract adds the offset twice: a 20mm cube
 sliced at X 234.7–265.4 on a 250-wide bed with plausible time and material and no error. The only
-signal is `stats.over_bed_model`; visually it shows only once a toolpath is drawn
-(`examples/DEMOS.md` §4.5). **Fix**: promote to a typed refusal or at least a result-level warning
-field the docs make impossible to miss.
+signal was `stats.over_bed_model` — one flag among twenty numbers; visually it shows only once a
+toolpath is drawn (`examples/DEMOS.md` §4.5), which is why all four demos hand-wrote the same check.
+
+Every slice result now carries `warnings: string[]` (`'over_bed_model'` today) — on the direct handle,
+through `createSlicerClient()`, and on the raw worker's `done` reply. Not a typed refusal: the slice
+is legitimate output for a caller who meant it, and refusing would break the plate-relative workflow
+the viewer itself uses. `over_bed` (support/skirt/brim reaching past the model outline) deliberately
+does not warn — upstream prints those outside the outline by design, and raising it on every brimmed
+plate would train hosts to ignore the channel.
 
 ### 3.3 Result units and kernel-dependent numbers — severity: medium
 
@@ -142,10 +163,19 @@ estimate divergence at the API (not only in a demo README); stride and role cave
 
 ## What to do first
 
-1. `{params, ignored}` from `deriveKernelParams` + `support_type` routing (2.1) — retires the whole
-   "silent key" class and the worst real-world divergence (imported Orca projects).
-2. A slice-trigger surface on `<Viewport/>` (1.1) — retires the remount workaround and its state
+The first four are done — 2.1 and 1.1 in 0.2.3's first pass, 3.1 and 3.2 in its second.
+
+1. ~~`{params, ignored}` from `deriveKernelParams` + `support_type` routing (2.1)~~ — retired the
+   whole "silent key" class and the worst real-world divergence (imported Orca projects).
+2. ~~A slice-trigger surface on `<Viewport/>` (1.1)~~ — retired the remount workaround and its state
    machine.
-3. Lazy `engineWorkerURL` (3.1) — retires the only trap that breaks a consumer's first production
-   build.
-4. Prop-lifetime naming or dev warnings (1.2), `applyPreset` helper (2.6), off-bed warning (3.2).
+3. ~~The production-only worker 404 (3.1)~~ — retired the only trap that broke a consumer's first
+   production build.
+4. ~~Prop-lifetime dev warnings (1.2), `applyPreset` helper (2.6), off-bed warning (3.2)~~.
+
+What is left, in the order it is worth doing:
+
+1. Unify prop lifetimes or rename the mount-only ones (1.2 is mitigated by a warning, not fixed) —
+   a breaking change, so it wants a minor version.
+2. `grams(stats, settings)` and the stride/role caveats in the d.ts (3.3).
+3. The map-not-schema keys through `onEvent` (1.3), a schema key for `extruder_count` (2.4).
