@@ -7,10 +7,12 @@ import { makeSlicerWorker } from '../make_worker.js'
 //  card from the same fields and the two mappings had already started to drift.
 //  overBedBy is measured by the kernel on the EMITTED extrusions, so it includes support, skirt, brim and the raft —
 //  none of which exist yet when the viewer runs its own pre-slice bed check against the model's bounding box.
-export function statsFromKernel(s) {
+// `throughput` is the one field that does NOT come from the kernel's stats object — it is measured around the
+//  call and sits beside them on the result, so it has to be handed in rather than read out of `s`.
+export function statsFromKernel(s, throughput = null) {
   return {
     layers: s.layers, segments: s.path_segments, filament: s.filament_mm, timeSec: s.time_estimate,
-    engine: s.time_engine, limits: s.machine_limits,
+    engine: s.time_engine, limits: s.machine_limits, throughput,
     overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },
     // true = the model itself is off the bed, not just what was printed around it. slice_sla reports only
     //  `over_bed`, which IS the model verdict (prepare_model, before supports exist) — reading the absent
@@ -28,7 +30,7 @@ export function useSlicer(deps) {
   const {
     settings, wipeTowerReal, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
     paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
-    setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount,
+    setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
     // features.warmup / features.logs — `quiet` rides on the worker messages because the worker is a separate
     //  module instance and cannot see this side's logging flag.
@@ -39,6 +41,33 @@ export function useSlicer(deps) {
   const streamAccumRef = useRef(null)   // stage 30: streamed layer accumulator {layers:[{z,paths,widths}], gcode:[chunk]}
   const downgradeRef = useRef(false)    // stage 30: a downgrade (simplified) retry is in progress — buildParams simplifies infill + economy
   const lastGeomRef = useRef(null)      // G003 incremental: geometry digest of the last successful slice (plate-agnostic — a different plate yields a different digest)
+
+  // ---- Live throughput: layers per second, while the slice runs ----
+  // The two technologies feed this from OPPOSITE ends of the protocol, and each is the only usable source on its
+  //  own path.
+  //  · FFF takes the streamed 'layer' messages, so it reports during the EMISSION pass only. Not a choice: PASS1's
+  //    live progress is the SAB counter, which is per-mille of the pass rather than a layer count (the total N
+  //    arrives with the first progress message, at PASS1's END), and surfaces and support publish no per-layer
+  //    news at all. Measured on a 38MB model: a 4.0s slice, 2.8s of it PASS1, rate shown for the last 0.6s at 379
+  //    then 576 layers/s. On a support-heavy model emission is a far larger share (measured 38%).
+  //  · SLA takes its progress messages instead (see the 'progress' branch), because slice_sla builds the whole
+  //    scene and only then drains the sink: measured 1095 layer messages inside a 22ms burst at the end of a 2.8s
+  //    run. Timing that burst would measure the drain, not the slicing.
+  //  Batch mode (economy, MM) streams no layers and so shows no rate — it shows no preview either.
+  const rateRef = useRef(null)      // { t, n, at } — window start, layers counted in it, last absolute count seen
+  const RATE_WINDOW_MS = 250        // 400 was measured to fit only twice into a 0.6s emission; 250 reads sooner and still does not jitter
+  const resetRate = () => { rateRef.current = null; setSliceRate(0) }
+  // `absolute` is a layer count that only rises within one phase. A count that goes BACKWARDS is the next phase
+  //  starting its own numbering, which restarts the window instead of subtracting into a negative rate.
+  const noteLayers = (absolute) => {
+    const now = performance.now()
+    const window = rateRef.current
+    if (!window || absolute < window.at) { rateRef.current = { t: now, n: 0, at: absolute }; return }
+    window.n += absolute - window.at
+    window.at = absolute
+    const elapsed = now - window.t
+    if (elapsed >= RATE_WINDOW_MS) { setSliceRate((window.n * 1000) / elapsed); window.t = now; window.n = 0 }
+  }
 
   // ---- Progress: time-weighted mapping + real support progress (SAB polling) ----
   //  Measured time share per phase (774k tri): PASS1 7% · surfaces 6% · support 48% · emission 38% -> budget 15/5/40/40.
@@ -94,7 +123,11 @@ export function useSlicer(deps) {
         if (d.type === 'progress') {   // stage 30: reset the watchdog (+record the phase) + weighted mapping + per-band polling control
           // An SLA slice reports layers linearly — the FFF phase weighting (and its SAB polling bands) would map
           //  a layer count onto surface/support phases that do not exist there.
-          if (pnd?.sla) { setProgress(d.total ? d.done / d.total : 0); pnd?.kick?.(); return }
+          // SLA's rate comes from HERE, not from the layer stream the FFF path uses: measured on a 1095-layer
+          //  resin slice, every layer message arrived inside a 22ms burst at the very end of a 2.8s run, because
+          //  slice_sla produces the whole scene and only then drains the sink. Those timings describe the drain,
+          //  not the slicing. Its progress counter is the opposite — linear in layers and spread across the run.
+          if (pnd?.sla) { setProgress(d.total ? d.done / d.total : 0); noteLayers(d.done); pnd?.kick?.(); return }
           const N = d.total > 2 ? (d.total - 2) / 2 : 0
           if (N && d.done <= N) stopSupPoll()          // first progress = PASS1 done -> stop P1 polling
           if (N && d.done === N + 1) startSupPoll(N)
@@ -105,7 +138,7 @@ export function useSlicer(deps) {
         else if (d.type === 'layer') {   // stage-30 streaming: receive each layer immediately (transfer) -> accumulate, reset the watchdog
           pnd?.kick?.()
           const a = streamAccumRef.current
-          if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode) }
+          if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode); noteLayers(a.layers.length) }
         }
         else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
         else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('Slice failed: ' + d.error); setSlicing(false) } }
@@ -152,7 +185,7 @@ export function useSlicer(deps) {
     rebuildToolpaths()
     apiRef.current?.onSliced()
     setCanvasMode('preview')   // S2: switch to Preview automatically once slicing finishes
-    setStats(statsFromKernel(result.stats))
+    setStats(statsFromKernel(result.stats, result.throughput))
     setOverBed(!!result.stats.over_bed)
     setLayerCount(n)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([result.gcode], { type: 'text/plain' })) })
@@ -180,6 +213,7 @@ export function useSlicer(deps) {
       const stall = (typeof window !== 'undefined' && window.__vpStallNext) ? (window.__vpStallNext = false, true) : false
       const wdMs = (typeof window !== 'undefined' && window.__vpWatchdogOnce) ? ((v) => (window.__vpWatchdogOnce = 0, v))(window.__vpWatchdogOnce) : WATCHDOG_MS
       streamAccumRef.current = { layers: [], gcode: [] }   // reset the streaming accumulator (layers arrive one by one)
+      resetRate()   // a retry in the OOM ladder is a fresh slice, and last attempt's rate is not this one's
       let t = 0
       let lastD = 0, lastT = 0
       const __ts = performance.now(); let __stage = ''   // [vp-prof] phase arrival timestamps (temporary)

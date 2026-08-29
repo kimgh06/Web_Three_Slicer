@@ -194,7 +194,11 @@
 .side-card .layer-ctl button.on { background: #00ae42; color: #fff; border-color: #00ae42; }
 
 /* (5) Fixed bottom button bar */
-.side-bottom { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px; border-top: 1px solid #dcdfe3; background: #e6e9ec; }
+.side-bottom { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border-top: 1px solid #dcdfe3; background: #e6e9ec; }
+/* The live slice rate takes a full row of its own (it only exists while slicing). Tabular figures keep the
+   digits from changing width as the number moves, which otherwise jitters the line several times a second. */
+.slice-rate { flex: 0 0 100%; margin: -4px 2px 0; text-align: right; font-size: 11px; color: #5a646d;
+  font-variant-numeric: tabular-nums; }
 .side-bottom .slice-btn { flex: 1.4; margin: 0; }
 .auto-slice { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #444; cursor: pointer; white-space: nowrap; user-select: none; }
 .auto-slice input { margin: 0; }

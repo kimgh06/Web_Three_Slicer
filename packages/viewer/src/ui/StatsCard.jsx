@@ -78,6 +78,21 @@ export default function StatsCard({ stats, overBed, overBedText, overBedModel = 
           </div>
         )}
       </>)}
+      {/* How long the SLICE took, which is not the print time above and is easy to read as it if unlabelled —
+          hence "Sliced in", in seconds, next to an estimate in hours. The visible line is the human one; the
+          tooltip carries the two figures that only mean something to someone comparing runs: the kernel's own
+          share of the wall time, and ms per million segments (the kernel is not deterministic in segment count,
+          so raw milliseconds compare two different amounts of work). */}
+      {stats.throughput && stats.throughput.ms > 0 && (
+        <div className="sc-sub" data-testid="slice-speed"
+             title={[`wall ${Math.round(stats.throughput.ms)} ms`,
+                     stats.throughput.kernelMs != null ? `kernel ${Math.round(stats.throughput.kernelMs)} ms` : null,
+                     stats.throughput.msPerMsegment != null ? `${Math.round(stats.throughput.msPerMsegment)} ms per million segments` : null]
+                    .filter(Boolean).join('\n')}>
+          Sliced in <b>{(stats.throughput.ms / 1000).toFixed(1)}s</b>
+          {stats.throughput.layersPerSecond > 0 && ` · ${Math.round(stats.throughput.layersPerSecond)} layers/s`}
+        </div>
+      )}
       {/* "Beyond the bed" alone leaves the next two questions unanswered: by how much, and what is actually out
           there. Naming the toolpaths when the model itself fits is the difference between "shrink the model" and
           "it is the support/skirt/brim" — the second is fixed by moving inward a few mm, not by rescaling. */}

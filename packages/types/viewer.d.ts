@@ -93,7 +93,12 @@ export interface ViewportProps {
   /** Every value change in one channel. See {@link ViewportEvent}. */
   onEvent?: (event: ViewportEvent) => void
   /** A finished slice, fired where the result is cached — switching plate tabs does not re-fire it. */
-  onSliced?: (result: { plate: number; stats: Record<string, unknown>; gcode: string }) => void
+  /** `throughput` is how fast the slice ran — see `SliceThroughput` in the engine entry. Absent on a kernel
+   *  result that carried none (a cached plate re-announced from before the field existed). */
+  onSliced?: (result: {
+    plate: number; stats: Record<string, unknown>; gcode: string
+    throughput?: { ms: number; kernelMs: number | null; layersPerSecond: number; msPerMsegment: number | null }
+  }) => void
 }
 
 /**
@@ -149,6 +154,13 @@ export type ViewportEvent =
   | { type: 'slicing'; value: boolean }
   /** 0..1. Fires several times a second while slicing — throttle on the host side if that matters. */
   | { type: 'progress'; value: number }
+  /**
+   * Live throughput: layers finished per second over a 250ms window, `0` between slices. An SLA slice reports it
+   * throughout. An FFF slice reports it only once the emission pass begins streaming layers — the earlier passes
+   * publish no per-layer progress, so nothing is measured there and none is invented. For the whole-slice figure
+   * use `throughput` from `onSliced`.
+   */
+  | { type: 'sliceRate'; value: number }
   | { type: 'viewType'; value: 'feature' | 'speed' | 'height' | 'width' | 'fan' | 'temp' | 'filament' }
   | { type: 'paintMode'; value: 'off' | 'enforcer' | 'blocker' | 'material' }
   | { type: 'layerCount'; value: number }

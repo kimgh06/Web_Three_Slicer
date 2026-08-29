@@ -291,7 +291,8 @@ export default function TestBed() {
               only={{ builder: 'TabFilament::build' }} />
           )}
           onEvent={e => push(`${e.type}: ${JSON.stringify(e.value)}`)}
-          onSliced={r => push(`onSliced: plate ${r.plate}, ${r.stats.layers} layers, ${r.gcode.length} chars`)}
+          onSliced={r => push(`onSliced: plate ${r.plate}, ${r.stats.layers} layers, ${r.gcode.length} chars`
+            + (r.throughput ? `, ${Math.round(r.throughput.ms)}ms @ ${Math.round(r.throughput.layersPerSecond)} layers/s` : ''))}
           onExport={(file, filename) => {
             setSaves(prev => [`${filename} — ${(file.size / 1e6).toFixed(2)} MB (${file.type})`, ...prev].slice(0, 8))
             push(`onExport: ${filename} ${file.size} bytes`)
