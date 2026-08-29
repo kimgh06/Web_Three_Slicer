@@ -3,10 +3,25 @@
 // Schema-driven helpers (deriveKernelParams etc.) live in the "three-slicer/settings" subpath because
 // they import JSON — use them in a bundler (vite) or with Node JSON import attributes.
 
+import { withSliceWarnings } from './src/warnings.js'
+import { withSliceThroughput } from './src/throughput.js'
+
 const u8 = (b) => (b instanceof Uint8Array ? b : new Uint8Array(b))
 
-// Off-main-thread worker URL for the browser: `new Worker(engineWorkerURL(), { type: 'module' })`.
+// Off-main-thread worker URL for a NO-BUNDLER browser setup (native ESM, an import map, a CDN):
+// `new Worker(engineWorkerURL(), { type: 'module' })`. Under a bundler use `createSlicerClient()`
+// (three-slicer/client), which creates the worker through the static pattern bundlers recognize.
 // The worker speaks the stage-30 streaming protocol ({type:'layer'|'done'|'error'|'progress'}).
+//
+// This expression on its OWN is what a bundler reads as a plain asset reference: through 0.2.2 it is how the
+//  client built its default worker, and Vite copied slicer.worker.js into dist verbatim — measured on a Vite 5 app
+//  importing three-slicer/client and nothing else, a 21KB copy of the untouched source, still importing
+//  `./slicer_core.js`, `./slicer_core.mt.js`, `./sla_request.js` and `./sla_core.js` in a 40KB dist that held none
+//  of them. It 404s on the worker's first message, and only after `vite build`, since dev serves the sources.
+//  What fixed it is client.js creating the worker through the static `new Worker(new URL('literal', …))` pattern
+//  bundlers treat as a worker ENTRY. Once that entry exists this reference resolves onto the same chunk and emits
+//  nothing extra (verified: dist byte-identical with the path written here inline or held in a const), so it is
+//  harmless — but it is not what makes a bundled worker work. Leave it for the no-bundler callers.
 export const engineWorkerURL = () => new URL('./src/slicer.worker.js', import.meta.url)
 
 // createSlicer(): load the WASM kernel and return a handle. Works in Node and the browser main thread.
@@ -28,14 +43,19 @@ export async function createSlicer() {
     slice(stl, params, { onProgress, onLayer } = {}) {
       const p = typeof params === 'string' ? params : JSON.stringify(params || {})
       if (onLayer) M.set_layer_sink((z, idx, gcode, paths, widths) => onLayer({ z, idx, gcode, paths, widths }))
-      try { return M.slice(u8(stl), p, onProgress || (() => {})) }
+      // `warnings` names the conditions a slice can SUCCEED with (an off-bed model above all) — see src/warnings.js.
+      // `throughput` is measured HERE rather than derived from the kernel's phase timings, because the wall time a
+      //  caller feels includes the STL crossing the WASM boundary and the layer sink running on this side.
+      const started = performance.now()
+      try { return withSliceThroughput(withSliceWarnings(M.slice(u8(stl), p, onProgress || (() => {}))), performance.now() - started) }
       finally { if (onLayer) M.clear_layer_sink() }
     },
     // SLA (resin) slice: no G-code — layers carry the mask segment stream, support_mesh/pad_mesh the preview
     //  soups, stats the resin figures and lift_layers. Same params-object-or-string contract as slice().
     sliceSla(stl, params, onProgress) {
       const p = typeof params === 'string' ? params : JSON.stringify(params || {})
-      return M.slice_sla(u8(stl), p, onProgress || (() => {}))
+      const started = performance.now()
+      return withSliceThroughput(M.slice_sla(u8(stl), p, onProgress || (() => {})), performance.now() - started)
     },
     paintPrepare(stl) { M.selector_prepare(u8(stl)); return M.selector_facet_count() },
     paint(a) {

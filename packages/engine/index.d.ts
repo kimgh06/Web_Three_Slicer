@@ -71,12 +71,38 @@ export interface SliceStats {
   [k: string]: unknown
 }
 
+/** A condition the slice SUCCEEDED with. `'over_bed_model'`: the model itself sliced outside the printable area. */
+export type SliceWarning = 'over_bed_model' | (string & {})
+
+/** How fast the slice ran. Derived at the call site; the `stats` phase timings are untouched. */
+export interface SliceThroughput {
+  /** Wall time around the slice call, ms — includes the STL crossing the WASM boundary and the layer stream */
+  ms: number
+  /** The kernel's own phase total (`t_pass1_ms` + surface + support + emit), or `null` if it reported none.
+   *  `ms - kernelMs` is the boundary cost. */
+  kernelMs: number | null
+  /** Emitted layers per second of wall time — the figure to show a person */
+  layersPerSecond: number
+  /** Milliseconds per million path segments, or `null` when nothing was emitted. The figure to COMPARE runs with:
+   *  the kernel is not deterministic in segment count (measured 15% apart on one input), so raw milliseconds
+   *  compare two different amounts of work. */
+  msPerMsegment: number | null
+}
+
 export interface SliceResult {
   /** Absent when `onLayer` was set — assemble it from the callback instead */
   gcode?: string
   stats: SliceStats
   /** Absent when `onLayer` was set */
   layers?: unknown[]
+  /**
+   * What the slice got away with, empty when nothing. Every entry restates a `stats` flag that is easy to miss
+   * among twenty numbers — an off-bed model slices with plausible time and material and no error — so check
+   * `result.warnings.length` once instead of learning which flags exist. Absent on a failed slice (see `error`).
+   */
+  warnings?: SliceWarning[]
+  /** How fast it ran. Absent on a failed slice (see `error`). */
+  throughput?: SliceThroughput
   /** Set instead of a result when the slice failed or was cancelled (`'canceled'`) */
   error?: string
 }

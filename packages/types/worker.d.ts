@@ -65,11 +65,12 @@ export type SlicerRequest =
   | { cmd: 'slaJob'; job: SlaJob }
   /**
    * Slice — and note it carries **no `cmd`**: slicing is the worker's default action, and leaving the field off
-   * is what selects it. `params` must be a JSON **string**; the worker hands it straight to the kernel, which
-   * parses JSON text. (`createSlicer().slice()` on the direct handle also accepts an object and stringifies it.)
+   * is what selects it. `params` accepts a JSON string or an object; the kernel parses JSON text, so an object is
+   * stringified for you (it was string-only through 0.2.2, which made this the one call path with a different
+   * contract from `createSlicer().slice()` and `createSlicerClient().slice()`).
    * Replies: `progress` and `layer` while it runs, then `done` — or `error`.
    */
-  | { stl: ArrayBuffer; params: string }
+  | { stl: ArrayBuffer; params: string | object }
 
 export type SlicerResponse =
   | { type: 'warm' }
