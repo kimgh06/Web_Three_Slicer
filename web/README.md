@@ -32,8 +32,9 @@ slicer.slice(stlArrayBuffer, kernelParams, {
 slicer.dispose()
 ```
 
-In the browser (off the main thread) use a worker: `new Worker(engineWorkerURL(), { type: 'module' })` — the worker speaks the
-stage-30 streaming protocol (`{type:'layer'|'done'|'error'|'progress'}`). Converting UI settings into kernel parameters is
+In the browser (off the main thread) use a worker — under a bundler `createSlicerClient()` from `three-slicer/client` creates one
+that Vite/webpack emit correctly; without a bundler, `new Worker(engineWorkerURL(), { type: 'module' })`. Either way the worker speaks
+the stage-30 streaming protocol (`{type:'layer'|'done'|'error'|'progress'}`). Converting UI settings into kernel parameters is
 `deriveKernelParams(settings)` from `three-slicer/settings` (schema-driven, for bundlers/browsers).
 
 ## Extraction artifacts

@@ -12,6 +12,20 @@ The package is published as a single npm package, `three-slicer`, with subpath e
 - Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer)
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
 
+## Start Here
+
+Three ways in — pick the row that is your case. Each path is a working code block plus the one doc worth
+reading whole; everything else is lookup.
+
+| Your case | Path | Copy this | Then read |
+| --- | --- | --- | --- |
+| "Just the numbers" — quotes, farms, automation. No UI, no React | **Headless** | [Quick Start: Headless Slicing](#quick-start-headless-slicing) | [engine/README](engine/README.md) (134 lines), params via [PARAMS.md](engine/PARAMS.md) as lookup |
+| A slicer inside your existing page | **Embed** | [Quick Start: React Viewer](#quick-start-react-viewer) | [viewer/README](viewer/README.md) (330 lines — the props contracts live there) |
+| The full slicer UI — viewport + settings panel | **Full UI** | [Full React Example](#full-react-example) | viewer/README + [components/README](components/README.md) |
+
+Whichever path: read [Before You Ship](#before-you-ship) before deploying — those traps return plausible
+results instead of errors, and the first two never show up in `npm run dev`.
+
 ## Features
 
 - WASM slicing engine with Arachne walls, infill patterns, supports, raft/brim/skirt, ironing, arc fitting, multi-material paths, and layer streaming.
@@ -78,6 +92,31 @@ slicer.dispose()
 A runnable version of the above ships with the package: `node node_modules/three-slicer/engine/examples/headless.mjs` writes a cube, slices it batch and streamed, and prints the stats.
 
 `result.error` is set instead of a result when a slice fails or is cancelled — check it before reading `gcode`.
+
+`result.warnings` is the other half of that: a `string[]`, empty when nothing, naming what a **successful** slice
+got away with. Today the one entry is `'over_bed_model'` — the model sliced outside the printable area, which
+otherwise reports plausible time and material and no error (see [Before You Ship](#before-you-ship)). Every path
+carries it: the direct handle, `createSlicerClient()`, and the raw worker's `done` reply.
+
+`result.throughput` says how fast it ran, measured around the call on the same three paths:
+
+```js
+result.throughput.ms               // wall time, incl. the STL crossing into WASM and the layer stream out
+result.throughput.kernelMs         // the kernel's own phase total; ms − kernelMs is the boundary cost
+result.throughput.layersPerSecond  // the figure to show a person
+result.throughput.msPerMsegment    // the figure to COMPARE runs with
+```
+
+Compare runs on `msPerMsegment`, not on `ms`. The kernel is not deterministic in segment count — the same input
+has been measured 15% apart between runs — so two raw millisecond figures describe two different amounts of work,
+and the difference reads as a regression that is not there. In the viewer the same throughput is live: the slice
+bar shows layers/second while slicing, and the host receives it as the `sliceRate` event.
+
+SLA slices carry it too (`sliceSla`, the object-aware job, and the JS contour fallback). `kernelMs` sums that
+technology's own passes — contours, sample, tree, raster, emit — because the two share only the name `t_emit_ms`,
+and reading an SLA result through the FFF phase list would report its emit pass as the entire kernel time
+(measured on a 10mm cube: 2.99ms summed correctly, 1.42ms if mis-read). Compare SLA runs against SLA runs: its
+`path_segments` counts mask segments, not toolpath segments.
 
 ## Streaming Layers
 
@@ -211,6 +250,33 @@ Available subpaths:
 | `three-slicer/data` | Named exports for extracted metadata |
 | `three-slicer/data/*.json` | Extracted OrcaSlicer metadata |
 
+## Architecture: How the Pieces Connect
+
+One npm package, five modules. The dependency direction is one-way: `wasm-core` →(build)→ `engine`
+←(data)← `data`, with `components` and `viewer` consuming different surfaces of the engine, `types`
+generating and gating the contract from the side — and the glue at the top is always a single sparse
+settings map held by the host app.
+
+| Module | Role | Published as | Depends on | Consumed by |
+| --- | --- | --- | --- | --- |
+| `wasm-core` | C++ kernel sources + vendored third_party | not published | (ported upstream sources) | `engine` — as build output only |
+| `engine` | kernel SDK: direct handle, worker, client, settings derivation | `three-slicer` root + `/settings` `/toggle` `/client` `/worker` `/wasm(-mt)` `/data` | committed wasm-core output, `data`, the generated `kernel_setting_keys.js` | `components`, `viewer`, every consumer |
+| `data` | extracted schema + catalogs (config-schema, printers, processes, filaments…) | `/data` | `extract_all.py` ← upstream | `engine`'s settings, `components`, `viewer` |
+| `types` | every `.d.ts` + two generators | attached per subpath via the exports map's `types` fields | runs `engine` at generation time (probing), reads `data`'s schema | consumers' IDE/TS — no runtime dependency |
+| `components` | `<SettingsPanel/>` (Shadow DOM) | `/components` | `data` (schema + UI tree), `engine`'s `/toggle` | host apps |
+| `viewer` | `<Viewport/>` (three.js, Shadow DOM) | `/viewer` + `/viewer/toolpath` `/loaders` `/gcode` | `engine`'s `/settings`, the worker, `/data`; `three` (peer) | host apps |
+
+Some of the connections are not imports, and knowing which is which explains most of the layout:
+
+| Connection | Mechanism | Notes |
+| --- | --- | --- |
+| `wasm-core` → `engine` | `build.sh` (emscripten) commits its output into `engine/src/` | not an import — the golden byte-identical gate and the invariant suite verify kernel changes against the engine's output |
+| `data` → `engine`/`components`/`viewer` | `/data` subpath imports | the source of truth is `extract_all.py` over the upstream checkout |
+| `types` → `engine` | the generator **executes** `deriveKernelParams` (probing) and writes `engine/PARAMS.md` + `engine/src/kernel_setting_keys.js` back into the engine | `test_kernel_params.mjs` is the staleness gate |
+| `types` → `data` | `gen_settings_types.mjs` generates `settings-keys.d.ts` (976 keys) from the schema | run automatically by the build |
+| `viewer` ↔ `components` | **no direct link** | the host shares one settings map with both as props, and mounts `<SettingsPanel embedded/>` into the viewer's panel slots |
+| inside `viewer` | `core` (pure, node-runnable) ← `scene` (three/DOM) ← `actions` ← `ui` | `test_layers.mjs` enforces the boundary |
+
 ## TypeScript
 
 Type declarations ship with the package — no `@types/*` needed. All 976 setting keys are typed from the config schema, enum values included:
@@ -254,7 +320,7 @@ const params = deriveKernelParams(settings)
 const result = slicer.slice(stlArrayBuffer, params)
 ```
 
-`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel — 131 of its 159 parameters are reachable from 127 schema keys today; the [generated reference](engine/PARAMS.md) is the authoritative list. Other schema keys can still be displayed by the UI, but they may not affect slicing output yet. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
+`deriveKernelParams()` maps the curated set of schema keys currently supported by the kernel — 131 of its 159 parameters are reachable from 128 schema keys today; the [generated reference](engine/PARAMS.md) is the authoritative list. Other schema keys can still be displayed by the UI, but they may not affect slicing output yet — `ignoredKernelSettings(settings)` names the keys of your map in that category, so a "why did this setting do nothing" question has a one-call answer. Vector options are simplified to their first element, except the filament options described below, which keep every extruder's entry.
 
 ## 3MF Projects
 
@@ -360,13 +426,10 @@ pick's leftovers behind — an ABS material followed by a PLA one keeps ABS's ch
 exposes the exact key set to remove first:
 
 ```js
-function applyPreset(settings, preset, keys) {
-  const next = { ...settings }
-  for (const key of keys) delete next[key]
-  return Object.assign(next, preset)
-}
+import { applyPreset } from 'three-slicer/settings'
 
 setSettings(s => applyPreset(s, filaments.settingsFor(name), filaments.keys))
+// clears filaments.keys first, then merges; a null preset (failed lookup) applies nothing
 ```
 
 The same applies to `processPresets().keys` and `printerKeys`. The filament key set is disjoint from the process key
@@ -485,7 +548,11 @@ and its out-of-memory retry ladder, both of which are UI policy rather than prot
 ### Driving the worker directly
 
 `createSlicerClient` is a thin wrapper; the protocol underneath is a plain message contract, fully typed in
-`three-slicer/worker`.
+`three-slicer/worker`. A slice request is the message with **no `cmd`**, and its `params` takes an object or a
+JSON string (object accepted since 0.2.3 — the kernel parses JSON text, so it is stringified for you).
+
+The worker below is created with `engineWorkerURL()`, which suits a no-bundler page; under Vite or webpack
+create it the way [Bundler Notes](#bundler-notes) describes and drive that instance instead.
 
 ```js
 import { engineWorkerURL } from 'three-slicer'
@@ -549,6 +616,19 @@ Without cross-origin isolation the engine runs single-threaded, no `supsab` mess
 progress cannot be interrupted — terminate the worker instead.
 
 ## Bundler Notes
+
+**Creating the slice worker.** `createSlicerClient()` with no argument is the supported path under Vite and
+webpack: the default is written as the literal `new Worker(new URL('./slicer.worker.js', import.meta.url),
+{ type: 'module' })` that both bundlers recognize as a worker entry, so the worker reaches `dist` together
+with the kernel chunks it dynamically imports. Verified in `pack_check.sh`, which builds a Vite consumer and
+asserts every relative import the emitted worker chunk makes names a file the build actually produced.
+
+Through 0.2.2 that default went through `engineWorkerURL()`, and a function call does not match the pattern —
+Vite fell back to its plain-asset rule and copied the worker source in verbatim, still importing an unhashed
+`./slicer_core.js`. Measured on a Vite 5 app importing `three-slicer/client` and nothing else: a 21KB copy in
+a 40KB `dist` — no kernel emitted at all, a 404 on the worker's first message, and only after `vite build`,
+since the dev server serves the sources. `engineWorkerURL()` remains for no-bundler setups (native ESM, an
+import map, a CDN); under a bundler use the no-argument client or `three-slicer/worker?worker`.
 
 Vite consumers should enable ES module workers and an ES2022 build target:
 
@@ -628,13 +708,16 @@ the layout by hand.
 | `slicer.overlay(enforcer)` | The painted overlay triangles for one state, as a `Float32Array` |
 | `slicer.heapSize()` | Current WASM heap size, bytes (peak, monotonic) |
 | `slicer.dispose()` | Releases the slicer handle for garbage collection |
-| `engineWorkerURL()` | Returns a browser worker URL |
+| `engineWorkerURL()` | Worker URL for a **no-bundler** browser setup. Under Vite/webpack use `createSlicerClient()` or `three-slicer/worker?worker` — see [Bundler Notes](#bundler-notes) |
 
 ### `three-slicer/settings`
 
 | API | Description |
 | --- | --- |
 | `deriveKernelParams(settings, opts?)` | Converts sparse OrcaSlicer settings to kernel params. `opts.plate` picks a plate's entry from per-plate options |
+| `applyPreset(settings, preset, keys)` | Clear-then-merge: deletes the catalog's `keys`, merges the preset; a null preset applies nothing |
+| `kernelSettingKeys` | The schema keys `deriveKernelParams` consumes — generated with the [reference table](engine/PARAMS.md) |
+| `ignoredKernelSettings(settings)` | The map's keys the FFF derivation does **not** read — accepted but without slicing effect |
 | `schemaDefault(key)` | The config-schema default for a key |
 | `settingRaw(settings, key)` | The map's value, or the schema default |
 | `settingScalar(settings, key)` | The same, reduced to a scalar — the first set entry of a per-extruder column |
@@ -696,6 +779,41 @@ the layout by hand.
 | Browser worker | Off-main-thread slicing and streaming |
 | React | Viewer and settings panel |
 | three.js | Required by `three-slicer/viewer` |
+
+## Before You Ship
+
+The traps below were all hit while building the [integration demos](https://github.com/kimgh06/Web_Three_Slicer/tree/main/examples)
+and the live landing embed — each one returns something plausible instead of an error, which is why they
+are listed **in the order they bite**, not by topic. The later a trap fires, the more it costs — and none of
+them fails a build or throws, so nothing surfaces them for you.
+
+1. **Your first real model: hand it over origin-centered, not bed-centered.** The kernel takes plate-local
+   coordinates and seats the model on the bed itself; pre-centering on the bed adds the offset twice and the
+   part slices *off the bed* — with plausible time and material and no error. Since 0.2.3 the result says so:
+   `result.warnings` carries `'over_bed_model'` (the `stats.over_bed_model` flag is still there too). Check
+   `result.warnings.length` after every slice; it is the channel every future condition of this kind uses.
+2. **Reading the results: `filament_mm` is a length, and the time depends on the kernel.** Grams are your
+   conversion (`filament_mm × π × (diameter/2)² × density / 1000`, from the filament preset's
+   `filament_diameter`/`filament_density`). `time_estimate` differs ~25% between the single- and
+   multi-threaded kernels on identical geometry, so your COOP/COEP headers change the number — pin one as
+   the reference if you price on it.
+3. **Drawing toolpaths: the role field is encoded, and G-code round-trips lose roles.** `paths[k+3]` holds
+   `role + tool*16` — mask with `& 15` / `>>> 4`. `SegmentData.position` is stride 4 (x, y, z, w). The
+   kernel's G-code carries no `;TYPE:` comments, so `parseGcode` collapses roles into wall — draw
+   `result.layers` directly when the slicing side is yours.
+4. **Settings: presets are sparse, and unread keys are silent.** Apply presets with
+   [`applyPreset`](#materials-and-multi-material) (clear-then-merge — a plain merge keeps the previous
+   material's leftovers). A key the FFF derivation does not read is accepted and does nothing:
+   `ignoredKernelSettings(settings)` names them.
+5. **Cancel is conditional.** `client.cancel()` works only on a cross-origin-isolated page (the mt kernel);
+   otherwise it returns `false` — terminate and recreate the client instead.
+   Details: [Cancelling a slice](#cancelling-a-slice).
+
+Gone as of 0.2.3, and listed here only because it bit every consumer before then: `createSlicerClient()` with
+no argument used to build a worker Vite copied as a plain asset, which 404'd on its own kernel import in
+production while `npm run dev` passed. The no-argument form now emits a real worker chunk — see
+[Bundler Notes](#bundler-notes). On 0.2.2 or earlier, pass the worker in yourself
+(`import SlicerWorker from 'three-slicer/worker?worker'`).
 
 ## Known Limits
 

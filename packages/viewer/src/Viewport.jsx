@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw, settingScalar } from 'three-slicer/settings'
 import { schema } from 'three-slicer/data'
 import ShadowHost from './shadow_host.jsx'
+import { useSliceRequest } from './use_slice_request.js'
+import { useStaleSlice } from './use_stale_slice.js'
+import { useInitialFiles } from './use_initial_files.js'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
 import { SUPPORTED_EXT } from './scene/model_loaders.js'
 import { MAX_PLATES } from './core/plate_layout.js'
@@ -19,7 +22,7 @@ import {
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
 } from './actions/index.js'
 import { bedOverflow, overflowText } from './core/bed_bounds.js'
-import { towerBoxes } from './core/tower_layout.js'
+import { towerBoxes, usesMultipleTools } from './core/tower_layout.js'
 import {
   TopBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
@@ -63,12 +66,14 @@ const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
 //  · files     — content imported once on mount (File or {name,data}), through the same extension dispatch as a
 //                drop: models/3mf projects, .sl1 raster archives, and preset files.
 //  · default*  — initial value for state this component owns; the host reads changes back through onEvent.
+//  · sliceRequest — the host's Slice button: an identity CHANGE requests one slice of the current plate,
+//                the mount value is inert (use_slice_request.js has the full contract).
 //  · onEvent   — one channel for every value change ({type, value}), rather than a prop per value.
-//  · onSliced  — the finished slice ({plate, stats, gcode}), the one payload too big to belong on onEvent.
+//  · onSliced  — the finished slice ({plate, stats, gcode, throughput}), the payload too big to belong on onEvent.
 export default function Viewport({
   settings = {}, setSettings = () => {}, processPanel = null, motionPanel = null, filamentPanel = null,
   panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
-  onEvent = null, onSliced = null, onExport = null,
+  sliceRequest = null, onEvent = null, onSliced = null, onExport = null,
 }) {
   // Which slicing technology the printer profile declares — the one switch the FFF/SLA routing hangs off.
   //  Everything downstream derives from it: the panels shown, the slicing path (use_slicer), the export format.
@@ -139,6 +144,7 @@ export default function Viewport({
   const [autoSlice, setAutoSlice] = useState(!!defaultAutoSlice)   // G004: debounced auto re-slice on settings change
   const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
+  const [sliceRate, setSliceRate] = useState(0)   // layers/second while a slice runs, 0 between them (use_slicer computes it)
   const [error, setError] = useState('')
   const [stats, setStats] = useState(null)
   const [overBed, setOverBed] = useState(false)
@@ -204,7 +210,7 @@ export default function Viewport({
 
   // ---- Host change notifications (onEvent) — the effects live in use_host_events.js ----
   useHostEvents(onEventRef, {
-    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress,
+    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress, sliceRate,
     viewType, paintMode, layerCount, error, notice: sliceNotice, layerLo, layerHi,
   })
 
@@ -226,7 +232,7 @@ export default function Viewport({
     paintXformRef, paintOverlayRef, paintModeRef, paintToolRef, paintStateCountsRef,
     brushRadiusRef, materialExtruderRef, extruderColorsRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setObjects, setTriWarn, setDragOver, setExporting, setSl1Ready,
-    setProgress, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
+    setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
     setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
     setPaintCounts, setPaintModeState, setPaintStateCounts,
     setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate,
@@ -300,8 +306,9 @@ export default function Viewport({
   //  rather than in the scene so both the box and the slice read one source.
   useEffect(() => {
     const api = apiRef.current; if (!api) return
-    const multi = extruderColors.length > 1
-    // No box when there is no tower: a single filament, the preview, an empty plate, the tower switched off —
+    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools, core/tower_layout.js).
+    const multi = extruderColors.length > 1 && usesMultipleTools(objects, paintStateCounts)
+    // No box when there is no tower: nothing switching tools, the preview, an empty plate, the tower switched off —
     //  or a resin printer, which has no extruders to purge between.
     const towerOff = settings?.enable_prime_tower === false
     if (!multi || towerOff || tech === 'SLA' || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
@@ -312,7 +319,7 @@ export default function Viewport({
       modelBounds: (plate) => api.modelBounds?.(plate),
       plateOrigin: (plate) => api.platePos?.(plate),
     }))
-  }, [extruderColors.length, canvasMode, objects.length, wipeTowerReal, settings, selectedPlate, plateCount, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [extruderColors.length, canvasMode, objects, paintStateCounts, wipeTowerReal, settings, selectedPlate, plateCount, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -401,13 +408,8 @@ export default function Viewport({
     ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments, importSl1, loadPresetFile,
   })
 
-  // Initial content (the `files` prop): one loadFiles pass on mount, through the same extension dispatch as a
-  //  drop. Deliberately mount-only — a host that recreates the array each render must not re-import its models;
-  //  runtime loading stays with the picker/drop (and an imperative handle, when one lands).
-  useEffect(() => {
-    if (!files?.length) return
-    loadFiles(files.map(f => (typeof File !== 'undefined' && f instanceof File) ? f : new File([f.data], f.name)))
-  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+  // Initial content (the `files` prop): mount-only import + a warning on a later change (use_initial_files.js).
+  useInitialFiles({ files, loadFiles })
 
   // ---- Project export: "save as" a 3mf project, or the plain geometry as an STL ----
   //  settings/bed are read through refs because the actions are async (the painting comes back from the worker) and
@@ -435,6 +437,13 @@ export default function Viewport({
     autoTimerRef.current = setTimeout(fire, 800)
     return () => clearTimeout(autoTimerRef.current)
   }, [settings, autoSlice, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The host's Slice button — an identity change on the prop requests one slice (use_slice_request.js).
+  useSliceRequest({ sliceRequest, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
+
+  // A settings change makes every cached result stale — drop them rather than keep showing one (use_stale_slice.js).
+  useStaleSlice({ settings, gcode, sl1, plateResultsRef, selectedPlateRef, canvasModeRef,
+    clearToolpaths, showPlateResult, refreshSlicedCount, setCanvasMode })
 
   // ---- The move scrub: how far into the top shown layer the print has got (use_move_scrub.js) ----
   const moveScrub = useMoveScrub({
@@ -866,7 +875,7 @@ export default function Viewport({
 
             {showPanel('sliceBar') && (
               <Panel panels={panels} name="sliceBar">
-              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress}
+              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}

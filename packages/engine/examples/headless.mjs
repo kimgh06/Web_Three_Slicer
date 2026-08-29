@@ -26,6 +26,10 @@ const slicer = await createSlicer()
 // (a) batch slice
 const r = slicer.slice(cube, params)
 console.log(`batch : layers=${r.stats.layers} segments=${r.stats.path_segments} filament=${r.stats.filament_mm.toFixed(1)}mm gcode=${r.gcode.length} chars`)
+// What a SUCCESSFUL slice got away with — empty here. It is not empty if you hand in a bed-centred model:
+//  the kernel takes plate-local coordinates, so pre-centring adds the bed offset twice and the part slices
+//  off the plate with plausible time and material and no error.
+console.log(`warn  : ${r.warnings.length ? r.warnings.join(', ') : 'none'}`)
 
 // (b) streaming slice via onLayer (stage 30) — assemble G-code from per-layer chunks
 let chunks = 0, gbytes = 0

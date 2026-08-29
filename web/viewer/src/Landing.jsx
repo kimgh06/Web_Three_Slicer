@@ -116,18 +116,15 @@ function LiveSlicer() {
   const [armed, setArmed] = useState(false)      // the section has been near the viewport once
   const [files, setFiles] = useState(null)       // [{name, data}] — held in state for a stable identity
   const [settings, setSettings] = useState(INITIAL_SETTINGS)
-  // The viewer exposes no imperative slice — slicing starts from its own UI or defaultAutoSlice at
-  // mount. With the built-in chrome hidden, the FIRST slice therefore works by REMOUNTING (the key)
-  // with defaultAutoSlice; after that auto-slice is on, so a settings change (the Supports checkbox,
-  // a drag) re-slices in place with no remount. The benchy buffer stays in state, so a remount
-  // re-parses but never re-downloads.
+  // Slicing goes through the sliceRequest prop: bumping the counter requests one slice in place — no
+  // remount, so the scene never blanks. Reset still remounts (the key), because clearing a sliced result
+  // back to the plain model is what a remount IS; the benchy buffer stays in state, so it re-parses but
+  // never re-downloads.
   //
-  // `phase` exists because the remount made the buttons flicker (measured: enabled until the new mount's
-  // slicing event at ~960ms, disabled for 240ms, enabled again). Going busy AT THE CLICK and staying
-  // busy until the slice reports done turns that double flip into one continuous window, and the veil
-  // covers the remount's blank frame.
+  // `phase` goes busy AT THE CLICK ('preparing', until the viewer's slicing event takes over) so the
+  // buttons hold one continuous disabled window; the veil covers the first slice's kernel download.
   const [generation, setGeneration] = useState(0)
-  const [wantSlice, setWantSlice] = useState(false)
+  const [sliceRequest, setSliceRequest] = useState(0)
   const [phase, setPhase] = useState('idle')     // idle | preparing | slicing | done
   const boxRef = useRef(null)
 
@@ -162,7 +159,7 @@ function LiveSlicer() {
                 settings={settings}
                 setSettings={setSettings}
                 files={files}
-                defaultAutoSlice={wantSlice}
+                sliceRequest={sliceRequest}
                 panels={{ sidebar: false, topBar: false, gizmoRail: false, objectToolbar: false, plateBar: false, sliceBar: false, paintPanel: false, emptyHint: false }}
                 features={{ shortcuts: false }}
                 onEvent={event => {
@@ -176,7 +173,7 @@ function LiveSlicer() {
           </div>
           <div className="lp-live-bar">
             <button className="lp-btn primary" disabled={phase !== 'idle'}
-              onClick={() => { setWantSlice(true); setPhase('preparing'); setGeneration(n => n + 1) }}>
+              onClick={() => { setPhase('preparing'); setSliceRequest(n => n + 1) }}>
               {phase === 'idle' ? 'Slice this Benchy' : phase === 'done' ? 'Sliced' : 'Slicing…'}
             </button>
             <label className="lp-live-check">
@@ -184,12 +181,17 @@ function LiveSlicer() {
                 type="checkbox"
                 checked={!!settings.enable_support}
                 disabled={phase === 'preparing' || phase === 'slicing'}
-                onChange={event => setSettings(current => ({ ...current, enable_support: event.target.checked }))}
+                onChange={event => {
+                  const enabled = event.target.checked
+                  setSettings(current => ({ ...current, enable_support: enabled }))
+                  // Already sliced? Re-slice in place with the new setting — no remount.
+                  if (phase === 'done') { setPhase('preparing'); setSliceRequest(n => n + 1) }
+                }}
               />
               Supports
             </label>
             <button className="lp-btn" disabled={phase === 'preparing' || phase === 'slicing'}
-              onClick={() => { setWantSlice(false); setPhase('idle'); setSettings(INITIAL_SETTINGS); setGeneration(n => n + 1) }}>
+              onClick={() => { setPhase('idle'); setSettings(INITIAL_SETTINGS); setGeneration(n => n + 1) }}>
               Reset
             </button>
           </div>

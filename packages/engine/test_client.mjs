@@ -5,6 +5,8 @@
 // a kernel. The kernel side of the same protocol is already covered by wasm-core/test.mjs.
 //   run: node packages/engine/test_client.mjs
 import { createSlicerClient } from './src/client.js'
+import { sliceWarnings, withSliceWarnings } from './src/warnings.js'
+import { sliceThroughput, withSliceThroughput } from './src/throughput.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -70,6 +72,66 @@ console.log('\n[client: onLayer takes ownership]')
   // The whole point of streaming is not holding the model in memory; buffering behind the caller's back would
   //  defeat it on exactly the large models it exists for.
   check('nothing is buffered when the caller takes the layers', value?.gcode === undefined)
+}
+
+console.log('\n[result warnings: the slices that succeed while being wrong]')
+{
+  // The derivation, where it lives. The kernel reports an off-bed model as one flag among twenty stats numbers,
+  //  which is exactly why all four demos hand-wrote the same check — the array is the version you cannot miss.
+  check('an off-bed model is named', sliceWarnings({ over_bed_model: true })[0] === 'over_bed_model')
+  check('a clean slice warns about nothing', sliceWarnings({ over_bed_model: false }).length === 0)
+  // over_bed (support/skirt/brim leaving the bed) is NOT this: upstream prints those past the model outline by
+  //  design, so raising it on every brimmed plate would train hosts to ignore the channel.
+  check('printed-around-the-model overhang is not a warning', sliceWarnings({ over_bed: true }).length === 0)
+  check('missing stats do not throw', sliceWarnings(undefined).length === 0)
+  check('the array is always there on a result', withSliceWarnings({ stats: {} }).warnings?.length === 0)
+  check('a failed slice gets no warnings array', !('warnings' in withSliceWarnings({ error: 'oom' })))
+
+  // And the way through the worker: the worker attaches it to the result, so the client passes it along rather
+  //  than re-deriving it — including on a streamed slice, where the result carries stats only.
+  const worker = new FakeWorker()
+  const client = createSlicerClient(worker)
+  const promise = client.slice(new ArrayBuffer(84), {})
+  worker.emit({ type: 'layer', z: 0.2, idx: 0, gcode: 'A', paths: new Float32Array(0), widths: new Float32Array(0) })
+  worker.emit({ type: 'done', result: { stats: { layers: 1, streamed: true, over_bed_model: true }, warnings: ['over_bed_model'] } })
+  const { value } = await settled(promise)
+  check('the warning survives the client\'s assembly', value?.warnings?.[0] === 'over_bed_model')
+}
+
+console.log('\n[result throughput: how fast it ran]')
+{
+  const stats = { layers: 100, path_segments: 2_000_000, t_pass1_ms: 200, t_surface_ms: 100, t_support_ms: 400, t_emit_ms: 300 }
+  const t = sliceThroughput(stats, 2000)
+  check('layers per second is over wall time', t.layersPerSecond === 50)
+  // The comparison metric: the kernel is not deterministic in segment count, so raw ms compare different amounts
+  //  of work. 2M segments in 2000ms = 1000 ms per million.
+  check('ms per Msegment normalizes by the work done', t.msPerMsegment === 1000)
+  check('the kernel phases are summed separately', t.kernelMs === 1000)
+  check('...so the boundary cost is visible as the gap', t.ms - t.kernelMs === 1000)
+  // A kernel that reported no phases must not read as "0ms of kernel time", which would make the whole slice
+  //  look like marshalling overhead.
+  check('no phase timings reports null, not zero', sliceThroughput({ layers: 1 }, 10).kernelMs === null)
+  check('nothing emitted leaves ms/Mseg null', sliceThroughput({ layers: 0, path_segments: 0 }, 10).msPerMsegment === null)
+  check('a zero-length measurement does not divide by zero', Number.isFinite(sliceThroughput(stats, 0).layersPerSecond))
+  check('a failed slice gets no throughput', !('throughput' in withSliceThroughput({ error: 'oom' }, 5)))
+
+  // SLA times entirely different passes, and `t_emit_ms` is the ONE name both technologies use — so applying the
+  //  FFF list to an SLA result finds that key alone and reports the emit pass as the whole kernel time. Measured
+  //  on the real kernel with a 10mm cube: the SLA sum is 2.99ms where the FFF list would have said 1.42ms.
+  const slaStats = { sla: true, layers: 200, path_segments: 800,
+                     t_contours_ms: 1.5, t_sample_ms: 0.5, t_tree_ms: 1, t_raster_ms: 1, t_emit_ms: 2 }
+  check('an SLA result sums its own passes', sliceThroughput(slaStats, 10).kernelMs === 6)
+  // t_sample_* and t_raster_* are measured INSIDE t_sample_ms / t_raster_ms (slice_sla.cpp says so at each set).
+  check('the nested SLA sub-timings are not counted twice',
+    sliceThroughput({ ...slaStats, t_sample_slice_ms: 99, t_raster_clip_ms: 99 }, 10).kernelMs === 6)
+  check('an SLA slice still reports both rates', sliceThroughput(slaStats, 10).layersPerSecond === 20000)
+
+  const worker = new FakeWorker()
+  const client = createSlicerClient(worker)
+  const promise = client.slice(new ArrayBuffer(84), {})
+  worker.emit({ type: 'done', result: { stats, throughput: sliceThroughput(stats, 2000) } })
+  const { value } = await settled(promise)
+  check('it survives the trip through the client', value?.throughput?.layersPerSecond === 50)
 }
 
 console.log('\n[client: replies match callers in order]')

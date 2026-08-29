@@ -116,14 +116,36 @@ Every panel can be switched off, and the values the component owns can be seeded
 - **`files`** — content imported once on mount, through the same extension dispatch as a drop: models and 3mf
   projects, `.sl1` archives, and preset files. Mount-only on purpose — a host that rebuilds the array each render
   must not re-import its models; runtime loading stays with the picker and drop.
+- **`sliceRequest`** — the host's Slice button: a token whose identity change requests one slice of the current
+  plate. The mount value is inert, so hold a counter in state and bump it. Ignored under the same conditions
+  the built-in slice bar is not pressable (empty scene, an injected `gcode`/`sl1` plate); a change during a
+  running slice cancels and re-slices, so the last request wins.
 - **`defaultExtruderColors`**, **`defaultAutoSlice`** — initial values for state the component owns. Unlike the
   in-app toggle, `defaultAutoSlice` also performs the *first* slice, which is what makes a panel-less embed able to
   slice at all.
 - **`onEvent`** — one channel for every change: `canvasMode`, `objects`, `selectedPlate`, `plateCount`,
-  `extruderColors`, `autoSlice`, `slicing`, `progress`, `viewType`, `paintMode`, `layerCount`, `layerRange`,
-  `moveScrub`, `error`, `notice`. Initial values are not announced — the host passed them. `progress` fires several
-  times a second while slicing.
-- **`onSliced`** — `{plate, stats, gcode}` when a slice is cached. Switching plate tabs does not re-fire it.
+  `extruderColors`, `autoSlice`, `slicing`, `progress`, `sliceRate`, `viewType`, `paintMode`, `layerCount`,
+  `layerRange`, `moveScrub`, `error`, `notice`. Initial values are not announced — the host passed them.
+  `progress` and `sliceRate` fire several times a second while slicing.
+- **`onSliced`** — `{plate, stats, gcode, throughput}` when a slice is cached. Switching plate tabs does not
+  re-fire it. `throughput` sits beside `stats` rather than inside it, because that is where the engine puts it:
+  it is measured around the call, not reported by the kernel.
+
+`sliceRate` is live throughput — layers finished per second over a 250ms window, `0` between slices, and shown in
+the slice bar as well. When it appears depends on the technology, because the two publish per-layer news at
+opposite ends of the run:
+
+- **SLA** reports it throughout: its progress counter is linear in layers. (Its layer *stream* is not usable for
+  this — `slice_sla` builds the whole scene and then drains the sink, measured as 1095 layer messages inside a
+  22ms burst at the end of a 2.8s run, which would time the drain rather than the slicing.)
+- **FFF** reports it once the emission pass starts streaming layers. PASS1 publishes per-mille of itself rather
+  than a layer count (the total only arrives when it ends), and surfaces and support publish nothing per layer,
+  so there is nothing to measure before that and nothing is invented. Measured on a 38MB model: a 4.0s slice,
+  2.8s of it PASS1, the rate shown for the final 0.6s. On a support-heavy model emission is a much larger share.
+
+The whole-slice figure is `throughput` on `onSliced`, and it is present on both technologies — wall milliseconds,
+the kernel's own share, layers/second, and ms per million segments. It reads lower than the live figure whenever
+the live one covers only part of the run.
 
 ## Keyboard and mouse
 
@@ -269,8 +291,19 @@ The component owns its scene, and the props are the whole interface — there is
   file dialog and drag and drop. A host cannot remove or transform an object, or hand a mesh in mid-session. What
   it *can* do is watch: the `objects` event reports `{id, name, extruder, visible}` for every object as the set
   changes.
-- **Slicing is triggered from the UI or by `defaultAutoSlice`**, which unlike the in-app toggle also performs the
-  first slice — that is what makes a panel-less embed able to slice at all. The result arrives on `onSliced`.
+- **Slicing is triggered from the UI, by `defaultAutoSlice`, or by bumping `sliceRequest`** — a token prop whose
+  identity change requests one slice of the current plate (the mount value is inert), which is what a host with
+  the built-in chrome hidden wires its own Slice button to. The result arrives on `onSliced`.
+- **The prime tower stand-in appears only when the plate actually changes tools** — objects assigned to more
+  than one extruder, or material paint reaching extruder 2 or higher. Loading a second filament is not enough:
+  with everything on T1 the slice emits no tool change and builds no tower, so drawing the box would promise one.
+- **A settings change discards every slice result.** Everything a slice puts on screen — the toolpaths, the stats
+  card, the layer slider, the G-code export — describes the settings it ran with, and none of it says so. So when
+  a value in `settings` changes, the results are dropped and the viewer returns to Prepare; with `autoSlice` on
+  the re-slice then fills the empty preview. Two exceptions, neither of which claims to be a slice of these
+  settings: a plate injected through `gcode` / `sl1`, and an opened `.sl1` archive (that import applies the
+  archive's own settings, so invalidating on it would erase what the file was opened to show). Comparison is by
+  value, so a host that rebuilds its settings object every render does not lose its preview to it.
 - **`gcode` is one-way**: pass G-code text and it is drawn on the selected plate instead of a slice result, and
   auto re-slice leaves that plate alone while it is set.
 - Everything else the component owns — camera, selection, plate count, paint state — is reported through `onEvent`

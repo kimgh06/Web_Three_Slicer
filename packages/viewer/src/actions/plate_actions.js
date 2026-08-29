@@ -42,7 +42,9 @@ export function makePlateActions(deps) {
 
   // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
   //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.
-  const announceSlice = (plate, r) => { if (r && !r.error) onSlicedRef?.current?.({ plate, stats: r.stats, gcode: r.gcode }) }
+  //  `throughput` rides along beside `stats` rather than inside it, because that is where the engine puts it: it is
+  //  measured around the call (wall ms, layers/second, ms per million segments), not reported by the kernel.
+  const announceSlice = (plate, r) => { if (r && !r.error) onSlicedRef?.current?.({ plate, stats: r.stats, gcode: r.gcode, throughput: r.throughput }) }
 
   // Shows a cached result in Preview — every cached plate's toolpath renders at its own offset simultaneously,
   //  and idx becomes the focus (target of the slider/stats/G-code). Focusing a plate with no cache = empty state (leftovers cleared).
@@ -91,7 +93,7 @@ export function makePlateActions(deps) {
     }
     apiRef.current?.onSliced()
     setCanvasMode('preview')
-    setStats(statsFromKernel(r.stats))
+    setStats(statsFromKernel(r.stats, r.throughput))
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     // A resin result has no G-code; its export (.sl1) is built on click by exportPlateSl1 — see SliceBar.
     setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl)

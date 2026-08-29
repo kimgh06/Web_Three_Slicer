@@ -137,7 +137,7 @@ same unit — `first_layer_height` comes from `initial_layer_print_height`, and 
 | `support_on_build_plate_only` | `boolean` | `false` | `support_on_build_plate_only` | support_on_build_plate_only: only support reaching the bed |
 | `support_overhang_min_area` | `number` | `0.0` | — | minimum overhang area (mm², 0 = auto w²). Replaces the morphological opening filter |
 | `support_remove_small_overhang` | `boolean` | `true` | `support_remove_small_overhang` | support_remove_small_overhang (upstream default true) |
-| `support_style` | `string` | `'grid'` | `support_style` | grid\|tree_lite |
+| `support_style` | `string` | `'grid'` | `support_style`, `support_type` | grid\|tree_lite |
 | `support_threshold_angle` | `number` | `30.0` | `support_threshold_angle` | support_threshold_angle |
 | `support_threshold_overlap` | `number` | `0.5` | `support_threshold_overlap` | support_threshold_overlap: the overlap criterion when θ=0 (as a fraction of extrusion width) |
 | `support_top_z_distance` | `number` | `0.2` | `support_top_z_distance` | support_top_z_distance |

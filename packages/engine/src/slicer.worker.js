@@ -16,6 +16,14 @@
 //  which sets `quiet` on the messages it sends): this is a separate module instance from the viewer's log.js and
 //  cannot read a flag set over there.
 import { assertLegacySlaFallback, parseSlaJob } from './sla_request.js'
+import { withSliceWarnings } from './warnings.js'
+import { withSliceThroughput } from './throughput.js'
+
+// The kernel parses `params` as JSON text, so the raw protocol used to require a string — while the direct handle
+//  and createSlicerClient both take an object and stringify it for you. One object, two shapes, and the difference
+//  showed up only at the boundary. The worker now accepts either; the SLA branch always did, which is what made
+//  the split arbitrary rather than principled.
+const paramsText = (params) => (typeof params === 'string' ? params : JSON.stringify(params ?? {}))
 
 let quiet = false
 const say = (level, ...args) => { if (!quiet) console[level](...args) }
@@ -140,10 +148,11 @@ self.onmessage = async (e) => {
           self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
         })
         let r
+        const started = performance.now()
         try { r = Kernel.slice_sla_job(job, onProgress) }
         finally { Kernel.clear_layer_sink() }
         if (r?.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-        self.postMessage({ type: 'done', result: r }); return
+        self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - started) }); return
       }
       self.postMessage({ type: 'error', code: 'SLA_UNSUPPORTED_OBJECT_AWARE',
                         error: 'Object-aware SLA slicing requires WASM kernel support' })
@@ -153,7 +162,7 @@ self.onmessage = async (e) => {
     //  the same layer-sink streaming a kernel slice uses. The pure-JS contour slicer (sla_core.js) stays as the
     //  fallback for a loaded kernel that predates the binding — it produces the same stream, minus the supports.
     if (d.cmd === 'sla') {
-      const params = typeof d.params === 'string' ? d.params : JSON.stringify(d.params ?? {})
+      const params = paramsText(d.params)
       if (!modPromise) modPromise = loadCore()
       const Kernel = await modPromise
       const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
@@ -165,15 +174,19 @@ self.onmessage = async (e) => {
           self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
         })
         let r
+        const started = performance.now()
         try { r = Kernel.slice_sla(new Uint8Array(d.stl), params, onProgress) }
         finally { Kernel.clear_layer_sink() }
         if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-        self.postMessage({ type: 'done', result: r })
+        self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - started) })
         return
       }
       const { sliceSla } = await import('./sla_core.js')
       const fallbackParams = JSON.parse(params)
       assertLegacySlaFallback(fallbackParams)
+      // The JS fallback reports no phase timings at all, so its `kernelMs` comes back null rather than 0 — the
+      //  wall time and the two rates are still the honest figures for what it did.
+      const startedFallback = performance.now()
       const r = sliceSla(new Uint8Array(d.stl), fallbackParams, {
         onProgress,
         onLayer: (L) => {
@@ -184,7 +197,7 @@ self.onmessage = async (e) => {
         },
       })
       if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-      self.postMessage({ type: 'done', result: r })
+      self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - startedFallback) })
       return
     }
     if (!modPromise) modPromise = loadCore()
@@ -302,11 +315,17 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'layer', z, idx, gcode, paths, widths }, transfer)
     })
     let r
-    try { r = Module.slice(new Uint8Array(d.stl), d.params, onProgress) }
+    // Timed around the kernel call INCLUDING the layer sink, which posts each layer to the main thread from inside
+    //  it — that transfer is part of what a streamed slice costs and leaving it out would flatter the number.
+    const started = performance.now()
+    try { r = Module.slice(new Uint8Array(d.stl), paramsText(d.params), onProgress) }
     finally { Module.clear_layer_sink() }
     if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
     // streamed=true -> g-code/layers were already emitted as 'layer' (result holds stats only). batch/MM keep them in result.
-    self.postMessage({ type: 'done', result: r })
+    // withSliceWarnings names what the slice got away with (an off-bed model) on the result itself, and
+    //  withSliceThroughput how fast it ran — the raw protocol carries both, so createSlicerClient's callers get
+    //  them without the client having to re-derive anything.
+    self.postMessage({ type: 'done', result: withSliceThroughput(withSliceWarnings(r), performance.now() - started) })
   } catch (err) {
     // Includes the WASM abort("memory access out of bounds") — the main thread's OOM ladder decides on re-creation / economy retry.
     self.postMessage({ type: 'error', error: String((err && err.message) || err), ...(err?.code ? { code: err.code } : {}) })

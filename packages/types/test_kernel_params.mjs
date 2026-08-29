@@ -52,5 +52,28 @@ const reachable = new Set(rows.filter(row => row[2] !== '—').map(row => row[1]
 const stale = [...prose.matchAll(/`([a-z0-9_]+)`/g)].map(m => m[1]).filter(key => reachable.has(key))
 check('the prose names no parameter that a setting now reaches', stale.length === 0, [...new Set(stale)].join(' '))
 
+console.log('\n[kernel params: ignored-key reporting]')
+const { deriveKernelParams, ignoredKernelSettings, kernelSettingKeys, applyPreset } = await import('../engine/src/settings.js')
+const fromKeys = new Set(rows.filter(row => row[2] !== '—')
+  .flatMap(row => [...row[2].matchAll(/`([a-z0-9_]+)`/g)].map(m => m[1])))
+check('kernelSettingKeys matches the table\'s distinct From-setting column',
+  kernelSettingKeys.length === fromKeys.size && kernelSettingKeys.every(k => fromKeys.has(k)),
+  `${kernelSettingKeys.length} generated vs ${fromKeys.size} in the table`)
+check('a consumed key is not reported ignored', ignoredKernelSettings({ wall_loops: 3 }).length === 0)
+check('support_type is consumed (tree routing)',
+  !ignoredKernelSettings({ support_type: 'tree(auto)' }).length
+  && deriveKernelParams({ support_type: 'tree(auto)' }).support_style === 'tree')
+check('an unconsumed key is reported', ignoredKernelSettings({ spaghetti_detector: true }).includes('spaghetti_detector'))
+check('null map reports nothing', ignoredKernelSettings(null).length === 0)
+
+console.log('\n[settings: applyPreset clear-then-merge]')
+const abs = { chamber_temperature: [60], nozzle_temperature: [255] }
+const pla = { nozzle_temperature: [220] }
+const materialKeys = ['chamber_temperature', 'nozzle_temperature']
+const applied = applyPreset({ layer_height: 0.2, ...abs }, pla, materialKeys)
+check('the previous pick\'s leftover keys are cleared', !('chamber_temperature' in applied))
+check('the new preset and unrelated keys survive', applied.nozzle_temperature[0] === 220 && applied.layer_height === 0.2)
+check('a null preset applies nothing', applyPreset({ ...abs }, null, materialKeys).chamber_temperature[0] === 60)
+
 console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nALL KERNEL-PARAM CHECKS PASSED\n')
 process.exit(failures ? 1 : 0)

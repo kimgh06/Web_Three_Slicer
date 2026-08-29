@@ -13,7 +13,6 @@
 // Requests are answered in order. The worker's onmessage handler processes one message at a time and each command
 // replies exactly once, so a FIFO of pending requests is enough to match a reply to its caller — the protocol
 // carries no request ids and does not need them.
-import { engineWorkerURL } from '../index.js'
 import { parseSlaJob, SlaRequestError } from './sla_request.js'
 
 export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla_request.js'
@@ -32,7 +31,14 @@ const slaTransferables = (job) => job.objects.flatMap(object => [object, ...(obj
  * @param {Worker} [worker] an existing worker to drive. Omit to create one — which only works in a browser,
  *   since Node has no global Worker; a Node caller should use createSlicer() from the root entry instead.
  */
-export function createSlicerClient(worker = new Worker(engineWorkerURL(), { type: 'module' })) {
+// The default is written as the full `new Worker(new URL('literal', import.meta.url), { type: 'module' })`
+//  expression rather than through engineWorkerURL(), and that is the whole reason the no-argument form works
+//  after `vite build`. Bundlers recognize this exact shape as a worker ENTRY and emit it with its own chunk
+//  graph (the st/mt kernels it dynamically imports); split across a function call, the same file matched Vite's
+//  plain-asset rule instead and was copied verbatim, still importing an unhashed `./slicer_core.js` that dist
+//  did not contain — a 404 on the first message, visible only in a production build. Same reason the viewer
+//  keeps make_worker.js out of its own bundle. Do not factor this expression out.
+export function createSlicerClient(worker = new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })) {
   const pending = []          // FIFO of {expect, resolve, reject, onProgress, onLayer, chunks, layers}
   let cancelFlag = null       // Uint32Array over the worker's SharedArrayBuffer — mt kernel only
   let closed = false

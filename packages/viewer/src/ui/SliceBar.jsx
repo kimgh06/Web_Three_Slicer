@@ -3,7 +3,7 @@ import React from 'react'
 // The sidebar's fixed bottom bar: auto-slice toggle, the slice button (with the per-plate dropdown)
 // and the G-code export link. While a slice runs the button cancels it.
 export default function SliceBar({
-  autoSlice, onAutoSlice, slicing, progress, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
+  autoSlice, onAutoSlice, slicing, progress, sliceRate = 0, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
   slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl, bedWarning,
   slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null,
 }) {
@@ -53,6 +53,16 @@ export default function SliceBar({
                 and a placeholder that says "G-code" there reads as the wrong export being offered. */}
             Export {slaTech ? 'SL1' : 'G-code'}
           </button>}
+      {/* Throughput, on its own row (the bar wraps) rather than inside the button label: the button is flex-sized
+          in a narrow sidebar, and "Slicing… 62% · 21 layers/s" does not fit it at any useful font size. Rendered
+          only while a rate exists, so the bar keeps its idle height between slices. Tabular figures — without them
+          the digits change width as the number moves and the line jitters several times a second. */}
+      {slicing && sliceRate > 0 && (
+        <div className="slice-rate" data-testid="slice-rate"
+          title="Layers finished per second, over the last 250ms. A resin slice reports it throughout; a filament slice reports it once the emission pass starts streaming layers, since the earlier passes publish no per-layer progress.">
+          {sliceRate >= 10 ? Math.round(sliceRate) : sliceRate.toFixed(1)} layers/s
+        </div>
+      )}
     </div>
   )
 }

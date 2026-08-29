@@ -60,21 +60,16 @@ parameters no setting reaches. Regenerate with `node types/gen_kernel_params.mjs
 A material is a **filament preset**: a set of schema values (temperatures, flow, diameter, cooling, retraction/z-hop overrides) that a printer profile declares itself compatible with. Read the catalog through the facade, never by decoding `three-slicer/data/filaments.js` by hand:
 
 ```js
-import { filamentPresets, deriveKernelParams } from 'three-slicer/settings'
+import { filamentPresets, applyPreset, deriveKernelParams } from 'three-slicer/settings'
 
 const filaments = await filamentPresets()               // lazy — the artifact loads on first call
 filaments.listFor('Bambu Lab X1 Carbon 0.4 nozzle')     // [{name, type, vendor}, …]
 filaments.recommendedFor('Bambu Lab X1 Carbon 0.4 nozzle')  // the vendor's shortlist, filtered to the compatible set
 
-// Applying one: CLEAR the preset's key set first. A preset carries only the keys it sets, so a plain merge leaves
-//  behind whatever the previous material set and this one does not — a PLA pick after an ABS pick keeps ABS's
-//  chamber temperature. `keys` is the exact set to clear, and the filament and process key sets are disjoint, so
-//  clearing one never disturbs the other.
-function applyPreset(settings, preset, keys) {
-  const next = { ...settings }
-  for (const key of keys) delete next[key]
-  return Object.assign(next, preset)
-}
+// Applying one: applyPreset CLEARS the preset's key set first. A preset carries only the keys it sets, so a
+//  plain merge leaves behind whatever the previous material set and this one does not — a PLA pick after an
+//  ABS pick keeps ABS's chamber temperature. `keys` is the exact set to clear, the filament and process key
+//  sets are disjoint (clearing one never disturbs the other), and a null preset applies nothing.
 settings = applyPreset(settings, filaments.settingsFor('Bambu PLA Basic @BBL X1C'), filaments.keys)
 ```
 

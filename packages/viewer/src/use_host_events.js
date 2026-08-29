@@ -26,6 +26,7 @@ export function useHostEvents(onEventRef, values) {
   useEmit(onEventRef, 'autoSlice', values.autoSlice)
   useEmit(onEventRef, 'slicing', values.slicing)
   useEmit(onEventRef, 'progress', values.progress)   // fires several times a second while slicing — throttle on the host side if that matters
+  useEmit(onEventRef, 'sliceRate', values.sliceRate) // same cadence, and 0 between slices
   useEmit(onEventRef, 'viewType', values.viewType)
   useEmit(onEventRef, 'paintMode', values.paintMode)
   useEmit(onEventRef, 'layerCount', values.layerCount)
