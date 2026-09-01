@@ -67,6 +67,15 @@
           ]
         },
         {
+          "@type": "TechArticle",
+          "@id": "https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port#article",
+          "url": "https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port",
+          "headline": "Porting OrcaSlicer to WebAssembly — what actually broke",
+          "description": "How the OrcaSlicer slicing kernel was compiled to WebAssembly: driver rewrites under verbatim upstream code, a TBB header stub, browser threading, and a byte-identical output gate.",
+          "isPartOf": { "@id": "https://slicer.kimgh06.com/#website" },
+          "about": { "@id": "https://slicer.kimgh06.com/#app" }
+        },
+        {
           "@type": "FAQPage",
           "@id": "https://slicer.kimgh06.com/#faq",
           "mainEntity": [
@@ -159,6 +168,16 @@
         viewer and settings panel. The <a href="/demos">integration demos</a> show it embedded in an
         instant-quote form, a printer showcase and a CAD page, and the source is on
         <a href="https://github.com/kimgh06/Web_Three_Slicer">GitHub</a>.
+      </p>
+
+      <h2>How it was built</h2>
+      <p>
+        <a href="/docs/orcaslicer-webassembly-port">Porting OrcaSlicer to WebAssembly — what actually
+        broke</a>: the missing <code>PrintObject</code>, a TBB header stub that runs serial by default,
+        COOP/COEP cross-origin isolation and the two kernel builds behind it, the partial-link build
+        groups, and the byte-identical G-code gate the whole port is checked against.
+        <a href="/about">About the project</a> covers what it deliberately does not do, how the output is
+        verified, and what AGPL-3.0 means for using it.
       </p>
     </div>
     <script type="module" src="/src/main.jsx"></script>

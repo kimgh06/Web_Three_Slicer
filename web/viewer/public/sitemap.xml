@@ -15,4 +15,14 @@
     <lastmod>2026-08-16</lastmod>
     <priority>0.6</priority>
   </url>
+  <url>
+    <loc>https://slicer.kimgh06.com/about</loc>
+    <lastmod>2026-09-01</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port</loc>
+    <lastmod>2026-09-01</lastmod>
+    <priority>0.8</priority>
+  </url>
 </urlset>

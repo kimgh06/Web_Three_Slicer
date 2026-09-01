@@ -220,6 +220,10 @@ export default function Landing() {
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
           <Link className="lp-btn" to="/demos">Demos</Link>
+          {/* A static HTML entry, not a router route — a plain <a>, so the browser fetches that document
+              rather than the router matching nothing and rendering blank. */}
+          <a className="lp-btn" href="/docs/orcaslicer-webassembly-port">How it was built</a>
+          <a className="lp-btn" href="/about">About</a>
           <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
           <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">
             GitHub
@@ -324,6 +328,8 @@ export default function Landing() {
           <p>AGPL-3.0-or-later · based on OrcaSlicer · runs in the browser or Node with no server</p>
           <Link to="/slice">Start slicing</Link>
           <Link to="/demos">See the demos</Link>
+          <a href="/docs/orcaslicer-webassembly-port">How the port works</a>
+          <a href="/about">About the project</a>
         </section>
       </main>
 
@@ -331,6 +337,8 @@ export default function Landing() {
         <span>Source</span>
         <a href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">kimgh06/Web_Three_Slicer</a>
         <a href="https://github.com/kimgh06/Web_Three_Slicer/discussions" target="_blank" rel="noreferrer">Community</a>
+        <a href="/docs/orcaslicer-webassembly-port">Engineering notes</a>
+        <a href="/about">About</a>
       </footer>
     </div>
   )
