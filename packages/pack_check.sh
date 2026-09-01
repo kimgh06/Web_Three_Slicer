@@ -42,6 +42,13 @@ if (typeof disabledKeys(makeCfg({})) !== 'object') throw new Error('disabledKeys
 const anyPrinter = Object.values(printersByVendor).flatMap(m => Object.keys(m))[0]
 if (!anyPrinter) throw new Error('printersByVendor is empty')
 if (!printerSettings(anyPrinter)) throw new Error('printerSettings failed for ' + anyPrinter)
+// A printer upstream does NOT ship. Its profile lives in a SECOND data file (data/printers-vendor.json) that
+//  settings.js merges over the extracted set at load, so it is the one machine whose presence proves both that the
+//  extra file reached the tarball and that the merge survived packaging — an install missing either would still
+//  pass every assertion above.
+const vendorProfile = printerSettings('STELLAMOVE FA550 0.4 nozzle')
+if (!vendorProfile) throw new Error('the vendor-merged printer profile is missing from the tarball')
+if (vendorProfile.printable_height !== 500) throw new Error('vendor profile decoded to the wrong row: ' + JSON.stringify(vendorProfile))
 const proc = await processPresets()
 if (!proc.keys.length) throw new Error('processPresets carries no keys')
 const fil = await filamentPresets()
