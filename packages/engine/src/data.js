@@ -11,6 +11,9 @@ export { default as uiTree } from 'three-slicer/data/ui-tree.json' with { type: 
 export { default as toggleRules } from 'three-slicer/data/toggle-rules.json' with { type: 'json' }
 export { default as invalidationMap } from 'three-slicer/data/invalidation-map.json' with { type: 'json' }
 export { default as printers } from 'three-slicer/data/printers.json' with { type: 'json' }
+// Printers upstream does not ship, kept OUT of printers.json because that file is regenerated in full from the
+// OrcaSlicer checkout and would drop them. settings.js merges the two; see the header inside the file.
+export { default as vendorPrinters } from 'three-slicer/data/printers-vendor.json' with { type: 'json' }
 // Which option keys belong to which preset type, straight from upstream's Preset.cpp. Small (17KB) and needed by
 // anything that writes or reads a preset FILE, so it is static rather than lazy like the two big catalogs.
 export { default as presetKeys } from 'three-slicer/data/preset-keys.json' with { type: 'json' }

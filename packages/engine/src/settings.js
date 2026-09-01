@@ -1,7 +1,7 @@
 // Maps the actual values of the (editable) right-hand settings panel -> kernel slice parameters.
 //  - Settings state is a sparse map (key->value): only edited keys are stored, otherwise the config-schema default.
 //  - For vector types (coFloats/coInts, …) only the first element is used/edited (simplification).
-import { schema, printers, loadProcesses, loadFilaments } from './data.js'
+import { schema, printers, vendorPrinters, loadProcesses, loadFilaments } from './data.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
@@ -85,15 +85,41 @@ export const machineLimitKeys = Object.values(MACHINE_LIMITS).map(([key]) => key
 // ---- Printer profiles -------------------------------------------------------
 // printers.json is stored column-oriented (see its .d.ts). These two hide that layout so no consumer decodes it.
 
+// Vendor profiles that upstream does not ship (data/printers-vendor.json) are merged in HERE rather than into
+//  printers.json, because that file is regenerated in full from the OrcaSlicer checkout and a hand-added row would
+//  vanish on the next `extract_all.py`. Merging at load keeps each file honest about its own provenance: one is
+//  exactly what upstream ships, the other exactly what it does not. The vendor file stores settings as an object
+//  per model (it is written by hand); the column layout is rebuilt here so every consumer still sees one shape.
+//  A vendor name that already exists upstream loses — the extracted profile is the vendor's own, this file is not.
+const vendorMerge = (() => {
+  const sets = [...printers.sets]
+  const byVendor = { ...printers.byVendor }
+  const techByVendor = { ...(printers.techByVendor ?? {}) }
+  for (const [vendor, bundle] of Object.entries(vendorPrinters?.vendors ?? {})) {
+    if (byVendor[vendor]) continue
+    const models = {}
+    for (const [profileName, entry] of Object.entries(bundle.models ?? {})) {
+      // Unpublished keys stay absent, not zero: the row is null-filled and only the published columns are written,
+      //  so an omitted acceleration falls through to the kernel default instead of claiming the machine has none.
+      const row = printers.keys.map(key => entry.settings?.[key] ?? null)
+      models[profileName] = [entry.nozzle ?? '', sets.push(row) - 1, entry.model ?? profileName, entry.defaultPreset ?? '']
+    }
+    byVendor[vendor] = models
+    if (bundle.technology && bundle.technology !== 'FFF') techByVendor[vendor] = bundle.technology
+  }
+  return { sets, byVendor, techByVendor }
+})()
+
 /** Every option key a printer profile can set — what to clear before applying a different printer. */
 export const printerKeys = printers.keys
 
-/** Vendor -> profile name -> `[nozzle, setIndex, model]`, straight from the data (for building a picker). */
-export const printersByVendor = printers.byVendor
+/** Vendor -> profile name -> `[nozzle, setIndex, model]` (for building a picker). Extracted upstream profiles
+ *  plus the hand-authored vendor ones. */
+export const printersByVendor = vendorMerge.byVendor
 
 /** Vendor -> slicing technology. Absent means FFF — only the resin vendor bundles are marked, so a printer
  *  picker can keep FFF machines and SLA machines apart with one lookup. */
-export const printerTechByVendor = printers.techByVendor ?? {}
+export const printerTechByVendor = vendorMerge.techByVendor
 
 /** The resin material catalog (SLA vendor bundles, inherits flattened): {name, bundle, type, vendor, colour,
  *  exposure_time, initial_exposure_time, initial_layer_height, layerHeight}. layerHeight is the preset's
@@ -173,7 +199,7 @@ export function filamentPresets() {
 }
 
 function printerEntry(profileName) {
-  for (const models of Object.values(printers.byVendor)) {
+  for (const models of Object.values(printersByVendor)) {
     const entry = models[profileName]
     if (entry) return entry
   }
@@ -184,7 +210,7 @@ function printerEntry(profileName) {
 export function printerSettings(profileName) {
   const entry = printerEntry(profileName)
   if (!entry) return null
-  const row = printers.sets[entry[1]]
+  const row = vendorMerge.sets[entry[1]]
   const out = {}
   printers.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
   return out

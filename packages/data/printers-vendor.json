@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "Hand-authored printer profiles for vendors upstream OrcaSlicer does not ship.",
+    "",
+    "printers.json is REGENERATED in full by web/extract_all.py from the OrcaSlicer checkout, so a profile added",
+    "there by hand disappears on the next run. This file is the durable half: never generated, merged over the",
+    "extracted set at load time by engine/src/settings.js. The two stay separable on purpose — printers.json is",
+    "exactly what upstream ships, this is exactly what it does not.",
+    "",
+    "Only values the vendor has PUBLISHED go in. Everything else is left out rather than guessed: an omitted key",
+    "falls through to the schema/kernel default, while an invented acceleration would quietly change every time",
+    "estimate the profile produces and read as fact. `unpublished` lists what is missing so a vendor conversation",
+    "has a concrete agenda, and so nobody mistakes absence for 'not applicable'.",
+    "",
+    "The long-term home for a profile is upstream itself (that is how Cubicon reaches printers.json). This file is",
+    "for the interval before that, and for vendors who never get there."
+  ],
+  "vendors": {
+    "STELLAMOVE": {
+      "source": "https://www.stellamove.com — published specification sheet, read 2026-09-01",
+      "technology": "FFF",
+      "models": {
+        "STELLAMOVE FA550 0.4 nozzle": {
+          "model": "STELLAMOVE FA550",
+          "nozzle": "0.4",
+          "settings": {
+            "printable_area": [[0, 0], [550, 0], [550, 550], [0, 550]],
+            "printable_height": 500,
+            "nozzle_diameter": [0.4],
+            "machine_max_speed_x": [500],
+            "machine_max_speed_y": [500],
+            "layer_height": 0.2
+          },
+          "unpublished": [
+            "machine_max_acceleration_* — the spec sheet gives no acceleration; it drives the time estimate",
+            "machine_max_jerk_* / junction deviation",
+            "machine_max_speed_z, machine_max_speed_e",
+            "z_hop, retraction length and speed",
+            "bed temperature for ABS/ASA/Nylon: the sheet lists them as supported but caps the bed at 80C"
+          ],
+          "notes": [
+            "CoreXY, 41kg, 715x755x865mm outer. Layer height 0.05-0.4 selectable, 0.2 default.",
+            "Nozzle max 260C, bed max 80C.",
+            "Materials listed: PLA, PETG, ABS, TPU, ASA, Nylon, Carbon PLA, Carbon Nylon.",
+            "Auto levelling through four independent Z motors.",
+            "The sheet recommends PrusaSlicer — the vendor ships no slicer of its own."
+          ]
+        }
+      }
+    }
+  }
+}
