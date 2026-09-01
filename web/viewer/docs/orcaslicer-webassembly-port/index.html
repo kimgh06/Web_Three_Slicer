@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Porting OrcaSlicer to WebAssembly — What Actually Broke | Three Slicer</title>
+    <meta name="description" content="A build log of compiling the OrcaSlicer slicing kernel to WebAssembly: the missing PrintObject, a TBB header stub that runs serial, COOP/COEP threading, partial-link build groups, and the byte-identical gate that kept it honest." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0e1216" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Three Slicer" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port" />
+    <meta property="og:title" content="Porting OrcaSlicer to WebAssembly — What Actually Broke" />
+    <meta property="og:description" content="The missing PrintObject, a TBB stub that runs serial, COOP/COEP threading, and the byte-identical gate that kept a C++ slicer honest in a browser tab." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "Porting OrcaSlicer to WebAssembly — What Actually Broke",
+      "description": "A build log of compiling the OrcaSlicer slicing kernel to WebAssembly for the browser.",
+      "author": { "@type": "Person", "name": "kimgh06", "url": "https://github.com/kimgh06" },
+      "mainEntityOfPage": "https://slicer.kimgh06.com/docs/orcaslicer-webassembly-port",
+      "image": "https://slicer.kimgh06.com/og-cover.png",
+      "datePublished": "2026-09-01",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "about": [ "WebAssembly", "Emscripten", "3D printing", "OrcaSlicer", "C++" ],
+      "isPartOf": { "@type": "WebSite", "@id": "https://slicer.kimgh06.com/#website" }
+    }
+    </script>
+    <style>
+      :root {
+        --bg: #0e1216; --panel: #141a20; --text: #e9f1f7; --body: #c2ced8;
+        --muted: #8d9daa; --border: #2c353d; --code: #9fe3bd; --accent: #00ae42;
+      }
+      body { margin: 0; background: var(--bg); color: var(--body);
+             font: 16px/1.75 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px 96px; }
+      a { color: var(--accent); }
+      a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      nav.crumb { padding: 28px 0 0; font-size: 13.5px; color: var(--muted); }
+      nav.crumb a { color: var(--muted); }
+      header { padding: 40px 0 8px; border-bottom: 1px solid var(--border); }
+      .kicker { color: var(--accent); font-size: 12.5px; font-weight: 700; letter-spacing: .02em; }
+      h1 { margin: 10px 0 12px; font-size: 34px; line-height: 1.2; color: var(--text); }
+      .lede { font-size: 17px; color: var(--muted); margin: 0 0 28px; }
+      h2 { margin: 48px 0 12px; font-size: 22px; color: var(--text); line-height: 1.3; }
+      h3 { margin: 28px 0 8px; font-size: 16.5px; color: var(--text); }
+      p, li { word-break: keep-all; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--code); }
+      pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+      pre code { color: var(--body); }
+      blockquote { margin: 22px 0; padding: 2px 0 2px 18px; border-left: 3px solid var(--accent);
+                   color: var(--muted); font-style: normal; }
+      .scroll { overflow-x: auto; margin: 20px 0; }
+      table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.5px; }
+      th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--text); font-weight: 600; }
+      .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+             padding: 16px 20px; margin: 32px 0 8px; }
+      .toc ol { margin: 8px 0 0; padding-left: 20px; }
+      .toc li { margin: 3px 0; }
+      footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+               font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+      .cta { display: inline-block; margin: 8px 12px 0 0; padding: 10px 18px; border-radius: 8px;
+             background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
+      .cta.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav class="crumb"><a href="/">Three Slicer</a> › Docs › OrcaSlicer to WebAssembly</nav>
+
+      <header>
+        <div class="kicker">Engineering notes</div>
+        <h1>Porting OrcaSlicer to WebAssembly — what actually broke</h1>
+        <p class="lede">
+          Three Slicer runs a real desktop slicing kernel inside a browser tab. Not a reimplementation
+          in JavaScript, and not a server that slices for you — the same C++ that OrcaSlicer runs,
+          compiled to WebAssembly with Emscripten. This is the log of what that cost.
+        </p>
+      </header>
+
+      <div class="toc">
+        <strong>Contents</strong>
+        <ol>
+          <li><a href="#not-a-rewrite">Why a port and not a rewrite</a></li>
+          <li><a href="#printobject">The first wall: nothing here has a PrintObject</a></li>
+          <li><a href="#tbb">TBB does not exist, so it became a header</a></li>
+          <li><a href="#threads">Threads in a browser: two kernels, one worker</a></li>
+          <li><a href="#build">The build: partial links, and why not -O3</a></li>
+          <li><a href="#memory">Memory: a 4GB ceiling and a streaming sink</a></li>
+          <li><a href="#golden">The gate that made all of it checkable</a></li>
+          <li><a href="#refuse">Refusing beats approximating</a></li>
+          <li><a href="#takeaways">If you are porting something like this</a></li>
+        </ol>
+      </div>
+
+      <h2 id="not-a-rewrite">Why a port and not a rewrite</h2>
+      <p>
+        A slicer is not one algorithm. It is a stack of them, each with decades of edge cases baked in:
+        variable-width wall generation (Arachne), tree support growth, multi-material segmentation per
+        layer, a prime tower that has to reconcile purge volumes between tool changes, pressure
+        equalization, arc fitting, and a G-code time estimator that models the firmware's own
+        acceleration planner. Reimplementing that in JavaScript gets you something that produces
+        plausible toolpaths and prints badly.
+      </p>
+      <p>
+        So the rule for this project was set first and never relaxed: <strong>everything above the driver
+        layer is upstream verbatim</strong>. Arachne's <code>WallToolPaths</code>, the beading strategies,
+        the fill patterns, <code>PressureEqualizer</code>, <code>GCodeProcessor</code>,
+        <code>WipeTower</code>, <code>MultiMaterialSegmentation</code> — those files are the OrcaSlicer
+        files. Resin support points, the support tree and the pad are PrusaSlicer 2.9.6 files, and a test
+        fails the build if any of them drifts from its recorded upstream hash.
+      </p>
+      <p>
+        That rule is what makes the interesting part interesting. Every problem below is a problem at
+        the seam — where upstream code expects an environment that a browser tab does not have.
+      </p>
+
+      <h2 id="printobject">The first wall: nothing here has a PrintObject</h2>
+      <p>
+        Upstream code is written against upstream's object graph. <code>MultiMaterialSegmentation.cpp</code>,
+        for example, takes a <code>PrintObject</code> — which transitively wants a <code>Print</code>, a
+        config store, layer ranges, regions, and the slicing state machine that produced them. Pulling that
+        in means pulling in most of the application.
+      </p>
+      <p>
+        The port draws the line one level lower. The algorithm files stay verbatim; only their
+        <em>drivers</em> are rewritten to take plain data. Segmentation now receives the sliced contour of
+        every layer plus the painted facets from the triangle selector, through a small bridge
+        (<code>segment_prepare</code> / <code>segment_regions</code>). Same for Arachne, fills, the wipe
+        tower and the G-code processor: each has exactly one bridge translation unit sitting between the
+        kernel and upstream, and nothing else crosses.
+      </p>
+      <p>
+        This has consequences you only discover by running it. Segmentation is a whole-object pass, so the
+        multi-material path must slice <em>every</em> layer up front rather than lazily — and then reuse
+        those contours, or the model gets sliced twice. And a painted flat face reaches the print only
+        through <code>segmentation_top_and_bottom_layers</code>, because a horizontal facet cuts no slicing
+        plane at all: skip that pass as an optimization and a painted top surface silently comes out in the
+        wrong material.
+      </p>
+
+      <h3>The header-shadowing trick</h3>
+      <p>
+        Upstream files include upstream headers by path. Where the real header drags in the world,
+        the port puts a stub of the same name earlier on the include path — <code>boost/log</code>,
+        <code>cereal</code>, the SVG debug writer, <code>Flow</code>, parts of <code>PrintConfig</code>.
+        Each stub directory is scoped to the compile group that needs it, so the same symbol is never
+        defined two ways in one link.
+      </p>
+      <blockquote>
+        This trick has one sharp edge worth naming: with <code>ccache</code> in the loop, adding a new
+        shadow header does not change any source file's own text, so cached objects for the old include
+        resolution get silently reused and link cleanly against the wrong header. One
+        <code>CCACHE_RECACHE=1</code> run after introducing a shadow. It cost an afternoon to learn.
+      </blockquote>
+
+      <h2 id="tbb">TBB does not exist, so it became a header</h2>
+      <p>
+        Slic3r-family code parallelizes with Intel TBB: <code>tbb::parallel_for</code> over layer ranges,
+        <code>concurrent_vector</code>, <code>enumerable_thread_specific</code>, <code>task_group</code>.
+        There is no TBB for wasm32.
+      </p>
+      <p>
+        The port supplies TBB's surface as headers of its own. The first version was entirely serial —
+        <code>parallel_for(r, f)</code> is just <code>f(r)</code>, which is a legal implementation of a
+        parallel loop and produces bit-identical results. That alone got the kernel running.
+      </p>
+      <p>
+        Real threading came back later, opt-in and narrow. Inside an explicitly enabled scope, the
+        <code>blocked_range</code> overload splits across <code>std::thread</code>s:
+      </p>
+      <pre><code>const size_t chunk = std::max&lt;size_t&gt;(1, n / (nt * 4));
+std::atomic&lt;size_t&gt; next{0};
+auto work = [&amp;]{
+  for (;;) {
+    size_t lo = next.fetch_add(chunk);
+    if (lo &gt;= n) break;
+    size_t hi = lo + chunk &lt; n ? lo + chunk : n;
+    f(blocked_range&lt;I&gt;(b + (I)lo, b + (I)hi));
+  }
+};</code></pre>
+      <p>
+        Three details in that snippet are scars, not style:
+      </p>
+      <ul>
+        <li>
+          <strong>Small chunks with an atomic cursor, not an even n/threads split.</strong> Per-layer cost
+          varies enormously — only layers with overhangs are expensive. An even split left threads idle:
+          <code>top_contact_layers</code> reached 2.75x on 14 threads while the structurally identical
+          <code>base_layers</code> hit 10x. Work stealing fixed it.
+        </li>
+        <li>
+          <strong>Chunk boundaries are deterministic and every writer targets an independent index.</strong>
+          That is the only reason threading here is allowed to exist: the output has to stay byte-identical
+          to the serial run, and it is verified to be.
+        </li>
+        <li>
+          <strong><code>std::thread</code> construction is wrapped in try/catch.</strong> Emscripten returns
+          workers to its pool asynchronously, so a momentary exhaustion makes <code>pthread_create</code>
+          return <code>EAGAIN</code> and the constructor throws. Dying there would be absurd; the caller and
+          the already-started workers absorb the remaining chunks instead, with identical results.
+        </li>
+      </ul>
+      <p>
+        <code>task_group</code> stayed serial. It was implicated in a crash, the benefit was small, and a
+        parallel primitive you cannot prove deterministic is not worth the debugging budget it will demand
+        later.
+      </p>
+
+      <h3>The progress bar that looked like a hang</h3>
+      <p>
+        A small thing with a large user-facing effect: the serial path also has to tick the progress
+        counter. It initially did not, and since tree support deliberately runs serial, a tree-support
+        slice sat at exactly 36% for 71.5 seconds out of 76 on a 53.9MB plate. Nothing was wrong. It read
+        as a total freeze anyway.
+      </p>
+
+      <h2 id="threads">Threads in a browser: two kernels, one worker</h2>
+      <p>
+        WebAssembly threads need <code>SharedArrayBuffer</code>, which needs cross-origin isolation, which
+        needs the host to send two headers:
+      </p>
+      <pre><code>Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp</code></pre>
+      <p>
+        A library cannot require that of the sites that embed it. <code>require-corp</code> breaks any
+        third-party image or iframe the host has not explicitly opted in, so demanding it as a condition of
+        installation is a non-starter.
+      </p>
+      <p>
+        So the kernel is built twice — once plain, once with <code>-pthread</code> — and the worker picks at
+        load time:
+      </p>
+      <pre><code>const isolated = typeof crossOriginIsolated !== 'undefined' &amp;&amp; crossOriginIsolated
+if (isolated) {
+  try { return await (await import('./slicer_core.mt.js')).default() }
+  catch (e) { /* SAB blocked, pool refused — fall through */ }
+}
+return await (await import('./slicer_core.js')).default()</code></pre>
+      <p>
+        An isolated host gets threads (measured 2.2x on the layer pass); everyone else gets a single-threaded
+        kernel with zero configuration. The dynamic <code>import()</code> means bundlers emit both as
+        separate chunks and only one is ever fetched. The failure path matters as much as the fast path: an
+        environment can be cross-origin-isolated and still refuse the thread pool, and a slicer that
+        throws there instead of falling back is a slicer that works on your machine.
+      </p>
+      <p>
+        The one thing the fallback must not do is stay quiet. mt versus st is a 2x difference in how long a
+        user waits, so which kernel loaded is logged once — with an off switch, since a product embedding
+        the viewer should not have to explain the host's console output to its own users.
+      </p>
+
+      <h2 id="build">The build: partial links, and why not -O3</h2>
+      <p>
+        The kernel is compiled in groups, each partially linked with <code>em++ -r</code> into one object
+        before the final link. Groups exist because they need different flags: the CGAL-touching sources
+        need <code>-DCGAL_DISABLE_GMP=1</code> (the GMP auto-detect otherwise emits <code>__gmpn_*</code>
+        references that no wasm build provides), the SGI tessellator is C and must go through
+        <code>emcc</code> rather than <code>em++</code>, and NLopt is pinned to Prusa's exact 2.5.0.
+        Everything is wrapped in <code>ccache</code>; an unchanged-TU rebuild drops from minutes to tens of
+        seconds, which matters more than it sounds when the feedback loop is a full kernel rebuild.
+      </p>
+      <p>Final link flags worth explaining:</p>
+      <div class="scroll">
+      <table>
+        <tr><th>Flag</th><th>Why</th></tr>
+        <tr><td><code>SINGLE_FILE=1</code></td><td>The wasm is inlined as base64 into the JS. Self-contained on any static host, no MIME configuration, no second fetch from inside a worker. It costs about a third in transfer size and buys the package the ability to be installed from npm and just work.</td></tr>
+        <tr><td><code>MODULARIZE=1</code></td><td>The kernel is a library, not a page. Callers get a factory, not global side effects.</td></tr>
+        <tr><td><code>ALLOW_MEMORY_GROWTH=1</code></td><td>Model size is unbounded and unknown at load time. Emscripten warns about combining this with pthreads; it is functionally valid and was kept on measurement.</td></tr>
+        <tr><td><code>ENVIRONMENT=web,worker,node</code></td><td>The same build runs headless in Node, which is what makes the invariant suite possible at all.</td></tr>
+        <tr><td><code>-O2</code>, not <code>-O3</code></td><td>Measured on an Arachne + support workload: <code>-O3 -msimd128</code> gave 5183ms against <code>-O2</code>'s 5149ms — noise — for +9% binary size. <code>-flto</code> crashes wasm-ld outright in combination with the partial-link groups.</td></tr>
+      </table>
+      </div>
+      <p>
+        That <code>-O3</code> row is the one to take away. Optimization flags on a wasm build are an
+        empirical question, not a ladder you climb. The intuition that more optimization is more speed
+        cost 300KB of download for nothing measurable.
+      </p>
+
+      <h2 id="memory">Memory: a 4GB ceiling and a streaming sink</h2>
+      <p>
+        wasm32 addresses 4GB, and a browser tab will not give you that anyway. A large plate sliced the
+        original way held the full G-code plus the full toolpath array resident in the heap at once and
+        died.
+      </p>
+      <p>
+        The fix was to invert the flow. The kernel takes a layer sink; each layer is emitted as it is
+        produced, transferred to the main thread immediately (the <code>Float32Array</code> buffers are
+        moved, so the worker's copy is released at once), and freed from the wasm heap. The final message
+        carries statistics only. Peak resident memory stops scaling with model size and starts scaling with
+        one layer.
+      </p>
+      <p>
+        The toolpath stream itself is packed for the same reason. Each segment carries a role field, and
+        the extruder index rides in that field's spare high bits (<code>role + tool * 16</code>) rather than
+        in a ninth float. Roles only reach 11, so the bits are free — and the segment stream is the largest
+        array the viewer holds, where a ninth float is a flat +12.5% for one small integer. Every reader
+        masks: <code>&amp; 15</code> for the role, <code>&gt;&gt;&gt; 4</code> for the tool.
+      </p>
+
+      <h2 id="golden">The gate that made all of it checkable</h2>
+      <p>
+        Every change above is a change to code whose correct output nobody can eyeball. A wall is 0.03mm
+        off; you will find out when the print fails.
+      </p>
+      <p>
+        So the project's real safety net is a byte-identical gate. A fixed model is sliced on default paths
+        and the G-code is dumped; the dump before a change and the dump after must differ by zero bytes.
+        Alongside it, an invariant suite of 120-plus checks asserts properties the output must hold rather
+        than exact bytes, and a generated parameter reference fails the build when the documented kernel
+        parameter table drifts from the actual reader call sites in the C++.
+      </p>
+      <p>
+        The gate is what allows aggressive work. Restoring threading, restructuring memory, adding
+        multi-material — each landed with the proof that the default output did not move. It also caught
+        the class of bug that a port produces most: a feature that changes behavior <em>by existing</em>.
+        Multi-material had to keep producing pre-feature output under three conditions (no painted facets,
+        no per-extruder arrays, support filament 0), and it does so by <em>omission</em> — the parameter
+        derivation leaves those keys out of the object entirely rather than filling in defaults, because
+        the schema default and the kernel default genuinely disagree for several keys. Filling one in would
+        silently reslice every existing caller's model.
+      </p>
+
+      <h2 id="refuse">Refusing beats approximating</h2>
+      <p>
+        Resin (mSLA) came later, as a second technology rather than a variant, with the support point
+        generator, support tree and pad ported verbatim from PrusaSlicer 2.9.6.
+      </p>
+      <p>
+        Parts of that chain are not ported yet — hollowing and drain holes, organic support trees. Those
+        return a typed refusal code, checked both at the entry gate and at the request layer. The
+        temptation in a port is always to answer approximately: slice it solid and call it hollow, emit a
+        scene lifted by the elevation when the pad failed to generate. Both produce a file that looks
+        right and prints wrong, which is worse than an error, because an error is discovered in a second
+        and a bad print is discovered in nine hours.
+      </p>
+
+      <h2 id="takeaways">If you are porting something like this</h2>
+      <ol>
+        <li><strong>Draw the verbatim line first and defend it.</strong> Decide which files may never be
+          edited, put the rewriting in a driver below them, and keep a hash manifest so drift fails the
+          build instead of accumulating.</li>
+        <li><strong>Get it correct serially before you get it fast.</strong> A serial
+          <code>parallel_for</code> is a valid <code>parallel_for</code>. Threading added afterward, under a
+          determinism requirement, is debuggable; threading present from the start is a permanent suspect.</li>
+        <li><strong>Build a byte-identical gate on day one.</strong> Everything else in the port is
+          negotiable. Without a diffable output, "I refactored the geometry pipeline and it still works"
+          is a feeling.</li>
+        <li><strong>Measure the flags.</strong> <code>-O3</code>, SIMD and LTO all cost something and here
+          two of the three returned nothing or crashed.</li>
+        <li><strong>Fall back, loudly.</strong> Threads, isolation headers, GPU features — the browser is
+          an environment you do not control. Degrade automatically and say which path you took.</li>
+      </ol>
+
+      <h2>Try it</h2>
+      <p>
+        The result is at <a href="/slice">slicer.kimgh06.com/slice</a> — open an STL, OBJ, 3MF or STEP file
+        and it slices to G-code in the tab, with nothing uploaded anywhere. The same engine is on npm as
+        <a href="https://www.npmjs.com/package/three-slicer" rel="noopener">three-slicer</a> if you want it
+        in your own app, and the <a href="/demos">integration demos</a> show four ways to embed it.
+      </p>
+      <p>
+        <a class="cta" href="/slice">Open the slicer</a>
+        <a class="cta ghost" href="https://github.com/kimgh06/Web_Three_Slicer" rel="noopener">Read the source</a>
+      </p>
+
+      <footer>
+        <span>Three Slicer · AGPL-3.0-or-later</span>
+        <a href="/">Home</a>
+        <a href="/slice">Slicer</a>
+        <a href="/demos">Demos</a>
+        <a href="/about">About</a>
+        <a href="https://github.com/kimgh06/Web_Three_Slicer" rel="noopener">GitHub</a>
+        <a href="https://www.npmjs.com/package/three-slicer" rel="noopener">npm</a>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>About Three Slicer — Who Built It and Why | Three Slicer</title>
+    <meta name="description" content="Three Slicer is a browser slicer built on a WebAssembly port of the OrcaSlicer kernel. What it is, what it deliberately is not, how it is verified, what AGPL-3.0 means for using it, and who maintains it." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/about" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0e1216" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Three Slicer" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/about" />
+    <meta property="og:title" content="About Three Slicer — who built it and why" />
+    <meta property="og:description" content="A browser slicer built on a WebAssembly port of the OrcaSlicer kernel: what it is, what it refuses to do, and how it is verified." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "AboutPage",
+      "@id": "https://slicer.kimgh06.com/about#page",
+      "url": "https://slicer.kimgh06.com/about",
+      "name": "About Three Slicer",
+      "description": "What Three Slicer is, what it deliberately is not, how it is verified, and who maintains it.",
+      "isPartOf": { "@id": "https://slicer.kimgh06.com/#website" },
+      "mainEntity": { "@id": "https://slicer.kimgh06.com/#app" },
+      "author": { "@type": "Person", "name": "kimgh06", "url": "https://github.com/kimgh06" }
+    }
+    </script>
+    <style>
+      :root {
+        --bg: #0e1216; --panel: #141a20; --text: #e9f1f7; --body: #c2ced8;
+        --muted: #8d9daa; --border: #2c353d; --code: #9fe3bd; --accent: #00ae42;
+      }
+      body { margin: 0; background: var(--bg); color: var(--body);
+             font: 16px/1.75 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px 96px; }
+      a { color: var(--accent); }
+      a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      nav.crumb { padding: 28px 0 0; font-size: 13.5px; color: var(--muted); }
+      nav.crumb a { color: var(--muted); }
+      header { padding: 40px 0 8px; border-bottom: 1px solid var(--border); }
+      .kicker { color: var(--accent); font-size: 12.5px; font-weight: 700; }
+      h1 { margin: 10px 0 12px; font-size: 34px; line-height: 1.2; color: var(--text); }
+      .lede { font-size: 17px; color: var(--muted); margin: 0 0 28px; }
+      h2 { margin: 48px 0 12px; font-size: 22px; color: var(--text); line-height: 1.3; }
+      p, li { word-break: keep-all; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--code); }
+      .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;
+               margin: 28px 0 8px; padding: 0; list-style: none; }
+      .facts li { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+      .facts b { display: block; color: var(--text); font-size: 19px; }
+      .facts small { color: var(--muted); font-size: 13px; }
+      .scroll { overflow-x: auto; margin: 20px 0; }
+      table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.5px; }
+      th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--text); font-weight: 600; }
+      blockquote { margin: 22px 0; padding: 2px 0 2px 18px; border-left: 3px solid var(--accent); color: var(--muted); }
+      footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+               font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+      .cta { display: inline-block; margin: 8px 12px 0 0; padding: 10px 18px; border-radius: 8px;
+             background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
+      .cta.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav class="crumb"><a href="/">Three Slicer</a> › About</nav>
+
+      <header>
+        <div class="kicker">About</div>
+        <h1>What Three Slicer is, and what it is not</h1>
+        <p class="lede">
+          A 3D printing slicer that runs entirely inside a browser tab, built on a WebAssembly port of the
+          OrcaSlicer kernel. It is a real slicing engine that happens to have no installer — not a preview
+          toy, and not a web front end for a server that slices on your behalf.
+        </p>
+      </header>
+
+      <ul class="facts">
+        <li><b>WebAssembly</b><small>the OrcaSlicer kernel, compiled</small></li>
+        <li><b>No upload</b><small>slicing runs in your tab</small></li>
+        <li><b>976</b><small>OrcaSlicer options</small></li>
+        <li><b>AGPL-3.0</b><small>or later</small></li>
+      </ul>
+
+      <h2>Why it exists</h2>
+      <p>
+        Slicing is one of the few remaining steps in the 3D printing workflow that still requires
+        installing a desktop application. That is a real barrier in three situations: someone evaluating a
+        printer before they own one, a shop that wants to quote a customer's model on their own website,
+        and anyone on a machine they cannot install software on — a school lab, a work laptop, a phone.
+      </p>
+      <p>
+        Uploading the model to a server solves the install problem and creates a worse one. A model file is
+        often the most valuable thing its owner has, and "we slice it on our servers" means handing it over.
+        Compiling the slicer itself to WebAssembly removes both problems at once: no install, and the file
+        never leaves the machine it was opened on. There is no account, no queue and no server-side copy,
+        because there is no server involved in slicing at all.
+      </p>
+
+      <h2>The thing it refuses to do</h2>
+      <p>
+        The commitment that shapes every technical decision here is that the toolpaths must be the ones a
+        desktop slicer would produce. So the algorithm code is not reimplemented — it is the upstream code,
+        compiled. Arachne wall generation, the fill patterns, tree supports, multi-material segmentation,
+        the prime tower, the pressure equalizer and the G-code time estimator come from OrcaSlicer; the
+        resin support point generator, support tree and pad come from PrusaSlicer 2.9.6. A test fails the
+        build when any ported file drifts from its recorded upstream hash.
+      </p>
+      <p>
+        The same commitment produces the parts that say no. Hollowing, drain holes and organic resin
+        support trees are not ported yet, and they return a typed refusal rather than an approximation. A
+        slicer that answers a hollow request with a solid slice hands you a file that looks correct and
+        prints wrong, and you find out nine hours later.
+      </p>
+      <blockquote>
+        The rule, stated plainly: it is better to refuse a job than to guess at it. A missing feature costs
+        a second. A wrong one costs a print.
+      </blockquote>
+
+      <h2>How it is kept honest</h2>
+      <p>
+        Slicer output is not something you can eyeball. A wall 0.03mm off looks identical on screen and
+        fails on the plate. So correctness here is mechanical rather than visual:
+      </p>
+      <div class="scroll">
+      <table>
+        <tr><th>Gate</th><th>What it catches</th></tr>
+        <tr><td>Byte-identical G-code</td><td>A fixed model is sliced on default paths before and after a change; the two dumps must differ by zero bytes. This is what allows large refactors — threading, memory restructuring, new features — to land with proof they changed nothing they should not have.</td></tr>
+        <tr><td>120+ kernel invariants</td><td>Properties the output must hold rather than exact bytes: layer counts, solid shells, the fan ramp, arc fitting within tolerance, seam distribution, support geometry, position invariance across six placements on the bed.</td></tr>
+        <tr><td>Upstream source manifest</td><td>Any ported file that drifts from its recorded upstream hash fails the build, so "verbatim" stays a fact rather than an intention.</td></tr>
+        <tr><td>Generated parameter reference</td><td>The documented kernel parameter table is generated from the reader call sites in the C++ and by probing the settings mapping. Hand-written counts drift; these are checked on every build.</td></tr>
+      </table>
+      </div>
+      <p>
+        If you want the long version of how the port was done — what broke, what had to be rewritten and
+        what was measured — that is a separate article:
+        <a href="/docs/orcaslicer-webassembly-port">Porting OrcaSlicer to WebAssembly, what actually
+        broke</a>.
+      </p>
+
+      <h2>Two things at once</h2>
+      <p>
+        This site is a demo, and the demo is the product. What runs at
+        <a href="/slice">slicer.kimgh06.com/slice</a> is the published npm package
+        <a href="https://www.npmjs.com/package/three-slicer" rel="noopener">three-slicer</a> consumed as a
+        dependency, not a private build with extra privileges. Anything the demo can do, an app installing
+        the package can do.
+      </p>
+      <p>
+        That matters if you are here for the second use: embedding a slicer in your own product. The
+        package ships the headless kernel for Node or the browser, a React viewer component, a settings
+        panel driven by the full option schema, and the extracted vendor catalogs. The
+        <a href="/demos">integration demos</a> are four independent projects that each install it from npm
+        — an instant-quote form, a printer product page, a CAD page that re-slices on a slider, and a print
+        farm dashboard.
+      </p>
+
+      <h2>License</h2>
+      <p>
+        Three Slicer is <strong>AGPL-3.0-or-later</strong>, inherited from OrcaSlicer and PrusaSlicer,
+        whose code it contains. In practice: you can use it, embed it and modify it, and if you distribute
+        it or run a modified version as a network service, that version's source has to be available under
+        the same license. If the AGPL is a problem for your product, it is a problem before you start
+        rather than after, so it is worth reading first.
+      </p>
+
+      <h2>Who maintains it</h2>
+      <p>
+        Three Slicer is built and maintained by <a href="https://github.com/kimgh06" rel="noopener">kimgh06</a>,
+        in the open. The work is logged stage by stage in the repository rather than summarized after the
+        fact — the development history records each stage's scope and how it was verified at the time.
+      </p>
+      <p>
+        Bug reports go to <a href="https://github.com/kimgh06/Web_Three_Slicer/issues" rel="noopener">GitHub
+        issues</a>, and questions, ideas and prints go to
+        <a href="https://github.com/kimgh06/Web_Three_Slicer/discussions" rel="noopener">Discussions</a>. If
+        you are embedding the package and something in the API is awkward, that is worth an issue too —
+        the surface exists to be used by other people's apps.
+      </p>
+
+      <h2>Try it</h2>
+      <p>
+        <a class="cta" href="/slice">Open the slicer</a>
+        <a class="cta ghost" href="https://github.com/kimgh06/Web_Three_Slicer" rel="noopener">Read the source</a>
+      </p>
+
+      <footer>
+        <span>Three Slicer · AGPL-3.0-or-later</span>
+        <a href="/">Home</a>
+        <a href="/slice">Slicer</a>
+        <a href="/demos">Demos</a>
+        <a href="/docs/orcaslicer-webassembly-port">Engineering notes</a>
+        <a href="https://github.com/kimgh06/Web_Three_Slicer" rel="noopener">GitHub</a>
+      </footer>
+    </div>
+  </body>
+</html>
