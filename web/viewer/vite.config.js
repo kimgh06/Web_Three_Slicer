@@ -11,7 +11,13 @@ import { resolve } from 'node:path'
 //  2. It sends `cache-control: no-cache` for everything, which for this app means re-downloading a 4MB kernel
 //     on every visit. Asset names are content-hashed and can be cached forever; the HTML must not be, or a
 //     deploy never reaches anyone.
-const ROUTE_HTML = { '/slice': '/slice/index.html', '/demos': '/demos/index.html' }
+// /docs/* are static articles: they are HTML entries with no script tag, so they never boot the SPA.
+const ROUTE_HTML = {
+  '/slice': '/slice/index.html',
+  '/demos': '/demos/index.html',
+  '/about': '/about/index.html',
+  '/docs/orcaslicer-webassembly-port': '/docs/orcaslicer-webassembly-port/index.html',
+}
 
 const routeHtmlMiddleware = (req, res, next) => {
   const [path] = (req.url || '/').split('?')
@@ -45,6 +51,8 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         slice: resolve(__dirname, 'slice/index.html'),
         demos: resolve(__dirname, 'demos/index.html'),
+        about: resolve(__dirname, 'about/index.html'),
+        docsWasmPort: resolve(__dirname, 'docs/orcaslicer-webassembly-port/index.html'),
       },
     },
   },
