@@ -21,6 +21,7 @@ export { SLA_CAPABILITIES, SLA_JOB_VERSION, SlaRequestError } from './sla_reques
 const REPLY_OF = {
   warmup: 'warm', prepare: 'prepared', paint: 'painted', erase: 'painted', clear: 'painted',
   importPaint: 'painted', exportPaint: 'paintExport', overlay: 'overlay', slice: 'done', sla: 'done',
+  fillPreview: 'fillPreview', paintMode: 'paintMode',
 }
 
 const asBuffer = (data) => (data instanceof ArrayBuffer ? data : data?.buffer ?? data)
@@ -142,6 +143,14 @@ export function createSlicerClient(worker = new Worker(new URL('./slicer.worker.
 
     overlay: (states) => send({ cmd: 'overlay', ...(states ? { states } : {}) })
       .then(reply => ({ enforcer: reply.enf, blocker: reply.blk, overlays: reply.overlays })),
+
+    /** What a fill would select under `{tool, facet, hx, hy, hz, angle}`, without applying it. `{clear:true}`
+     *  drops the standing selection. `supported` is false on a kernel built before the preview existed. */
+    fillPreview: (args) => send({ cmd: 'fillPreview', ...args })
+      .then(reply => ({ supported: reply.supported, triangles: reply.tris })),
+    /** Brush-wide options: `{overhangDeg}` restricts every stroke to overhangs (0 = off), `{clipPlane:[nx,ny,nz,d]}`
+     *  sets the section plane every cursor clips against (null turns it off). */
+    paintMode: (args) => send({ cmd: 'paintMode', ...args }).then(() => undefined),
 
     /** Load a 3mf's painting. Replaces every mark, so run it directly after `prepare`. */
     importPaint: (facets, hex, states) => brush('importPaint', { facets, hex, ...(states ? { states } : {}) }),

@@ -13,6 +13,14 @@ export interface BrushArgs {
   hx: number; hy: number; hz: number
   cx: number; cy: number; cz: number
   radius: number
+  /**
+   * The PREVIOUS sample of this stroke. Present, the kernel paints the capsule swept from there to `(hx,hy,hz)`
+   * instead of a ball at the hit — which is what upstream does between two consecutive mouse positions
+   * (`DoublePointCursor`, GLGizmoPainterBase.cpp:878). A pointer stream is sampled, not continuous, so without it
+   * a fast drag lands as a row of separate blobs. Omit on the first sample of a stroke; a kernel built before the
+   * capsule existed ignores it and paints the ball, so it is safe to always send.
+   */
+  px?: number; py?: number; pz?: number
 }
 
 /**
@@ -56,6 +64,23 @@ export type SlicerRequest =
   | { cmd: 'clear'; states?: PaintState[] }
   /** The painted overlay triangles. `enf`/`blk` always; `states` adds those states. Reply: `overlay`. */
   | { cmd: 'overlay'; states?: PaintState[] }
+
+  /**
+   * What a fill tool WOULD select under the cursor, without marking anything — upstream draws this on every mouse
+   * move while a fill is active (GLGizmoPainterBase.cpp:929) so a click is aimed rather than tried. No state
+   * argument at all: a preview marks nothing, so there is no NONE for a stray boolean to become.
+   * `{clear:true}` drops the standing selection. Reply: `fillPreview`.
+   */
+  | { cmd: 'fillPreview'; facet?: number; hx?: number; hy?: number; hz?: number
+      tool?: PaintTool; angle?: number; clear?: boolean }
+
+  /**
+   * Brush-wide options, set once and read by every stroke and fill — upstream keeps both on the gizmo.
+   * `overhangDeg` restricts painting to facets overhanging by more than that angle (`0` = off, the default);
+   * `clipPlane` is the section plane `[nx, ny, nz, offset]` in KERNEL coords that every cursor clips against
+   * (`null` turns it off), which is the only way a brush reaches an interior surface. Reply: `paintMode`.
+   */
+  | { cmd: 'paintMode'; overhangDeg?: number; clipPlane?: [number, number, number, number] | null }
   /**
    * Legacy single-object SLA (resin) slice. `params` accepts a JSON string or an object (this path parses either). Same reply stream as
    * a slice: `progress` and `layer` while it runs, then `done` (stats only; layers arrived as `layer`) — or `error`.
@@ -83,6 +108,9 @@ export type SlicerResponse =
   /** `supported: false` from a kernel built before the export binding existed — it does not throw. */
   | { type: 'paintExport'; supported: boolean; facets: number[]; hex: string }
   | { type: 'overlay'; enf: Float32Array; blk: Float32Array; overlays?: Record<number, Float32Array> }
+  /** `supported` false on a kernel built before the preview existed; `tris` is flat x,y,z, 3 vertices per triangle. */
+  | { type: 'fillPreview'; supported: boolean; tris: Float32Array }
+  | { type: 'paintMode'; ok: boolean }
   /**
    * Sent once, unprompted, by the multithreaded kernel only: the address of the support-progress counter and of
    * the cancel flag, inside a SharedArrayBuffer. Writing 1 to the cancel flag stops a slice the worker is

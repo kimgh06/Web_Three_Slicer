@@ -95,6 +95,16 @@ const cursorShapeOf = (message) => (message.cursor === 'circle' ? 1 : 0)
 //  a radius or a camera: what they select comes from the mesh's own topology, which is why they are a branch rather
 //  than more optional fields on the brush call. `state === null` means erase (the entry points with no state
 //  argument), matching how the brush splits paint from erase.
+// The previous sample of the current stroke, when the message carries one. Upstream paints the CAPSULE between two
+//  consecutive mouse positions (DoublePointCursor, GLGizmoPainterBase.cpp:878) — a pointer stream is sampled, not
+//  continuous, so a ball per sample leaves a fast drag as a row of blobs with gaps between them. Optional on the
+//  wire and feature-detected on the kernel, so a caller or a build without it keeps painting single points.
+const strokeFrom = (message) =>
+  Number.isFinite(message.px) && Number.isFinite(message.py) && Number.isFinite(message.pz)
+
+// The fill modes the kernel's fill_preview takes (selector_bridge.h FILL_*), by the tool name the protocol uses.
+const FILL_PREVIEW_MODE = { smart: 0, bucket: 1, triangle: 2 }
+
 const FILL_TOOLS = new Set(['smart', 'bucket', 'triangle'])
 const applyFill = (Module, message, state) => {
   const angle = Number.isFinite(message.angle) ? message.angle : 30
@@ -224,6 +234,8 @@ self.onmessage = async (e) => {
         applyFill(Module, d, paintedState)
       }
       else if (paintedState === null) Module.selector_paint(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, d.enforcer)
+      else if (strokeFrom(d) && Module.selector_paint_stroke)
+        Module.selector_paint_stroke(d.facet, d.px, d.py, d.pz, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, paintedState, cursorShapeOf(d))
       else Module.selector_paint_shape(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, paintedState, cursorShapeOf(d))
       self.postMessage(paintedReply(Module, d, paintedState)); return
     }
@@ -236,6 +248,11 @@ self.onmessage = async (e) => {
     //  change to the same counts, and the viewer's listeners must not need to know which brush produced it.
     if (d.cmd === 'erase')   {
       if (FILL_TOOLS.has(d.tool)) applyFill(Module, d, null)
+      else if (strokeFrom(d) && Module.selector_erase_stroke)
+        Module.selector_erase_stroke(d.facet, d.px, d.py, d.pz, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, cursorShapeOf(d))
+      // The eraser gets the cursor shape too, or a shift+drag with the circle brush rubs out the far side of a wall
+      //  the paint brush never touched. `selector_erase` (no shape) stays the fallback for an older kernel.
+      else if (Module.selector_erase_shape) Module.selector_erase_shape(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, cursorShapeOf(d))
       else Module.selector_erase(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius)
       self.postMessage(paintedReply(Module, d, null)); return
     }
@@ -290,6 +307,34 @@ self.onmessage = async (e) => {
       const transfer = [reply.enf, reply.blk, ...Object.values(reply.overlays ?? {})]
         .filter(a => a?.buffer && a.byteLength > 0).map(a => a.buffer)
       self.postMessage(reply, transfer); return
+    }
+
+    // fillPreview: what a fill WOULD select, without applying it. Upstream runs this on every mouse move while a
+    //  fill tool is active and draws the result in a lighter shade (GLGizmoPainterBase.cpp:929) — a preview marks
+    //  nothing, so it needs no state at all and there is no NONE for a stray boolean to become. `{clear:true}`
+    //  drops the standing selection, which is what leaving the model under the pointer means.
+    if (d.cmd === 'fillPreview') {
+      if (!Module.selector_fill_preview) { self.postMessage({ type: 'fillPreview', supported: false, tris: EMPTY_OVERLAY }); return }
+      if (d.clear) { Module.selector_fill_preview_clear(); self.postMessage({ type: 'fillPreview', supported: true, tris: EMPTY_OVERLAY }); return }
+      const angle = Number.isFinite(d.angle) ? d.angle : 30
+      const mode = FILL_PREVIEW_MODE[d.tool] ?? FILL_PREVIEW_MODE.smart
+      // Upstream's -1 for the non-propagating case, the same value applyFill sends: one facet has no neighbour to
+      //  measure an angle against.
+      const tris = Module.selector_fill_preview(d.facet, d.hx, d.hy, d.hz, mode === FILL_PREVIEW_MODE.triangle ? -1 : angle, mode)
+      self.postMessage({ type: 'fillPreview', supported: true, tris },
+                       tris?.buffer && tris.byteLength > 0 ? [tris.buffer] : [])
+      return
+    }
+    // paintMode: the brush-wide options upstream keeps on the gizmo — the overhang restriction and the section
+    //  plane. Both are set once and read by every stroke, so they are their own command rather than fields on one.
+    if (d.cmd === 'paintMode') {
+      if (Number.isFinite(d.overhangDeg) && Module.selector_set_overhang_limit) Module.selector_set_overhang_limit(d.overhangDeg)
+      if (Module.selector_set_clip_plane) {
+        const plane = d.clipPlane
+        if (plane) Module.selector_set_clip_plane(plane[0], plane[1], plane[2], plane[3], true)
+        else if (d.clipPlane === null) Module.selector_set_clip_plane(0, 0, 1, 0, false)
+      }
+      self.postMessage({ type: 'paintMode', ok: true }); return
     }
 
     if (d.stall) return   // stage-30 test hook: simulate a hang -> verifies the main-thread watchdog fires (not set in production)
