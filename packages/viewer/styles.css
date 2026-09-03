@@ -106,6 +106,10 @@
 .bp-radius { display: block; font-size: 12px; color: #aebcc6; margin-top: 8px; }
 .bp-radius input { width: 100%; }
 .bp-counts { margin-top: 6px; font-size: 11px; }
+/* "On overhangs only" — a checkbox row in a panel whose other rows are buttons, so it borrows the label styling
+   of .bp-radius and only adds the inline layout a checkbox needs. */
+.bp-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #aebcc6; margin-top: 8px; cursor: pointer; }
+.bp-check input { margin: 0; }
 /* Material brush: the chip IS the filament colour, so its background is inline and only the framing is here.
    The active ring is drawn outside the box (outline, not border) — a border would resize the chip on selection. */
 .bp-chip { min-width: 30px; font-weight: 700; border-color: rgba(0,0,0,.35) !important; }

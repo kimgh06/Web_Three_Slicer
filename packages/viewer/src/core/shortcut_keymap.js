@@ -29,6 +29,23 @@ export function makeKeyHandler(deps) {
       return
     }
 
+    // ---- Painting: while a brush is open the letter keys are the brush's own ----
+    // Upstream binds the tools to letters in the gizmo itself (GLGizmoMmuSegmentation::on_key_down_select_tool_type,
+    //  C/S/F/T) and the filaments to the number row (on_number_key_down), which is what makes a two-colour paint job
+    //  one hand on the mouse. They shadow the object shortcuts (S is the scale gizmo, B zooms the bed) only while a
+    //  brush is actually open — and anything not listed falls through, so Escape still closes the brush.
+    if (deps.isPainting?.()) {
+      const digit = /^Digit([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(k) ? k : null)
+      if (key('c'))      { stop(); deps.paintCursor?.('circle'); return }
+      else if (key('s')) { stop(); deps.paintCursor?.('sphere'); return }
+      else if (key('f')) { stop(); deps.paintTool?.('smart'); return }
+      else if (key('b')) { stop(); deps.paintTool?.('bucket'); return }
+      else if (key('t')) { stop(); deps.paintTool?.('triangle'); return }
+      else if (key('v')) { stop(); deps.paintAxisLock?.('vertical'); return }
+      else if (key('h')) { stop(); deps.paintAxisLock?.('horizontal'); return }
+      else if (digit)    { stop(); deps.pickExtruder?.(Number(digit) - 1); return }
+    }
+
     if (deps.isPreview()) {                               // ---- Preview: layer inspection ----
       const step = e.shiftKey ? 10 : 1
       if (k === 'ArrowUp')        { stop(); deps.stepLayer(step) }
