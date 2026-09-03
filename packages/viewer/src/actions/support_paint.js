@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { paintStateColor } from '../core/paint_colors.js'
 
 // Stage 20: manual support painting (enforcer/blocker), extended to material painting — brushing a region so it
 //  prints with another extruder. Both brushes drive the same selector, which is why they are one mode variable.
@@ -95,6 +96,13 @@ export function makeSupportPaint(deps) {
         args[0] = { ...message, states: reportedPaintStates() }
         return post(...args)
       }
+      // Shift+drag sends 'erase' from the pointer handler itself (paint_input.js), because the modifier is a
+      //  property of the STROKE and not of the selected chip. It still needs the state list stamped on, or the
+      //  reply carries no `counts` and the overlay of whatever was just erased stays on screen.
+      if (message && message.cmd === 'erase' && !message.states) {
+        args[0] = { ...message, states: reportedPaintStates() }
+        return post(...args)
+      }
       if (message && message.cmd === 'paint') {
         const state = paintStateFor(paintModeRef.current, materialExtruderRef?.current)
         // The eraser resolves to NONE, which is not a paint state and never will be: the worker rejects an integer
@@ -136,15 +144,15 @@ export function makeSupportPaint(deps) {
   //  T1" under the other — the overlay colour therefore comes from the active brush, not from the state. Support
   //  keeps its two fixed colours (blue/red is what that mode has always looked like); material painting reads the
   //  filament palette, because an overlay in a colour the filament is not is exactly the thing it must not be.
-  const SUPPORT_OVERLAY_COLOR = { 1: '#2b6cff', 2: '#e23b3b' }   // enforcer=blue, blocker=red
+  //  The mapping itself is core/paint_colors.js, shared with the brush cursor: the preview of what the next stroke
+  //  will paint has to be the colour that stroke actually produces.
   function overlayColorFor(state) {
     const mode = paintModeRef.current
     // Importing a 3mf draws an overlay while the mode is still 'off' — nobody has entered a brush yet — so the mode
     //  cannot say which kind of paint is on screen. The import records what it loaded for exactly this reason:
     //  material paint drawn in the support blue/red is the one thing the overlay must never be.
     const material = mode === 'material' || (mode !== 'enforcer' && mode !== 'blocker' && getWorker()?.__paintImportKind === 'color')
-    if (material) return extruderColorsRef?.current?.[state - 1] ?? '#9aa4b2'
-    return SUPPORT_OVERLAY_COLOR[state] ?? '#9aa4b2'
+    return paintStateColor(state, material, extruderColorsRef?.current)
   }
   function disposeOverlayMesh(state) {
     const t = three.current, meshes = paintOverlayRef.current
@@ -176,7 +184,16 @@ export function makeSupportPaint(deps) {
       //  most expensive part of this rebuild — measured on an M5 Pro at 0.2 ms for 5k triangles, 4.1 ms at 100k and
       //  8.0 ms at 200k, against 1.0-1.4 ms for everything else put together. It runs once per stroke sample.
       const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3))
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.55, side:THREE.DoubleSide, depthTest:false }))
+      // Depth-tested, and pulled towards the camera by a polygon offset. The overlay is COPLANAR with the surface
+      //  it marks, so without the offset it z-fights the model; the offset is the decal fix for that, and it is the
+      //  only one that keeps the depth test — which is what hides paint on the far side. It used to run with
+      //  `depthTest: false` instead, and the side effect was exactly the thing an overlay must not do: a mark on
+      //  the back of the hull drew straight through the front of it. (Upstream never has this problem because its
+      //  MMU gizmo REPLACES the object's own rendering with a per-state coloured pass over the whole selector
+      //  — GLGizmoPainterBase.cpp:76 — so nothing is ever drawn twice at one depth.)
+      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.55, side:THREE.DoubleSide,
+        polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1,
+        clippingPlanes: apiRef.current?.paintClipPlanes?.() ?? null }))
       m.renderOrder = 999; t.objectsGroup.add(m); return m
     }
     // Only the states this reply carries are touched; every other state keeps the mesh it already has. That is what

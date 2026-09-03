@@ -15,12 +15,31 @@
 using namespace Slic3r;
 
 namespace {
+    // Upstream reaches the seed-fill selection the same way: TriangleSelectorGUI is a SUBCLASS, because the split
+    // triangles it has to walk are protected (TriangleSelector.hpp:475). The selection lives on the split tree and
+    // not on the source facets, so there is no facet-index answer to hand back — it has to come out as geometry.
+    class PreviewSelector : public TriangleSelector {
+    public:
+        using TriangleSelector::TriangleSelector;
+        std::vector<float> seed_fill_overlay() const {
+            std::vector<float> out;
+            for (const Triangle& tr : m_triangles) {
+                if (!tr.valid() || tr.is_split() || !tr.is_selected_by_seed_fill()) continue;
+                for (int k = 0; k < 3; ++k) {
+                    const stl_vertex& v = m_vertices[tr.verts_idxs[k]].v;
+                    out.push_back(v.x()); out.push_back(v.y()); out.push_back(v.z());
+                }
+            }
+            return out;
+        }
+    };
+
     // One cache slot per EnforcerBlockerType value (index == the state number; 0 = NONE stays permanently empty).
     // get_facets() walks the whole split tree, so the states are filled lazily: the support path only ever asks for
     // ENFORCER/BLOCKER and must not pay for 14 extruder states it never paints.
     constexpr int STATE_COUNT = selector_bridge::STATE_EXTRUDER_MAX + 1;
     std::unique_ptr<TriangleMesh>      g_mesh;
-    std::unique_ptr<TriangleSelector>  g_sel;
+    std::unique_ptr<PreviewSelector>   g_sel;
     std::array<indexed_triangle_set, STATE_COUNT> g_facets;   // cached painted facets per state (kernel coords)
     std::array<bool, STATE_COUNT>      g_cached{};
     const indexed_triangle_set         g_empty{};
@@ -48,6 +67,14 @@ namespace {
     // wrong answer. Cleared only where the marks genuinely cease to exist (a fresh selector).
     bool g_maybe_painted = false;
     void invalidate() { g_cached.fill(false); g_segmented.clear(); }
+
+    // The section plane every cursor is built with. Upstream keeps it on the gizmo's ObjectClipper and passes it
+    // into each call; here it is one bridge-wide value because the viewer has exactly one section plane. Default
+    // constructed == inactive (offset FLT_MAX), which is what the old hardcoded ClippingPlane() was.
+    TriangleSelector::ClippingPlane g_clip;
+    // Upstream's m_highlight_by_angle_threshold_deg, gated by m_paint_on_overhangs_only. 0 == off.
+    float g_overhang_deg = 0.f;
+
 
     const indexed_triangle_set& facets_of(int state) {
         if (!valid_state(state)) return g_empty;
@@ -85,7 +112,7 @@ void construct(const std::vector<float>& verts, const std::vector<int>& tris) {
     its.indices.reserve(tris.size() / 3);
     for (size_t i = 0; i + 2 < tris.size(); i += 3) its.indices.emplace_back(tris[i], tris[i+1], tris[i+2]);
     g_mesh = std::make_unique<TriangleMesh>(its);
-    g_sel  = std::make_unique<TriangleSelector>(*g_mesh);
+    g_sel  = std::make_unique<PreviewSelector>(*g_mesh);
     g_maybe_painted = false;
     invalidate();
 }
@@ -105,25 +132,53 @@ bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vecto
     return true;
 }
 
-void clear() { if (g_mesh) g_sel = std::make_unique<TriangleSelector>(*g_mesh); g_maybe_painted = false; invalidate(); }
+void clear() { if (g_mesh) g_sel = std::make_unique<PreviewSelector>(*g_mesh); g_maybe_painted = false; invalidate(); }
 
 int  facet_count() { return g_mesh ? int(g_mesh->its.indices.size()) : 0; }
 bool has_paint()   { return Slic3r::selector_has_paint(); }
 
-void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz, float radius, int state, int cursor) {
-    if (!g_sel || facet < 0 || facet >= int(g_mesh->its.indices.size())) return;
-    if (!paintable_state(state)) return;
-    const Vec3f center(hx, hy, hz), camera(cx, cy, cz);
-    Transform3d trafo = Transform3d::Identity();
+namespace {
     // cursor_factory asserts on anything but these two, and an assert in a wasm build is a raw trap with no message,
     //  so an unknown value is read as the default brush instead of being passed through.
-    const auto shape = (cursor == selector_bridge::CURSOR_CIRCLE) ? TriangleSelector::CursorType::CIRCLE
-                                                                  : TriangleSelector::CursorType::SPHERE;
-    auto cursor_shape = TriangleSelector::SinglePointCursor::cursor_factory(
-        center, camera, radius, shape, trafo, TriangleSelector::ClippingPlane());
-    g_sel->select_patch(facet, std::move(cursor_shape), (EnforcerBlockerType)state, trafo, /*triangle_splitting*/true);
-    if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;   // NONE is the eraser — it never creates a mark
-    invalidate();
+    TriangleSelector::CursorType shape_of(int cursor) {
+        return (cursor == selector_bridge::CURSOR_CIRCLE) ? TriangleSelector::CursorType::CIRCLE
+                                                          : TriangleSelector::CursorType::SPHERE;
+    }
+    // Everything a stroke does after its cursor is built is identical whether that cursor is a ball or a capsule.
+    void apply_patch(int facet, std::unique_ptr<TriangleSelector::Cursor>&& cursor_shape, int state) {
+        Transform3d trafo = Transform3d::Identity();
+        g_sel->select_patch(facet, std::move(cursor_shape), (EnforcerBlockerType)state, trafo,
+                            /*triangle_splitting*/true, g_overhang_deg);
+        if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;   // NONE is the eraser — it never creates a mark
+        invalidate();
+    }
+    bool paintable_hit(int facet, int state) {
+        return g_sel && facet >= 0 && facet < int(g_mesh->its.indices.size()) && paintable_state(state);
+    }
+}
+
+void set_overhang_limit(float deg) { g_overhang_deg = deg > 0.f ? deg : 0.f; }
+
+void set_clip_plane(float nx, float ny, float nz, float offset, bool enabled) {
+    if (!enabled) { g_clip = TriangleSelector::ClippingPlane(); return; }
+    g_clip = TriangleSelector::ClippingPlane(std::array<float, 4>{nx, ny, nz, offset});
+}
+
+void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz, float radius, int state, int cursor) {
+    if (!paintable_hit(facet, state)) return;
+    Transform3d trafo = Transform3d::Identity();
+    apply_patch(facet, TriangleSelector::SinglePointCursor::cursor_factory(
+        Vec3f(hx, hy, hz), Vec3f(cx, cy, cz), radius, shape_of(cursor), trafo, g_clip), state);
+}
+
+void paint_stroke(int facet, float ax, float ay, float az, float bx, float by, float bz,
+                  float cx, float cy, float cz, float radius, int state, int cursor) {
+    if (!paintable_hit(facet, state)) return;
+    Transform3d trafo = Transform3d::Identity();
+    // Capsule3D for the sphere brush, Capsule2D for the circle one — DoublePointCursor::cursor_factory picks by the
+    //  same CursorType the single-point factory takes, so the two entry points cannot disagree about the shape.
+    apply_patch(facet, TriangleSelector::DoublePointCursor::cursor_factory(
+        Vec3f(ax, ay, az), Vec3f(bx, by, bz), Vec3f(cx, cy, cz), radius, shape_of(cursor), trafo, g_clip), state);
 }
 
 // Both fills follow upstream's own order (GLGizmoPainterBase.cpp ~845-865): select, then apply the selection as a
@@ -131,11 +186,10 @@ void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz
 // while a headless one-shot call must leave the selector holding nothing, or the NEXT fill's `force_reselection`
 // would be the only thing standing between the two clicks.
 void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int state) {
-    if (!g_sel || facet < 0 || facet >= int(g_mesh->its.indices.size())) return;
-    if (!paintable_state(state)) return;
+    if (!paintable_hit(facet, state)) return;
     Transform3d trafo = Transform3d::Identity();
-    g_sel->seed_fill_select_triangles(Vec3f(hx, hy, hz), facet, trafo, TriangleSelector::ClippingPlane(),
-                                      angle_deg, /*highlight_by_angle_deg*/0.f, /*force_reselection*/true);
+    g_sel->seed_fill_select_triangles(Vec3f(hx, hy, hz), facet, trafo, g_clip,
+                                      angle_deg, g_overhang_deg, /*force_reselection*/true);
     g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
     g_sel->seed_fill_unselect_all_triangles();
     if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
@@ -143,14 +197,33 @@ void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int sta
 }
 
 void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool propagate, int state) {
-    if (!g_sel || facet < 0 || facet >= int(g_mesh->its.indices.size())) return;
-    if (!paintable_state(state)) return;
-    g_sel->bucket_fill_select_triangles(Vec3f(hx, hy, hz), facet, TriangleSelector::ClippingPlane(),
+    if (!paintable_hit(facet, state)) return;
+    g_sel->bucket_fill_select_triangles(Vec3f(hx, hy, hz), facet, g_clip,
                                         angle_deg, propagate, /*force_reselection*/true);
     g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
     g_sel->seed_fill_unselect_all_triangles();
     if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
     invalidate();
+}
+
+// Select without applying, and hand back what WOULD be filled. Upstream runs exactly this on every mouse move while
+// a fill tool is active (GLGizmoPainterBase.cpp:929-965) and draws the result in a lighter shade, so a click is
+// aimed rather than tried. The selection is left standing on the selector: the click that follows re-selects with
+// force_reselection anyway, so nothing depends on clearing it, and leaving it costs one flag per split triangle
+// instead of a second full walk on every pointer move.
+std::vector<float> fill_preview(int facet, float hx, float hy, float hz, float angle_deg, int mode) {
+    if (!g_sel || facet < 0 || facet >= int(g_mesh->its.indices.size())) return {};
+    Transform3d trafo = Transform3d::Identity();
+    if (mode == selector_bridge::FILL_SMART)
+        g_sel->seed_fill_select_triangles(Vec3f(hx, hy, hz), facet, trafo, g_clip,
+                                          angle_deg, g_overhang_deg, /*force_reselection*/true);
+    else
+        g_sel->bucket_fill_select_triangles(Vec3f(hx, hy, hz), facet, g_clip, angle_deg,
+                                            /*propagate*/mode == selector_bridge::FILL_BUCKET, /*force_reselection*/true);
+    return g_sel->seed_fill_overlay();
+}
+void fill_preview_clear() {
+    if (g_sel) g_sel->seed_fill_unselect_all_triangles();
 }
 
 int painted_count(int state) { return int(facets_of(state).indices.size()); }

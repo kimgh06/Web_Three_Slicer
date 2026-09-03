@@ -24,7 +24,7 @@ export function objectTools(actions) {
     { id: 'negative', icon: negativeIcon, label: 'Negative part', tip: 'Add a negative/modifier part — put a part with different properties inside one object. Not implemented (no part concept)' },
     { sep: true },
     { id: 'seam', icon: seamIcon, label: 'Seam painting', tip: 'Seam painting — brush where the layer seam goes. Not implemented (needs kernel seam wiring)' },
-    { id: 'mmu', icon: mmuIcon, label: 'Color painting', tip: 'Color painting — assign multi-material colors per facet. Not implemented (needs the MMU paint codec wiring)' },
+    { id: 'mmu', icon: mmuIcon, label: 'Color painting', tip: 'Color painting — brush a region so it prints with another filament (opens on T1; the panel picks the rest)', run: actions.paintMaterial },
     { id: 'text', icon: textmarkIcon, label: 'Text', tip: 'Text/SVG emboss — engrave letters or shapes onto the model surface. Not implemented (needs font rasterization)' },
     { id: 'measure', icon: measureIcon, label: 'Measure', tip: 'Measure — distance and angle between two points or faces. Not implemented' },
     { id: 'varlayer', icon: varlayerIcon, label: 'Variable layers', tip: 'Variable layer height — different layer heights per band. Not implemented (the kernel has no variable z)' },

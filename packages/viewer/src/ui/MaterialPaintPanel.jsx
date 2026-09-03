@@ -34,7 +34,16 @@ export const PAINT_TOOLS = [
 ]
 export const isFillTool = (tool) => tool === 'smart' || tool === 'bucket' || tool === 'triangle'
 
-export function PaintToolRow({ tool = 'brush', onTool, cursor = 'sphere', onCursor, fillAngle = 30, onFillAngle }) {
+// Upstream offers the axis lock as two mutually exclusive checkboxes (Vertical / Horizontal — GLGizmoMmuSegmentation
+// .cpp:541). Three buttons say the same thing with the "neither" state on screen, which matters here because the
+// lock is also reachable from the keyboard: a lock you cannot see is a lock you cannot work out how to leave.
+const AXIS_LOCKS = [
+  ['none', 'free', 'No lock — the stroke follows the pointer'],
+  ['vertical', 'vertical ↕', 'Lock the stroke to a vertical line through the press (V)'],
+  ['horizontal', 'horizontal ↔', 'Lock the stroke to a horizontal line through the press (H)'],
+]
+
+export function PaintToolRow({ tool = 'brush', onTool, cursor = 'circle', onCursor, fillAngle = 30, onFillAngle, axisLock = 'none', onAxisLock }) {
   return (
     <>
       <div className="bp-modes bp-tools">
@@ -44,14 +53,22 @@ export function PaintToolRow({ tool = 'brush', onTool, cursor = 'sphere', onCurs
         ))}
       </div>
       {tool === 'brush' && (
-        <div className="bp-modes bp-tools">
-          <button className={cursor === 'sphere' ? 'bp-tool on' : 'bp-tool'} onClick={() => onCursor?.('sphere')}
-            title="Sphere — a ball around the hit, so the far side of a thin wall is painted too"
-            data-testid="paint-cursor-sphere">sphere</button>
-          <button className={cursor === 'circle' ? 'bp-tool on' : 'bp-tool'} onClick={() => onCursor?.('circle')}
-            title="Circle — a disc facing the camera, so only the surface you are looking at"
-            data-testid="paint-cursor-circle">circle</button>
-        </div>
+        <>
+          <div className="bp-modes bp-tools">
+            <button className={cursor === 'circle' ? 'bp-tool on' : 'bp-tool'} onClick={() => onCursor?.('circle')}
+              title="Circle (C) — a disc facing the camera, so only the surface you are looking at"
+              data-testid="paint-cursor-circle">circle</button>
+            <button className={cursor === 'sphere' ? 'bp-tool on' : 'bp-tool'} onClick={() => onCursor?.('sphere')}
+              title="Sphere (S) — a ball around the hit, so the far side of a thin wall is painted too"
+              data-testid="paint-cursor-sphere">sphere</button>
+          </div>
+          <div className="bp-modes bp-tools">
+            {AXIS_LOCKS.map(([id, label, hint]) => (
+              <button key={id} className={axisLock === id ? 'bp-tool on' : 'bp-tool'} onClick={() => onAxisLock?.(id)}
+                title={hint} data-testid={`paint-axis-${id}`}>{label}</button>
+            ))}
+          </div>
+        </>
       )}
       {/* "Triangle" is bucket fill with the propagation off, so it never consults the angle — no slider for it. */}
       {(tool === 'smart' || tool === 'bucket') && (
@@ -71,7 +88,7 @@ export function PaintToolRow({ tool = 'brush', onTool, cursor = 'sphere', onCurs
 export default function MaterialPaintPanel({
   colors, activeExtruder, onSelectExtruder, onClear, onClose,
   brushRadius, onBrushRadius, paintCounts,
-  paintTool, onPaintTool, brushCursor, onBrushCursor, fillAngle, onFillAngle,
+  paintTool, onPaintTool, brushCursor, onBrushCursor, fillAngle, onFillAngle, axisLock, onAxisLock,
 }) {
   // Every input here can be missing while the kernel side is still being wired, so each one gets a floor rather
   //  than a guard at the call site — an empty panel is a fine intermediate state, a crash is not.
@@ -108,7 +125,7 @@ export default function MaterialPaintPanel({
           title="Leave painting mode (Esc)">Close</button>
       </div>
       <PaintToolRow tool={paintTool} onTool={onPaintTool} cursor={brushCursor} onCursor={onBrushCursor}
-        fillAngle={fillAngle} onFillAngle={onFillAngle} />
+        fillAngle={fillAngle} onFillAngle={onFillAngle} axisLock={axisLock} onAxisLock={onAxisLock} />
       {!isFillTool(paintTool) && (
         <label className="bp-radius">Brush radius {radius}mm
           <input type="range" min="1" max="15" step="0.5" value={radius}

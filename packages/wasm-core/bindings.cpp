@@ -66,6 +66,17 @@ static void selector_paint_shape(int facet, float hx,float hy,float hz, float cx
   if (state == selector_bridge::STATE_NONE) return;
   selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, state, cursor);
 }
+// The capsule swept between the previous stroke sample (a*) and this one (b*) — same NONE rule as the brush above,
+// and the same erase twin below, because a shift+drag has to be continuous for exactly the reason a paint drag does.
+static void selector_paint_stroke(int facet, float ax,float ay,float az, float bx,float by,float bz,
+                                  float cx,float cy,float cz, float radius, int state, int cursor) {
+  if (state == selector_bridge::STATE_NONE) return;
+  selector_bridge::paint_stroke(facet, ax,ay,az, bx,by,bz, cx,cy,cz, radius, state, cursor);
+}
+static void selector_erase_stroke(int facet, float ax,float ay,float az, float bx,float by,float bz,
+                                  float cx,float cy,float cz, float radius, int cursor) {
+  selector_bridge::paint_stroke(facet, ax,ay,az, bx,by,bz, cx,cy,cz, radius, selector_bridge::STATE_NONE, cursor);
+}
 static void selector_paint_state(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int state) {
   selector_paint_shape(facet, hx,hy,hz, cx,cy,cz, radius, state, selector_bridge::CURSOR_SPHERE);
 }
@@ -74,6 +85,11 @@ static void selector_paint_state(int facet, float hx,float hy,float hz, float cx
 // parameter there is nothing for a stray boolean to turn into NONE, so the erase can only be reached on purpose.
 static void selector_erase(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius) {
   selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, selector_bridge::STATE_NONE, selector_bridge::CURSOR_SPHERE);
+}
+// The erase twin of selector_paint_shape: the cursor shape has to reach the eraser too, or shift+drag with the
+// circle brush would rub out the far side of a wall the paint brush never touched.
+static void selector_erase_shape(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int cursor) {
+  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, selector_bridge::STATE_NONE, cursor);
 }
 static void selector_paint(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, bool enforcer) {
   selector_paint_state(facet, hx,hy,hz, cx,cy,cz, radius, selector_state_of(enforcer));
@@ -130,6 +146,18 @@ static em::val selector_export_paint() {
   out.set("hex", hex_joined);
   return out;
 }
+// Brush-wide modes, set once rather than carried on every stroke — upstream keeps both on the gizmo for the same
+// reason. `deg` 0 turns the overhang restriction off; `enabled` false makes the section plane clip nothing.
+static void selector_set_overhang_limit(float deg) { selector_bridge::set_overhang_limit(deg); }
+static void selector_set_clip_plane(float nx, float ny, float nz, float offset, bool enabled) {
+  selector_bridge::set_clip_plane(nx, ny, nz, offset, enabled);
+}
+// What a fill WOULD select, without applying it (upstream draws this on hover in a lighter shade). No state
+// argument at all: a preview marks nothing, so there is no NONE for a stray boolean to become.
+static em::val selector_fill_preview(int facet, float hx,float hy,float hz, float angle_deg, int mode) {
+  return to_f32(selector_bridge::fill_preview(facet, hx,hy,hz, angle_deg, mode));
+}
+static void selector_fill_preview_clear() { selector_bridge::fill_preview_clear(); }
 static void selector_clear() { selector_bridge::clear(); }
 static int  selector_facet_count() { return selector_bridge::facet_count(); }
 static int  selector_painted_count_state(int state) { return selector_bridge::painted_count(state); }
@@ -185,4 +213,14 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("selector_seed_fill_erase", &selector_seed_fill_erase);
   em::function("selector_bucket_fill", &selector_bucket_fill);         //  "bucket fill" / with propagate=false, "triangles"
   em::function("selector_bucket_fill_erase", &selector_bucket_fill_erase);
+  // Upstream's DoublePointCursor: the capsule between two consecutive stroke samples, so a drag is one continuous
+  //  mark rather than a row of balls with gaps between them (GLGizmoPainterBase.cpp:878).
+  em::function("selector_paint_stroke", &selector_paint_stroke);
+  em::function("selector_erase_stroke", &selector_erase_stroke);
+  em::function("selector_erase_shape", &selector_erase_shape);         //  the eraser with a chosen cursor shape
+  // Brush-wide modes + the hover preview of a fill.
+  em::function("selector_set_overhang_limit", &selector_set_overhang_limit);
+  em::function("selector_set_clip_plane", &selector_set_clip_plane);
+  em::function("selector_fill_preview", &selector_fill_preview);
+  em::function("selector_fill_preview_clear", &selector_fill_preview_clear);
 }

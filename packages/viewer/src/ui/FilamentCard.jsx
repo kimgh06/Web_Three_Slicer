@@ -29,19 +29,22 @@ const scalarOf = v => (Array.isArray(v) ? v[0] : v)
 
 // Filament card: one material per extruder. Selecting a row aims the material/preset pickers (and the settings
 // form) at that extruder; the colors keep feeding the object meshes and the prime tower.
+//
+// `active` is CONTROLLED rather than local, because the same choice is also made from the material brush's chips
+// and from the number row. Held here it was a second selection that only tracked the first when the row's brush
+// button happened to be the thing clicked — so picking T2 in the brush panel left this card editing T3's material,
+// and the two disagreed on screen with nothing saying which one the next action would use.
 export default function FilamentCard({
   colors, onColor, onAdd, onRemove, settings, setSettings, filamentPanel,
-  paintMode, onPaintExtruder, paintCounts,
+  paintMode, onPaintExtruder, paintCounts, active = 0, onActive,
 }) {
   // Materials are printer-specific and live in a lazily loaded artifact, so they arrive after a printer is picked.
   const printer = settings?.printer_settings_id ?? ''
   const [api, setApi] = useState(null)
   const [custom, setCustom] = useState(readCustom)
   const [typeChoice, setTypeChoice] = useState(null)   // null = follow the picked preset's own type
-  const [active, setActive] = useState(0)              // the extruder the pickers and the form edit
 
   const count = colors.length
-  useEffect(() => { if (active >= count) setActive(count - 1) }, [count, active])
 
   const ownedKeys = useMemo(() => [...new Set([...(api?.keys ?? []), ...FILAMENT_PAGE_KEYS])], [api])
 
@@ -94,7 +97,6 @@ export default function FilamentCard({
     if (count <= 1) return
     onRemove?.(active)
     setSettings?.(prev => assign(api, custom, materials.filter((_, i) => i !== active), prev))
-    setActive(current => Math.max(0, Math.min(current, count - 2)))
   }
 
   // "Modified" = this extruder's column differs from what its preset applies. The map is sparse, so a key being
@@ -234,7 +236,7 @@ export default function FilamentCard({
   //  click does both rather than leaving the pickers below aimed at whatever row was last clicked. `paintMode`
   //  stays absent until the host wires material painting, and then the button simply never lights up.
   const materialPainting = paintMode === 'material'
-  const startPainting = (index) => { setActive(index); onPaintExtruder?.(index) }
+  const startPainting = (index) => onPaintExtruder?.(index)
 
   return (
     <section className="side-card" data-testid="filament-section">
@@ -248,7 +250,7 @@ export default function FilamentCard({
       </div>
       {colors.map((c, i) => (
         <div className={`filament-row${i === active ? ' fil-active' : ''}`} key={i}
-             onClick={() => setActive(i)} data-testid={`filament-row-${i}`}
+             onClick={() => onActive?.(i)} data-testid={`filament-row-${i}`}
              title={materials[i] ? `T${i + 1}: ${materials[i]}` : `T${i + 1}: no material picked`}>
           <input type="color" value={c} onClick={e => e.stopPropagation()} onChange={e => onColor(i, e.target.value)}
                  title={`T${i + 1} filament color`} data-testid={`filament-color-${i}`} />

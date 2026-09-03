@@ -4,7 +4,8 @@ import { PaintToolRow, isFillTool } from './MaterialPaintPanel.jsx'
 // Floating brush panel shown while support painting is active.
 export default function PaintPanel({
   paintMode, onPaintMode, onClear, brushRadius, onBrushRadius, paintCounts,
-  paintTool, onPaintTool, brushCursor, onBrushCursor, fillAngle, onFillAngle,
+  paintTool, onPaintTool, brushCursor, onBrushCursor, fillAngle, onFillAngle, axisLock, onAxisLock,
+  overhangOnly, onOverhangOnly, overhangAngle = 30,
 }) {
   return (
     <div className="brush-panel" data-testid="paint-tools">
@@ -18,7 +19,15 @@ export default function PaintPanel({
       {/* The same tools the material panel offers: both brushes write to one selector, so the fills reach enforcer
           and blocker marks without a second implementation. */}
       <PaintToolRow tool={paintTool} onTool={onPaintTool} cursor={brushCursor} onCursor={onBrushCursor}
-        fillAngle={fillAngle} onFillAngle={onFillAngle} />
+        fillAngle={fillAngle} onFillAngle={onFillAngle} axisLock={axisLock} onAxisLock={onAxisLock} />
+      {/* Upstream's "on overhangs only" (m_paint_on_overhangs_only): the stroke lands only where the model actually
+          needs support, so a rough drag over a whole side marks the underside and leaves the walls alone. It shares
+          the support threshold angle with the overhang view, as it does upstream. */}
+      <label className="bp-check" title={`Paint only facets overhanging by more than ${overhangAngle}° — the support threshold`}>
+        <input type="checkbox" checked={!!overhangOnly} onChange={e => onOverhangOnly?.(e.target.checked)}
+          data-testid="paint-overhangs-only" />
+        On overhangs only ({overhangAngle}°)
+      </label>
       {!isFillTool(paintTool) && (
         <label className="bp-radius">Brush radius {brushRadius}mm
           <input type="range" min="1" max="15" step="0.5" value={brushRadius}

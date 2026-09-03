@@ -44,6 +44,33 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   extended it by the region's own SIZE, so a region further from the origin than that got no infill and no error
   (measured on a 20mm cube: sparse 828 -> 414, solid 427 -> 183). Fixed by adding the region's distance from the
   origin to the reach; the `[position invariance]` invariant in `test.mjs` pins it at six placements.
+- **A pointer stream is sampled, not continuous, so a brush stroke is a CAPSULE and not a ball.** Upstream builds a
+  `DoublePointCursor` between every adjacent pair of projected mouse positions (`GLGizmoPainterBase.cpp:878`);
+  painting one sphere per sample leaves a fast drag as a row of blobs with gaps between them. `paint_input.js`
+  carries the previous sample of the current stroke and `selector_bridge::paint_stroke` builds `Capsule3D`/`Capsule2D`
+  from it — both were already ported for the single-point brush, only the bridge entry point was missing. The field
+  is optional on the wire and feature-detected on the kernel (`Module.selector_paint_stroke`), so an older kernel
+  keeps painting single points instead of failing.
+- **A filament colour lives in two places and both have to be written.** `extruderColors` (viewer state) is what
+  the viewer DRAWS — object bodies, paint chips, the paint overlay, the toolpath Filament view — and `filament_colour`
+  is the SETTINGS key upstream stores the palette under, so it is what `<SettingsPanel/>` edits, what a "Save as 3mf"
+  writes and what a project import reads back. Only the import direction existed: picking a colour moved the state
+  and left the settings map alone, so a project saved after recolouring came back in the old colours (measured: the
+  archive had no `project_settings.config` member at all). `actions/filament_colors.js` owns every mutation and
+  mirrors the list into the settings map; nothing else may write either half on its own.
+- **The brush must draw itself.** Upstream renders the cursor every frame (`render_cursor`, a ring for CIRCLE and a
+  translucent ball for SPHERE); without it the radius slider is a number with no referent and the stroke is the
+  first place its reach is visible. The viewer's default cursor is **circle**, as upstream's MMU gizmo is
+  (`ImGui::CircleButtonIcon`) — sphere is a ball around the hit, so on a thin wall it paints the far side too
+  (measured on the 3DBenchy hull: a few 5mm sphere strokes across the bow marked 21933 facets, most of them on
+  surfaces the user could not see).
+- **The section plane is clipped by two consumers in two frames, in opposite directions.** three.js keeps
+  `normal·p + constant >= 0` in VIEWER coordinates; the kernel clips `normal·p - offset > 0` in KERNEL coordinates.
+  The conversion is `core/paint_clip.js` and nowhere else, with a test that asserts the two agree point by point —
+  a sign error there shows a correct-looking cut while the brush paints the half that was cut away.
+- **`Ctrl`+wheel sizes the brush; the bare wheel stays the camera zoom.** It used to be the bare wheel, which took
+  zooming away for as long as a brush was open. `Alt`+wheel scrubs the section plane, `Shift`+drag erases — all
+  three are upstream's own bindings, and the erase modifier is why the box select refuses to start in paint mode.
 - Painting is per facet, so a move must not cost it. `selector_reprepare` (bindings) rebuilds the selector on the
   moved coordinates — which the brush and the layer projection both need — and carries the marks across through
   upstream's own `TriangleSelector::serialize`/`deserialize`. It reports false and starts clean when the face count
@@ -213,10 +240,15 @@ npm run test:viewer    # every packages/viewer/test_*.mjs — the layer guard, t
 #   box_select      the Shift+drag rectangle's screen projection
 #   bed_grid        upstream Bed_2D's cell ladder
 #   tower_layout    prime-tower placement, auto and chosen
+#   paint            per-extruder facet counts, the overlay/cursor colours, the brush's keyboard layer
 #   bed_bounds gcode_parse history loaders overhang scale_box 3mf_export 3mf_project
 
 # Regenerate the kernel parameter reference (params.cpp/params.h -> engine/PARAMS.md). build runs this automatically
 node packages/types/gen_kernel_params.mjs
+
+# The brush's kernel side: the swept (capsule) stroke, the section plane, the overhang limit, the fill preview.
+# Runs inside test:kernel — it guards entry points the viewer feature-detects, so a silent regression is invisible.
+node packages/wasm-core/test_paint_brush.mjs
 
 # 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
 node packages/wasm-core/test_paint_import.mjs

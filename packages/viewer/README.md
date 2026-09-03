@@ -180,6 +180,26 @@ arrows and Delete working.
 | `Z` · `B` | Zoom to all · zoom to bed |
 | `Esc` | Back to Prepare |
 
+While a brush is open these take over the same letters — the object shortcuts come back the moment it closes.
+
+| Painting | |
+| --- | --- |
+| `C` · `S` | Brush shape: circle (the visible surface) · sphere (reaches through a thin wall) |
+| `F` · `B` · `T` | Smart fill · bucket fill · single triangle |
+| `V` · `H` | Lock the stroke to a vertical · horizontal line — press again to release |
+| `1`…`9` | Paint with that filament (material brush only) |
+| `Shift + drag` | Erase instead of paint |
+| Drag off the model | Rotate the camera — a press that misses the model is not the brush's, so orbiting never means closing it |
+| `Ctrl/⌘ + wheel` | Brush radius, or the fill angle for a fill tool — the bare wheel stays the camera zoom |
+| `Alt + wheel` | Scrub the section plane, which is what lets a brush reach a surface inside the model |
+| `Esc` | Close the brush, and put back whatever the section plane cut away |
+
+The brush draws itself while it is open — a ring for the circle cursor, a translucent ball for the sphere — and a
+fill tool shades what a click would flood before you click it. A drag paints the **capsule** swept between samples
+rather than one ball per sample, so a fast stroke is continuous instead of a row of blobs. A press that misses the
+model falls through to the camera, so the view can be turned mid-paint without closing the brush. The support brush also
+offers *on overhangs only*, which restricts every stroke to facets steeper than the support threshold.
+
 Mouse selection follows upstream's rules: a plain click **replaces** the selection, `Ctrl/⌘ + click` adds or
 removes, a plain click on something already selected **keeps** the set (which is what makes dragging several
 objects work), `Shift + drag` is a box select, and clicking empty space clears. Alt is not a de-select, in

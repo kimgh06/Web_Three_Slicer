@@ -67,3 +67,17 @@ export function towerBoxes({ plateCount, size, bedWidth, bedDepth, settings, mod
   }
   return boxes.length ? boxes : null
 }
+
+// The tower's own outcome, so the card can show settings and result together. Tool changes are counted from the
+// G-CODE rather than read from the stats block: the kernel reports them only in the (opt-in) stats, and the card
+// must not depend on that being switched on. `params` is the last slice's kernel parameters — the placement the
+// tower was actually built at, which may be the auto one rather than anything the user typed.
+export function towerResultStats(result, params) {
+  const stats = result?.stats
+  if (!stats || !Number.isFinite(stats.filament_mm_purge)) return null
+  return {
+    purge: stats.filament_mm_purge,
+    changes: (result.gcode?.match(/^T\d+$/gm) ?? []).length,
+    x: params?.prime_tower_x, y: params?.prime_tower_y,
+  }
+}
