@@ -50,7 +50,26 @@ enum : int {
 // return to the default extruder — the same thing upstream's shift+drag does (GLGizmoPainterBase.cpp ~732-748).
 // The embind layer does NOT let a state argument carry NONE (bindings.cpp): erasing has its own entry point there,
 // because embind coerces a JS `false` to the int 0 == NONE and a boolean must never be able to erase.
+// Upstream's `highlight_by_angle_deg` (select_patch's last-but-one argument), as a MODE rather than a per-stroke
+// argument — it is gizmo state upstream too (m_paint_on_overhangs_only). Non-zero restricts every stroke and every
+// fill to facets overhanging by more than that angle; 0, the default, paints everything.
+void set_overhang_limit(float deg);
+
 void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz, float radius, int state, int cursor);
+
+// The CAPSULE swept between two consecutive stroke samples — upstream's DoublePointCursor (GLGizmoPainterBase.cpp
+// :878 builds one for every adjacent pair of projected mouse positions). A pointer stream is sampled, not
+// continuous: paint() alone leaves a drag as a row of separate balls with gaps between them, and the faster the
+// drag the wider the gaps. (a*) is the previous sample, (b*) this one; everything else matches paint().
+void paint_stroke(int facet, float ax, float ay, float az, float bx, float by, float bz,
+                  float cx, float cy, float cz, float radius, int state, int cursor);
+
+// The section plane, upstream's object clipper (Alt+wheel over the canvas — GLGizmoPainterBase.cpp:709). Every
+// cursor and both fills reject facets on the far side of it, which is the only way to reach an interior surface
+// with a brush. `normal`+`offset` are in KERNEL coords (a point p is clipped when normal.p - offset > 0);
+// `enabled` false restores upstream's inactive plane, which clips nothing.
+void set_clip_plane(float nx, float ny, float nz, float offset, bool enabled);
+
 int  painted_count(int state);       // number of painted facets of that state (UI feedback)
 
 // The two fill tools, upstream's Smart fill and Bucket fill (GLGizmoPainterBase.cpp ~845-865). Both are one click
@@ -64,6 +83,18 @@ int  painted_count(int state);       // number of painted facets of that state (
 // STATE_NONE is accepted by both, on the same reasoning as paint(): it is the eraser.
 void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int state);
 void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool propagate, int state);
+
+// A fill SELECTED but not applied — upstream runs exactly this on every mouse move while a fill tool is active
+// (GLGizmoPainterBase.cpp:929-965) and draws the result in a lighter shade, so a click is aimed rather than tried.
+// Without it a fill is only discoverable by doing it and undoing it, which on a 40k-facet mesh is two full rebuilds.
+// Returns the selected triangles as flat x,y,z (3 vertices per triangle), the same shape overlay() returns.
+enum : int {
+  FILL_SMART    = 0,   // flood the smooth feature under the cursor (seed fill)
+  FILL_BUCKET   = 1,   // flood everything sharing the hit facet's current state
+  FILL_TRIANGLE = 2,   // exactly one facet: bucket fill with the propagation off
+};
+std::vector<float> fill_preview(int facet, float hx, float hy, float hz, float angle_deg, int mode);
+void fill_preview_clear();
 
 // Overlay triangles for the painted state: flat x,y,z per vertex, 3 vertices per triangle (three.js render).
 std::vector<float> overlay(int state);
