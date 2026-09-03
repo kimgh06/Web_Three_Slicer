@@ -7,6 +7,8 @@ import { buildMergedSTL, exportObjects, stlToSoup } from '../core/model_geometry
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
+import { createPaintInput } from './paint_input.js'
+import { createSectionPlane } from './section_plane.js'
 import { bedGridLines } from '../core/bed_grid.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
@@ -29,7 +31,7 @@ export function useThreeScene(deps) {
   const {
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
     canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
-    setOk, setStatus, setGmode, setCtxMenu, setBrushRadius,
+    setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setFillAngle,   // the last two are the Ctrl+wheel targets (paint_input.js)
     contextMenu,   // features.contextMenu — false leaves the right-click menu unregistered
   } = deps
 
@@ -318,37 +320,15 @@ export function useThreeScene(deps) {
         + (keyRef.current ? ' · ? for shortcuts' : '')
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
-    // Stage 20: painting — converts the raycast hit (faceIndex + world point) into kernel coordinates and sends a paint command to the worker.
-    const pickHit = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0] : null }
-    const paintAt = ev => {
-      const X = paintXformRef.current; if (!X) return
-      toPointer(ev); const hit = pickHit(); if (!hit || hit.faceIndex == null) return
-      const toK = v => [v.x - X.cx, -v.z - X.cy, v.y - X.minz]   // viewer(Y-up) -> STL(Z-up) -> kernel
-      const hk = toK(hit.point), ck = toK(camera.position)
-      // The tool travels with the stroke rather than being stamped later: a fill takes an angle where a brush takes
-      //  a radius, so the message has to say which of the two it is at the point the hit is taken. `radius`/`cx..cz`
-      //  ride along for the brush; the worker's fill dispatch simply does not read them.
-      const brush = paintToolRef?.current ?? { tool: 'brush', cursor: 'sphere', angle: 30 }
-      workerRef.current?.postMessage({ cmd:'paint', facet:hit.faceIndex, hx:hk[0],hy:hk[1],hz:hk[2],
-        cx:ck[0],cy:ck[1],cz:ck[2], radius:brushRadiusRef.current, enforcer: paintModeRef.current === 'enforcer',
-        tool: brush.tool, cursor: brush.cursor, angle: brush.angle })
-    }
-    // A pointermove can fire several times per frame (and far above 60Hz on a high-rate mouse), and each one costs a
-    //  worker round trip plus an overlay rebuild. Coalescing to one stroke per animation frame keeps the brush at the
-    //  cursor without queueing work the frame cannot show anyway — the dropped samples are between two positions the
-    //  same brush radius already covers.
-    let pendingPaintEvent = null, paintFrame = 0
-    const flushPaint = () => { paintFrame = 0; const ev = pendingPaintEvent; pendingPaintEvent = null; if (ev) paintAt(ev) }
-    const queuePaint = ev => {
-      pendingPaintEvent = ev
-      if (!paintFrame) paintFrame = requestAnimationFrame(flushPaint)
-    }
-    // A fill is one click: it selects by mesh topology, so repeating it for every pointermove of a drag would redo
-    //  the same flood over the same facets. The brush is the opposite — dragging is how it covers an area.
-    const paintToolIsFill = () => {
-      const tool = paintToolRef?.current?.tool
-      return tool === 'smart' || tool === 'bucket' || tool === 'triangle'
-    }
+    // Stage 20: painting — the raycast -> kernel-coordinate conversion, the brush cursor preview and the stroke's
+    //  own state live in paint_input.js. `paintDrawingRef` stays here because the other pointer handlers read it.
+    //  A fill is one click (it selects by mesh topology, so repeating it per pointermove would redo the same flood
+    //  over the same facets); the brush is the opposite — dragging is how it covers an area.
+    const sectionPlane = createSectionPlane({ renderer, camera, objectsRef, workerRef, paintXformRef, invalidate })
+    const paintInput = createPaintInput({
+      camera, raycaster, pointer, toPointer, activeMeshes, cursorParent: scene, invalidate, sectionPlane, deps,
+    })
+    const paintToolIsFill = () => paintInput.isFill()
     // Cursor hints: crosshair in paint mode, pointer when hovering an object, default otherwise (camera control).
     const applyCursor = () => {
       const el = renderer.domElement
@@ -361,7 +341,13 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
       if (boxSelect.dragging()) { boxSelect.move(ev); return }
       if (scaleBox.dragging()) { scaleBox.move(ev); invalidate(); return }
-      if (paintModeRef.current !== 'off') { if (paintDrawingRef.current && !paintToolIsFill()) queuePaint(ev); return }
+      // Shift is the eraser while a brush is open, which is upstream's modifier (`if (!shift_down) new_state = …`,
+      //  GLGizmoPainterBase.cpp:743) and the reason the box select below refuses to start in paint mode.
+      if (paintModeRef.current !== 'off') {
+        if (paintDrawingRef.current) { if (!paintToolIsFill()) paintInput.queue(ev, { erase: ev.shiftKey }) }
+        else paintInput.hover(ev)
+        return
+      }
       if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
       if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
@@ -392,7 +378,14 @@ export function useThreeScene(deps) {
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
       if (canvasModeRef.current === 'preview') return   // S2: no gizmo/painting in preview
-      if (paintModeRef.current !== 'off') { paintDrawingRef.current = true; orbit.enabled = false; paintAt(ev); return }
+      if (paintModeRef.current !== 'off') {
+        // A press that MISSES the model is not the brush's — upstream returns false there (GLGizmoPainterBase.cpp
+        //  :833) and the canvas orbits, which is how a brush survives a camera move. OrbitControls' own pointerdown
+        //  listener is registered first and has already begun its drag, so this only decides whether to kill it.
+        if (!paintInput.hitsModel(ev)) return
+        paintDrawingRef.current = true; orbit.enabled = false
+        paintInput.beginStroke(ev); paintInput.paintAt(ev, { erase: ev.shiftKey }); return
+      }
       // Before the gizmo guard and before the model is picked: a handle grab must beat both the gizmo axis it may
       //  overlap and the part it sits on top of. Pointer capture keeps the drag alive outside the canvas.
       if (!transform.dragging && gizmoMode === 'scale' && scaleBoxTarget()) {
@@ -448,7 +441,7 @@ export function useThreeScene(deps) {
       }
       if (!paintDrawingRef.current) return
       paintDrawingRef.current = false; orbit.enabled = true
-      if (paintFrame) { cancelAnimationFrame(paintFrame); flushPaint() }   // the last position is the one the user aimed at
+      paintInput.endStroke()   // flushes the pending sample: the last position is the one the user aimed at
     }
     // Double click: on an object = zoom to it, on empty space = clear the selection (3D app convention)
     const onDblClick = ev => {
@@ -457,14 +450,11 @@ export function useThreeScene(deps) {
       if (pick()) frameObjects()
       else { clearSelection(); announceSelection() }
     }
-    // Wheel: adjusts the brush radius in paint mode (upstream GLGizmoPainterBase convention) — otherwise plain OrbitControls zoom.
+    // Wheel: Ctrl/⌘ + wheel sizes the brush (or the fill angle) in paint mode, exactly as upstream binds it — the
+    //  bare wheel stays the camera zoom, which taking it away used to make painting a detail impossible.
     const onWheel = ev => {
-      // A fill has no radius, so the wheel has nothing to adjust — it goes back to being the zoom, rather than
-      //  being swallowed to change a number the panel is not even showing.
-      if (paintModeRef.current === 'off' || canvasModeRef.current === 'preview' || paintToolIsFill()) return
-      ev.preventDefault(); ev.stopPropagation()
-      const v = Math.min(15, Math.max(1, brushRadiusRef.current + (ev.deltaY < 0 ? 0.5 : -0.5)))
-      brushRadiusRef.current = v; setBrushRadius(v)
+      if (canvasModeRef.current === 'preview') return
+      paintInput.onWheel(ev)
     }
     // Right-click context menu — selects the object under the press, then hands the menu coordinates to the component.
     //  (OrbitControls calls preventDefault on contextmenu, so there is no clash with the native menu.)
@@ -650,7 +640,17 @@ export function useThreeScene(deps) {
       setMode,
       /** Highlight facets below `thresholdDeg` (the support threshold angle); null turns the shading off. */
       setOverhang: (thresholdDeg) => { overhangDeg = thresholdDeg; rebuildOverhang() },
-      refreshCursor: () => applyCursor(),                                        // keeps the cursor hint in sync when the paint mode changes
+      // Keeps the cursor hint in sync when the paint mode changes — and takes the brush preview down with the mode,
+      //  since nothing else fires once the pointer handlers stop routing to it.
+      // The section plane is a painting tool, so it goes with the brush: leaving a brush restores the whole model,
+      //  which is what stops a cut from silently outliving the mode that made it.
+      // The overlay meshes are built by actions/support_paint.js on every stroke, so they ask for the section
+      //  plane rather than being walked: an unclipped overlay floats where the model was cut away.
+      paintClipPlanes: () => sectionPlane.activePlanes(),
+      refreshCursor: () => {
+        applyCursor()
+        if (paintModeRef.current === 'off') { paintInput.hideCursor(); sectionPlane.reset() } else sectionPlane.refresh()
+      },
       detachTransform: () => { clearSelection(); announceSelection() },   // stage 20: release the gizmo when entering painting
       // `paint` is a 3mf's painted facets ({color,supports,…}: Map(localTriangleIndex -> split-tree hex)), held on the
       //  object until something registers the selector — only then is the merged facet numbering they must be rebased
