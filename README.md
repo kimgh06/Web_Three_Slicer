@@ -1,4 +1,4 @@
-# Web Three Slicer
+# Three Slicer
 
 A 3D-printing slicer that runs entirely in the browser — reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) into a WASM kernel + npm packages. STL/OBJ/3MF/AMF/PLY in (STEP via a pluggable loader), G-code out; no server, no install. A slicer-written `.3mf` project restores its plate layout, settings and support/material painting, and multi-material printing works through per-extruder filament presets and facet painting with a real ported prime tower.
 
