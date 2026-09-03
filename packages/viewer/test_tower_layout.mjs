@@ -1,7 +1,7 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
 //   Run: node packages/viewer/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord, usesMultipleTools } from './src/core/tower_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats } from './src/core/tower_layout.js'
 import { platePosition } from './src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
@@ -118,6 +118,20 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
     'an object with no extruder set counts as T1')
   assert.equal(usesMultipleTools([], {}), false, 'an empty plate switches nothing')
   assert.equal(usesMultipleTools(undefined, undefined), false, 'missing inputs do not throw')
+}
+
+{
+  // The tower's result, read off the last slice. Tool changes come from the G-CODE, not from the stats block: the
+  // kernel only reports them when the (opt-in) stats are switched on, and the card must render either way.
+  const gcode = 'G1 X1\nT0\nG1 X2\nT1\nG1 X3\nT0\nM104 S200\n'
+  const stats = towerResultStats({ stats: { filament_mm_purge: 1197.9 }, gcode },
+                                 { prime_tower_x: 170, prime_tower_y: 170 })
+  assert.deepEqual(stats, { purge: 1197.9, changes: 3, x: 170, y: 170 })
+  // `T0` has to be anchored: an `M104 T0` or an `;T0` comment is not a tool change.
+  assert.equal(towerResultStats({ stats: { filament_mm_purge: 0 }, gcode: 'M104 S200 T0\n;T1\n' }, {}).changes, 0)
+  // No purge number means no tower ran — the card shows its settings and no result, rather than a zeroed one.
+  assert.equal(towerResultStats({ stats: {}, gcode }, {}), null)
+  assert.equal(towerResultStats(undefined, undefined), null)
 }
 
 console.log('tower_layout: ok')
