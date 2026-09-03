@@ -20,9 +20,12 @@ import { useThreeScene } from './scene/use_three_scene.js'
 import {
   makeToolpathView, useSlicer, makeSupportPaint, MAX_PAINT_EXTRUDERS,
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
+  makeFilamentColors, DEFAULT_FILAMENT_COLORS,
 } from './actions/index.js'
 import { bedOverflow, overflowText } from './core/bed_bounds.js'
-import { towerBoxes, usesMultipleTools } from './core/tower_layout.js'
+import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
+import { withToolBreakdown } from './core/stats_view.js'
+import { towerBoxes, usesMultipleTools, towerResultStats } from './core/tower_layout.js'
 import {
   TopBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
@@ -33,15 +36,6 @@ import {
 //  - Multiple objects (cumulative upload + merged TransformControls transforms), support/raft/bed/pattern/cooling/arc/seam.
 //  - Toolpaths: stage 24 — the upstream libvgcode approach (GPU instancing, toolpath_gpu.js). The CPU geometry builder is gone.
 //    Coordinates: kernel z-up -> toolpathGroup rotation.x=-90° (the shader computes in local z-up, view_matrix compensates).
-
-// Default colour per extruder slot, up to the selector's own ceiling of 16 (support_paint.js). A literal table
-//  rather than a generated hue ramp because <input type="color"> only accepts hex, so a generated colour would
-//  need an hsl->hex conversion written for a value the user immediately overrides anyway. The first two entries
-//  are the long-standing T1/T2 defaults — an existing project must not change colour because the list grew.
-const DEFAULT_FILAMENT_COLORS = [
-  '#6aa0dc', '#e08a2b', '#e0473b', '#3bb0e0', '#7ad14a', '#b06ad1', '#d1c34a', '#4ad1a8',
-  '#d16a9a', '#6a7ad1', '#8fd16a', '#d18f6a', '#6ad1d1', '#c74ad1', '#a8a8a8', '#4a6ad1',
-]
 
 // A sidebar panel can also be shown but not editable (`panels={{ printerCard: 'readonly' }}`) — the case a host
 //  that presets printer/process/filament itself actually wants, and which hiding the card does not cover.
@@ -188,14 +182,23 @@ export default function Viewport({
   const [wipeTowerReal, setWipeTowerReal] = useState(false)   // stage 12: real WipeTower.generate() (MM only)
   const [paintMode, setPaintModeState] = useState('off')      // stage 20: painting mode (support brush or material brush)
   const [materialExtruder, setMaterialExtruder, materialExtruderRef] = useStateRef(0)   // 0-based extruder the material brush writes (null = eraser)
+  // "Which filament am I working on" is ONE choice with two places to make it — the card's rows and the brush's
+  //  chips (and the number row) — so it is held here rather than inside either. The brush's own value can also be
+  //  null, which the card has no equivalent for: that is the eraser, not a filament, so it leaves this alone.
+  const [activeFilament, setActiveFilament] = useState(0)
   const [brushRadius, setBrushRadius, brushRadiusRef] = useStateRef(5)
   // Painting tool selection, shared by both brushes (they drive one selector — see support_paint.js). The pointer
   //  handler reads it through a ref because it lives in an effect that must not be rebuilt on every slider move.
   const [paintTool, setPaintTool] = useState('brush')      // 'brush' | 'smart' | 'bucket' | 'triangle'
-  const [brushCursor, setBrushCursor] = useState('sphere') // 'sphere' | 'circle' — brush only
+  // Circle is upstream's default brush (GLGizmoMmuSegmentation is constructed with CircleButtonIcon), and the
+  //  reason is the one visible in any hull: the sphere is a ball around the hit, so on a thin wall it paints the
+  //  far side too. Sphere stays one click away for when reaching through IS what you want.
+  const [brushCursor, setBrushCursor] = useState('circle') // 'sphere' | 'circle' — brush only
   const [fillAngle, setFillAngle] = useState(30)           // smart/bucket fill angle limit, degrees
-  const paintToolRef = useRef({ tool: 'brush', cursor: 'sphere', angle: 30 })
-  useEffect(() => { paintToolRef.current = { tool: paintTool, cursor: brushCursor, angle: fillAngle } }, [paintTool, brushCursor, fillAngle])
+  const [axisLock, setAxisLock] = useState('none')         // 'none' | 'vertical' | 'horizontal' — upstream's Vertical/Horizontal checkboxes
+  const [overhangOnly, setOverhangOnly] = useState(false)  // upstream's "on overhangs only" (m_paint_on_overhangs_only)
+  const paintToolRef = useRef({ tool: 'brush', cursor: 'circle', angle: 30, axisLock: 'none' })
+  useEffect(() => { paintToolRef.current = { tool: paintTool, cursor: brushCursor, angle: fillAngle, axisLock } }, [paintTool, brushCursor, fillAngle, axisLock])
   const [paintCounts, setPaintCounts] = useState({ enf: 0, blk: 0 })
   // Painted facets per selector state (1..16) as the worker reports them, kept apart from the enf/blk pair above
   //  because the two arrive through different worker listeners — see support_paint.js. Empty until a stroke lands.
@@ -234,7 +237,7 @@ export default function Viewport({
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setObjects, setTriWarn, setDragOver, setExporting, setSl1Ready,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
     setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
-    setPaintCounts, setPaintModeState, setPaintStateCounts,
+    setPaintCounts, setPaintModeState, setPaintStateCounts, setFillAngle,
     setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate,
   }
 
@@ -525,6 +528,11 @@ export default function Viewport({
   useEffect(() => {
     apiRef.current?.setOverhang(overhangOn && canvasMode === 'prepare' ? overhangAngle : null)
   }, [overhangOn, overhangAngle, canvasMode, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
+  // "On overhangs only" restricts every stroke to facets steeper than the SUPPORT threshold — the same angle the
+  //  overhang view shades, which is upstream's pairing too (m_highlight_by_angle_threshold_deg serves both).
+  useEffect(() => {
+    getWorker()?.postMessage({ cmd: 'paintMode', overhangDeg: overhangOnly ? overhangAngle : 0 })
+  }, [overhangOnly, overhangAngle, paintMode])   // eslint-disable-line react-hooks/exhaustive-deps
   // Stage 27 S4: filament colors/count + per-object print toggle + painting gizmo mode
   function refreshObjects() { setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))); checkBed() }
 
@@ -549,22 +557,11 @@ export default function Viewport({
     e.preventDefault(); e.stopPropagation()
     travelHistory(direction)
   }
-  function setExtColor(i, hex) { setExtruderColors(cs => { const n = [...cs]; n[i] = hex; return n }); apiRef.current?.recolorObjects(); applyViewColors() }
-  function addFilament() { setExtruderColors(cs => (cs.length >= MAX_PAINT_EXTRUDERS ? cs : [...cs, DEFAULT_FILAMENT_COLORS[cs.length] || '#888888'])) }
-  function removeFilament(index) {
-    setExtruderColors(cs => {
-      if (cs.length <= 1) return cs
-      // The card passes the SELECTED extruder's index; a bare call (older hosts) still removes the last one.
-      const idx = Number.isInteger(index) ? Math.min(Math.max(index, 0), cs.length - 1) : cs.length - 1
-      const n = cs.filter((_, k) => k !== idx)
-      objectsRef.current.forEach(o => {
-        const e = o.extruder || 1
-        if (e === idx + 1) apiRef.current?.setObjectExtruder(o.id, 1)           // its filament is gone -> back to T1
-        else if (e > idx + 1) apiRef.current?.setObjectExtruder(o.id, e - 1)   // later tools shift down one slot
-      })
-      apiRef.current?.recolorObjects(); refreshObjects(); return n
-    })
-  }
+  // The filament palette (actions/filament_colors.js) — it also mirrors every change into `filament_colour`,
+  //  which is the settings key the panel edits and a 3mf save writes.
+  const { setExtColor, addFilament, removeFilament } = makeFilamentColors({
+    ...wiring, setExtruderColors, refreshObjects, applyViewColors, selectFilament,
+  })
   function toggleObjVisible(id) { recordHistoryRef.current?.(); const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
   // Both brushes take the pointer away from the gizmos, so the rail/object-card toggle reads "a brush is active"
   //  rather than "the support brush is active": while material painting, the move gizmo must not look selected.
@@ -580,20 +577,17 @@ export default function Viewport({
     if (tech === 'SLA') return   // the selector paints FFF support/material states — nothing to paint onto a resin slice yet
     const index = Number.isInteger(extruderIndex) ? extruderIndex : null
     setMaterialExtruder(index)
+    if (index != null) setActiveFilament(index)   // the eraser is not a filament, so it leaves the card where it was
     if (paintModeRef.current !== 'material') setPaintMode('material')
   }
+  // Picking a row in the filament card. It aims the brush too while one is open, which is the whole point of the
+  //  two being one selection: the chip you can see lit is the tool the next stroke uses.
+  function selectFilament(index) {
+    setActiveFilament(index)
+    if (paintModeRef.current === 'material') setMaterialExtruder(index)
+  }
   // Painted facets per extruder chip (0-based) — the panel and the filament rows both read this by index.
-  //  The worker's per-state `counts` is the real source: measured, a T3 stroke replies {enf:0, blk:0, counts:{3:3762}},
-  //  so reading enf/blk alone (which ARE states 1 and 2, and nothing else) pinned every tool above T2 at zero.
-  //  enf/blk stay as the fallback for the slot they do describe, so a worker predating `counts` shows T1/T2 exactly
-  //  as it does today instead of collapsing to nothing.
-  const materialPaintCounts = extruderColors.map((_color, extruderIndex) => {
-    const perStateCount = paintStateCounts[extruderIndex + 1]
-    if (Number.isFinite(perStateCount)) return perStateCount
-    if (extruderIndex === 0) return paintCounts.enf
-    if (extruderIndex === 1) return paintCounts.blk
-    return 0
-  })
+  const materialPaintCounts = paintedCountsPerExtruder(extruderColors.length, paintStateCounts, paintCounts)
 
   // Object actions (duplicate/copy/paste/delete/split + gizmo mode) — the bodies live in object_actions.js.
   const {
@@ -608,6 +602,10 @@ export default function Viewport({
     duplicate: duplicateSelected,
     split: splitSelected,
     placeOnBed: () => { recordHistory(); apiRef.current?.placeOnBed() },
+    // The toolbar is upstream's entry point for the MMU brush; the filament rows' brush buttons are this viewer's
+    //  addition on top, not a replacement. Opening it on T1 is what upstream does — the gizmo starts at
+    //  m_selected_extruder_idx 0 — and the panel's chips are one click from any other filament.
+    paintMaterial: () => startMaterialPaint(0),
     objectCount: () => objects.length,
   })
 
@@ -626,6 +624,12 @@ export default function Viewport({
     zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
     leavePreview: () => setCanvasMode('prepare'),
     setGizmo,
+    // The brush's own keys, live only while one is open. V/H toggle the axis lock off when pressed again, because a
+    //  lock you cannot see is a lock you cannot leave; the number row is the material brush's alone.
+    isPainting: () => paintModeRef.current !== 'off',
+    paintTool: setPaintTool, paintCursor: (shape) => { setPaintTool('brush'); setBrushCursor(shape) },
+    paintAxisLock: (lock) => setAxisLock(current => (current === lock ? 'none' : lock)),
+    pickExtruder: (index) => { if (paintModeRef.current === 'material') startMaterialPaint(index) },
     cancelTool: () => { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.detachTransform() },
     selectAll: () => apiRef.current?.selectAllObjects(),
     // Both repeat while the key is held, so they record under a kind: history.js folds a run of them into the one
@@ -653,24 +657,11 @@ export default function Viewport({
   //  reduced in use_slicer/plate_actions before those fields existed, so they are picked up from the raw result here
   //  instead of reshaping that reduction. A kernel that reports neither leaves both undefined, and StatsCard then
   //  renders exactly the single Filament line it always has.
-  const kernelStats = plateResultsRef.current[selectedPlateRef.current]?.stats
-  const statsWithTools = stats && {
-    ...stats,
-    filamentPerTool: Array.isArray(kernelStats?.filament_mm_by_tool) ? kernelStats.filament_mm_by_tool : undefined,
-    filamentPurge: Number.isFinite(kernelStats?.filament_mm_purge) ? kernelStats.filament_mm_purge : undefined,
-    filamentPurgePerTool: Array.isArray(kernelStats?.filament_mm_purge_by_tool) ? kernelStats.filament_mm_purge_by_tool : undefined,
-  }
+  const statsWithTools = withToolBreakdown(stats, plateResultsRef.current[selectedPlateRef.current]?.stats)
   // The material each filament is, read from the same settings map the filament card writes — so the legend says
   //  "T2 ABS 203.6 mm" rather than leaving the colour swatch to carry the whole identity.
   const asList = (key) => { const raw = settingRaw(settings, key); return Array.isArray(raw) ? raw : (raw ? [raw] : []) }
-  // The tower's own outcome, so the card can show settings and result together. Tool changes are counted from the
-  //  G-code because the kernel reports them only in the (opt-in) stats block, and the card must not depend on that.
-  const lastResult = plateResultsRef.current[selectedPlateRef.current]
-  const towerStats = lastResult?.stats && Number.isFinite(lastResult.stats.filament_mm_purge) ? {
-    purge: lastResult.stats.filament_mm_purge,
-    changes: (lastResult.gcode?.match(/^T\d+$/gm) ?? []).length,
-    x: window.__vpParams?.prime_tower_x, y: window.__vpParams?.prime_tower_y,
-  } : null
+  const towerStats = towerResultStats(plateResultsRef.current[selectedPlateRef.current], window.__vpParams)
   // Once a slice exists the kernel's measurement is the better one — it was taken on the toolpaths that were
   //  actually emitted, so it counts support/skirt/brim, which the viewer's model-bbox check cannot see. Before the
   //  first slice there is nothing to read, and the viewer's own pre-slice measure is all there is.
@@ -755,9 +746,10 @@ export default function Viewport({
           {/* One brush, two targets — the panels are exclusive because the mode is. */}
           {ok && canvasMode === 'prepare' && supportPainting && showPanel('paintPanel') && (
             <PaintPanel paintMode={paintMode} onPaintMode={setPaintMode} onClear={clearPaint}
+              overhangOnly={overhangOnly} onOverhangOnly={setOverhangOnly} overhangAngle={overhangAngle}
               brushRadius={brushRadius} paintCounts={paintCounts}
               paintTool={paintTool} onPaintTool={setPaintTool} brushCursor={brushCursor} onBrushCursor={setBrushCursor}
-              fillAngle={fillAngle} onFillAngle={setFillAngle}
+              fillAngle={fillAngle} onFillAngle={setFillAngle} axisLock={axisLock} onAxisLock={setAxisLock}
               onBrushRadius={setBrushRadius} />
           )}
 
@@ -766,7 +758,7 @@ export default function Viewport({
               onSelectExtruder={startMaterialPaint} onClear={clearPaint} onClose={() => setPaintMode('off')}
               brushRadius={brushRadius} paintCounts={materialPaintCounts}
               paintTool={paintTool} onPaintTool={setPaintTool} brushCursor={brushCursor} onBrushCursor={setBrushCursor}
-              fillAngle={fillAngle} onFillAngle={setFillAngle}
+              fillAngle={fillAngle} onFillAngle={setFillAngle} axisLock={axisLock} onAxisLock={setAxisLock}
               onBrushRadius={setBrushRadius} />
           )}
 
@@ -807,6 +799,7 @@ export default function Viewport({
               {showPanel('filamentCard') && (
                 <Panel panels={panels} name="filamentCard">
                   <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
+                    active={activeFilament} onActive={selectFilament}
                     settings={settings} setSettings={setSettings} filamentPanel={filamentPanel}
                     paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
                 </Panel>
