@@ -24,6 +24,13 @@ export function bedOverflow(box, origin, bedWidth, bedDepth, bedHeight) {
   return (x || y || z) ? { x, y, z } : null
 }
 
+/** A w x d printable_area rectangle keeping the existing area's origin corner (the printer-card bed inputs). */
+export function bedRectangle(area, w, d) {
+  const ok = Array.isArray(area) && area.length >= 3
+  const x0 = ok ? Math.min(...area.map(p => p[0])) : 0, y0 = ok ? Math.min(...area.map(p => p[1])) : 0
+  return [[x0, y0], [x0 + w, y0], [x0 + w, y0 + d], [x0, y0 + d]]
+}
+
 /** The overflow as one line, naming only the axes that actually overflow. */
 export function overflowText(overflow) {
   if (!overflow) return ''

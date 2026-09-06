@@ -1,3 +1,5 @@
+// LICENSE-PROVENANCE: derived from libvgcode SegmentTemplate.cpp VERTEX_DATA (OrcaSlicer, AGPL-3.0-or-later).
+//   This file cannot be relicensed; replacing it is the cost of a permissive viewer. See packages/PROVENANCE.md §2.
 // three.js instanced mesh built from a buildSegmentData result. The only file here that touches three.
 import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
 import { moveCursor, topMoveLayer } from '../core/toolpath_segments.js'

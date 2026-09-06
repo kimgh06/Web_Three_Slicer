@@ -4,7 +4,8 @@
 //  grid moved into this module, so a change to either function has to be a deliberate one.
 import assert from 'node:assert'
 import {
-  PLATE_GAP, MAX_PLATES, plateStep, plateCols, platePosition, plateIndexAtXZ, UPSTREAM_PLATE_GAP_RATIO,
+  PLATE_GAP, MAX_PLATES, plateStep, plateCols, platePosition, plateIndexAtXZ, plateLayoutHetero, UPSTREAM_PLATE_GAP_RATIO,
+  PLACE_GAP, nextPlacement,
 } from './src/core/plate_layout.js'
 
 // ---- the constants other modules encode into files ----
@@ -47,5 +48,73 @@ assert.equal(plateIndexAtXZ(-5000, -5000, 4, 200, 200), 0)
 assert.equal(plateIndexAtXZ(5000, 5000, 4, 200, 200), 3)
 assert.equal(plateIndexAtXZ(5000, 5000, 3, 200, 200), 2)   // 3 plates in a 2-col grid: the last one, not row*cols+col=3
 assert.equal(plateIndexAtXZ(0, 0, 1, 200, 200), 0)
+
+// ---- heterogeneous layout: uniform dims reduce EXACTLY to the closed-form grid ----
+for (const count of [1, 2, 3, 4, 5, 6, 9]) {
+  for (const [w, d] of [[200, 200], [256, 256], [300, 100]]) {
+    const layout = plateLayoutHetero(Array.from({ length: count }, () => ({ w, d })))
+    for (let i = 0; i < count; i++) {
+      assert.deepEqual(layout.position(i), platePosition(i, count, w, d), `hetero position != uniform: plate ${i}/${count} ${w}x${d}`)
+    }
+    for (const [x, z] of [[0, 0], [119, 0], [121, 0], [-5000, -5000], [5000, 5000], [w + PLATE_GAP, d + PLATE_GAP], [w / 2 + 1, 3]])
+      assert.equal(layout.indexAt(x, z), plateIndexAtXZ(x, z, count, w, d), `hetero membership != uniform at (${x},${z}) ${count} plates ${w}x${d}`)
+  }
+}
+
+// ---- heterogeneous case: a 330 plate beside a 180 plate ----
+{
+  const layout = plateLayoutHetero([{ w: 330, d: 330 }, { w: 180, d: 180 }])
+  assert.deepEqual(layout.position(0), { x: 0, z: 0 })
+  // centre-to-centre: 330/2 + 40 + 180/2 = 295
+  assert.deepEqual(layout.position(1), { x: 295, z: 0 })
+  // membership boundary is the midpoint between centres (147.5), NOT the uniform half-step
+  assert.equal(layout.indexAt(147, 0), 0)
+  assert.equal(layout.indexAt(148, 0), 1)
+  assert.equal(layout.indexAt(10000, 0), 1)
+  assert.deepEqual(layout.dims(1), { w: 180, d: 180 })
+}
+// 4 plates, two rows, mixed depths: the second row's z step uses the FIRST row's deepest plate
+{
+  const layout = plateLayoutHetero([{ w: 200, d: 300 }, { w: 200, d: 100 }, { w: 200, d: 150 }, { w: 200, d: 150 }])
+  // rowD[0]=300, rowD[1]=150 -> z step = 150 + 40 + 75 = 265
+  assert.deepEqual(layout.position(2), { x: 0, z: 265 })
+  assert.equal(layout.indexAt(0, 264 / 2 + 1), 2)   // past the z midpoint (132.5) belongs to row 1
+}
+
+// ---- where a loaded model lands: the first one on the plate's CENTRE, the rest queued to its right ----
+{
+  // A baked mesh's position is its XZ centre, so "centred" means x == the plate's own x.
+  const one = nextPlacement(0, 0, 20)
+  assert.equal(one.x, 0, 'a single model must land on the plate centre, not half its width off it')
+  assert.equal(one.cursor, 10 + PLACE_GAP)
+
+  // Three models in a row: touching faces are PLACE_GAP apart and the row grows to the right of the centre.
+  const widths = [20, 30, 10]
+  let cursor = 0, placed = []
+  for (const w of widths) { const r = nextPlacement(cursor, 0, w); placed.push({ x: r.x, w }); cursor = r.cursor }
+  assert.deepEqual(placed.map(p => p.x), [0, 10 + PLACE_GAP + 15, 10 + PLACE_GAP + 30 + PLACE_GAP + 5])
+  for (let i = 1; i < placed.length; i++)
+    assert.equal((placed[i].x - placed[i].w / 2) - (placed[i - 1].x + placed[i - 1].w / 2), PLACE_GAP, `gap ${i}`)
+
+  // Several plates: the cursor is plate-relative (the scene zeroes it on a plate switch), so the first model of
+  //  each plate lands exactly on THAT plate's centre — for the uniform grid and for a heterogeneous one.
+  for (const count of [1, 2, 4, 9]) {
+    for (let i = 0; i < count; i++) {
+      const pp = platePosition(i, count, 200, 200)
+      assert.equal(nextPlacement(0, pp.x, 40).x, pp.x, `plate ${i}/${count} centre`)
+    }
+  }
+  const hetero = plateLayoutHetero([{ w: 330, d: 330 }, { w: 180, d: 180 }])
+  assert.equal(nextPlacement(0, hetero.position(1).x, 40).x, 295)
+  // ...and a model placed on a plate stays on it: the membership test agrees with the plate it was placed for.
+  for (const count of [2, 4, 9]) {
+    for (let i = 0; i < count; i++) {
+      const pp = platePosition(i, count, 200, 200)
+      const r = nextPlacement(0, pp.x, 60)
+      assert.equal(plateIndexAtXZ(r.x, pp.z, count, 200, 200), i, `placed model left plate ${i}/${count}`)
+      assert.equal(plateIndexAtXZ(nextPlacement(r.cursor, pp.x, 60).x, pp.z, count, 200, 200), i, `2nd model left plate ${i}/${count}`)
+    }
+  }
+}
 
 console.log('plate_layout: ok')

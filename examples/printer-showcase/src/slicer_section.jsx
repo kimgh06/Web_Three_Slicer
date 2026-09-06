@@ -99,8 +99,9 @@ const duration = seconds => {
   return h ? `${h}h ${m}m` : `${m}m`
 }
 
-export default function SlicerSection() {
+export default function SlicerSection({ sampleModel = '' }) {
   const [presets, setPresets] = useState(null)
+  const [sample, setSample] = useState(sampleModel ? null : [])
   const [machine, setMachine] = useState(MACHINES[1])
   const [settings, setSettings] = useState(() => printerSettings(MACHINES[1].profile) ?? {})
   const [progress, setProgress] = useState(0)
@@ -121,6 +122,21 @@ export default function SlicerSection() {
   useEffect(() => {
     if (presets) setSettings(machineSettings(machine.profile, presets))
   }, [presets, machine])
+
+  // A visitor should see a real print without finding a file first. `files` is read once at MOUNT, so the
+  // viewer is held back until the bytes are here — handing them over later would be ignored in silence.
+  // A failed fetch resolves to [] rather than blocking: the drop zone still works.
+  useEffect(() => {
+    if (!sampleModel) return
+    let live = true
+    fetch(sampleModel)
+      .then(response => (response.ok ? response.arrayBuffer() : null))
+      .catch(() => null)
+      .then(data => {
+        if (live) setSample(data ? [{ name: sampleModel.split('/').pop(), data }] : [])
+      })
+    return () => { live = false }
+  }, [sampleModel])
 
   const bed = useMemo(() => {
     const corners = settings.printable_area ?? []
@@ -178,7 +194,8 @@ export default function SlicerSection() {
 
       {/* The viewer fills its nearest positioned ancestor and has no width/height props of its own. */}
       <div className="ts-frame">
-        <Viewport
+        {sample && <Viewport
+          files={sample}
           settings={settings}
           setSettings={setSettings}
           defaultAutoSlice
@@ -189,7 +206,7 @@ export default function SlicerSection() {
             printerCard: false, filamentCard: false, processCard: false, objectList: false, towerCard: false,
           }}
           features={{ shortcuts: false, logs: false }}
-        />
+        />}
       </div>
 
       <div className="ts-controls">
@@ -228,7 +245,7 @@ export default function SlicerSection() {
       </div>
 
       <p className="ts-hint" role="status">
-        {notice || 'Drop an STL on the plate — it slices on this machine, in your browser.'}
+        {notice || 'A 20 mm test cube is on the plate — or drop your own STL. It slices in your browser.'}
       </p>
 
       {/* The boundary, said out loud: this component's own markup lives in the host page and takes the

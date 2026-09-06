@@ -87,8 +87,9 @@ export function createSlicerClient(worker = new Worker(new URL('./slicer.worker.
   return {
     worker,
 
-    /** Load the kernel ahead of the first slice, so the first one is not also a 4MB download. */
-    warmup: () => send({ cmd: 'warmup' }).then(() => undefined),
+    /** Load the kernel ahead of the first slice, so the first one is not also a 4MB download. Says which variant
+     *  loaded — mt (threads) or st — because the two are a measured 9.8x apart and a host may want to say so. */
+    warmup: () => send({ cmd: 'warmup' }).then(reply => ({ kernel: reply?.kernel ?? null })),
 
     /**
      * Slice. `params` may be an object — it is stringified here, which the raw protocol does not do for you.

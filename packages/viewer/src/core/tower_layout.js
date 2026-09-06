@@ -46,11 +46,13 @@ const AUTO_GAP = 5   // mm between the model and an auto-placed tower
  *  never prints.
  *  `modelBounds(plate)` and `plateOrigin(plate)` are the scene's; everything else is arithmetic.
  *  Returns null when there is no tower at all, which is what the scene takes as "remove them". */
-export function towerBoxes({ plateCount, size, bedWidth, bedDepth, settings, modelBounds, plateOrigin }) {
+export function towerBoxes({ plateCount, size, bedWidth, bedDepth, bedOf, settings, modelBounds, plateOrigin }) {
   const boxes = []
   for (let plate = 0; plate < plateCount; plate++) {
     const box = modelBounds(plate)
     if (!box) continue
+    // Each plate is clamped to ITS bed (`bedOf(plate)`, the plate context); the scalars remain for a uniform caller.
+    const { w: bedW = bedWidth, d: bedD = bedDepth } = bedOf?.(plate) ?? {}
     const setX = chosenTowerCoord(settings, 'wipe_tower_x', plate)
     const setY = chosenTowerCoord(settings, 'wipe_tower_y', plate)
     const auto = !Number.isFinite(setX)
@@ -59,10 +61,10 @@ export function towerBoxes({ plateCount, size, bedWidth, bedDepth, settings, mod
     const origin = plateOrigin(plate) ?? { x: 0, z: 0 }
     // Auto mirrors use_slicer's placement exactly: one gap to the model's left, level with the model's middle,
     //  clamped to the bed. Both read the same box in the same frame, so the drawn tower is the sliced one.
-    const x = auto ? origin.x + clamp(box.minX - origin.x - AUTO_GAP - size / 2, -bedWidth / 2 + size / 2, bedWidth / 2 - size / 2)
-                   : origin.x + setX - bedWidth / 2 + size / 2
-    const y = auto ? -origin.z + clamp((box.minY + box.maxY) / 2 + origin.z, -bedDepth / 2 + size / 2, bedDepth / 2 - size / 2)
-                   : -origin.z + setY - bedDepth / 2 + size / 2
+    const x = auto ? origin.x + clamp(box.minX - origin.x - AUTO_GAP - size / 2, -bedW / 2 + size / 2, bedW / 2 - size / 2)
+                   : origin.x + setX - bedW / 2 + size / 2
+    const y = auto ? -origin.z + clamp((box.minY + box.maxY) / 2 + origin.z, -bedD / 2 + size / 2, bedD / 2 - size / 2)
+                   : -origin.z + setY - bedD / 2 + size / 2
     boxes.push({ plate, x, y, size, height: Math.max(2, box.height) })
   }
   return boxes.length ? boxes : null

@@ -1,3 +1,5 @@
+// LICENSE-PROVENANCE: derived from libvgcode ColorRange.hpp DEFAULT_RANGES_COLORS + get_color_at (OrcaSlicer, AGPL-3.0-or-later).
+//   This file cannot be relicensed; replacing it is the cost of a permissive viewer. See packages/PROVENANCE.md §2.
 // Toolpath color primitives shared by the segment stream, the view-type coloring and the legend.
 // Split out of toolpath_gpu.js so each consumer depends on colors alone.
 

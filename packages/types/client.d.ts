@@ -35,8 +35,8 @@ export interface SlicerClient {
   /** The worker being driven — for a host that also wants to listen in. */
   worker: Worker
 
-  /** Load the kernel ahead of the first slice. */
-  warmup(): Promise<void>
+  /** Load the kernel ahead of the first slice. Resolves with which variant loaded ('mt' threads / 'st'). */
+  warmup(): Promise<{ kernel: 'mt' | 'st' | null }>
 
   /** `params` may be an object; it is stringified for you, which the raw protocol does not do. */
   slice(stl: ArrayBuffer | Uint8Array, params: object | string, cb?: ClientSliceCallbacks): Promise<SliceResult>

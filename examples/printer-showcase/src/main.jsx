@@ -32,10 +32,13 @@ function ProductPage() {
             Nothing is uploaded — the slicer runs in this page.
           </p>
 
-          <SlicerSection />
+          {/* Which model greets a visitor is a deployment detail, so the URL comes from the page, not the
+              integration file. Served out of public/. */}
+          <SlicerSection sampleModel="calibration-cube.stl" />
 
           <p className="sample">
-            No model handy? <a href="calibration-cube.stl" download>Download a 20 mm test cube</a> and drop it on the plate.
+            The plate starts with a 20 mm test cube. Drop your own STL to replace it, or
+            {' '}<a href="calibration-cube.stl" download>download the cube</a>.
           </p>
         </section>
 

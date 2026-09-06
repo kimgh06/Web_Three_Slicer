@@ -16,7 +16,7 @@ import { log } from './core/log.js'
  * per the plate grid setPlates lays out (plate i sits at (i%cols)*step, floor(i/cols)*step; model y -> three -z).
  */
 function useGcodeInjection(gcode, deps) {
-  const { tech, kp, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef, lineWidthRef,
+  const { tech, kp, apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef, lineWidthRef,
           refreshSlicedCount, setError, setSliceNotice, showPlateResult } = deps
   useEffect(() => {
     if (gcode == null || tech === 'SLA') return   // injected G-code is an FFF artifact — a resin profile has no path that renders it
@@ -25,7 +25,10 @@ function useGcodeInjection(gcode, deps) {
       const parsed = parseGcode(String(gcode), { filamentDiameter: Number(kp.filament_diameter) || 1.75 })
       if (!parsed.layers.length) { setError('No printable moves found in the G-code'); return }
       const bw = kp.bed_width, bd = kp.bed_depth
-      const origin = platePosition(idx, plateCountRef.current, bw, bd)
+      // api.platePos follows the heterogeneous layout when plates carry different beds; the corner offset
+      //  below still uses the GLOBAL bed (ponytail: an injected artifact on a bed-override plate lands with
+      //  the global corner — refine with that plate's dims if hosts actually combine the two features).
+      const origin = apiRef?.current?.platePos?.(idx) ?? platePosition(idx, plateCountRef.current, bw, bd)
       plateOffsetsRef.current[idx] = { offX: origin.x - bw / 2, offZ: origin.z + bd / 2 }
       lineWidthRef.current = kp.line_width || 0.42
       plateResultsRef.current[idx] = { stats: parsed.stats, layers: parsed.layers, gcode: String(gcode) }

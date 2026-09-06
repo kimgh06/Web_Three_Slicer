@@ -124,16 +124,24 @@ That is: the viewer is entirely unaffected by host CSS, while the parts this com
 DOM are affected. That boundary is stated in one line on screen too — a fact being demonstrated, not a
 defect of the demo.
 
-## Known limitation: automatic sample-model load
+## Automatic sample-model load
 
-`<Viewport/>` has **no prop for the host to inject model bytes** (as of 0.1.7, and the local source at the
-time matched). So "the sample is already on the plate when the page opens" cannot be built from the public
-API alone. Rather than working around it with private scene access or a synthetic drop event, the demo
-uses a test-cube download link plus the viewer's own file picker/drop.
+The page opens with a 20 mm cube already on the plate, sliced. Until 0.2.2 `<Viewport/>` had no prop for
+the host to inject model bytes, so this could not be built from the public API alone and the demo shipped a
+download link plus the viewer's own file picker instead. The `files` prop closed that gap:
 
-Doing it properly needs a model-input path in the package (e.g. `<Viewport model={{name, buffer}}/>` or an
-imperative handle arriving via `onReady`). Until then this demo's "automatic sample model load" completion
-criterion is unmet.
+```jsx
+<Viewport files={[{ name: 'calibration-cube.stl', data: arrayBuffer }]} … />
+```
+
+One thing it forces on the caller: **`files` is read once, at mount.** Setting it after the viewer has
+mounted is ignored in silence, so `SlicerSection` holds the viewer back until the fetch resolves rather
+than mounting it empty and handing the bytes over later. A failed fetch resolves to `[]` instead of
+blocking — the drop zone still works, the plate just starts empty.
+
+Which model greets the visitor is a deployment detail, so the URL is a prop (`sampleModel`) that the host
+page passes; the integration file itself names no file. Measured after the change: P1S 12m, A1 mini 15m,
+4.0 g — the same figures the machine-comparison section records, now visible without a first interaction.
 
 ## What is intentionally mocked
 

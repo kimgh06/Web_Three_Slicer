@@ -1,3 +1,5 @@
+// LICENSE-PROVENANCE: derived from libvgcode Segments_Vertex_Shader_ES (OrcaSlicer, AGPL-3.0-or-later).
+//   This file cannot be relicensed; replacing it is the cost of a permissive viewer. See packages/PROVENANCE.md §2.
 // ── GLSL ES 3.0 shaders (faithful port of the upstream Segments_Vertex_Shader_ES) ─────
 //  Differences (required by the port, algorithm unchanged): #version is supplied by three (GLSL3) / precision block spelled out /
 //  the 'f' float literal suffix removed (255.0f -> 255.0, for WebGL2 ANGLE) / vertex_id is a float attribute.

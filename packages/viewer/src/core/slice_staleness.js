@@ -24,6 +24,32 @@ export function sameSettings(a, b) {
 }
 
 /**
+ * Which plates' overrides actually changed between two per-plate settings maps ({plateIndex: sparseMap}).
+ * Compared plate by plate with the same value semantics as `sameSettings`, over the UNION of both maps'
+ * indices — an override appearing or disappearing is a change for that plate. Returns plate indices as numbers.
+ */
+export function changedPlates(previous, next) {
+  if (previous === next) return []
+  const indices = new Set([...Object.keys(previous ?? {}), ...Object.keys(next ?? {})])
+  return [...indices].filter(index => !sameSettings(previous?.[index] ?? {}, next?.[index] ?? {})).map(Number)
+}
+
+/**
+ * Which cached plate results a settings change invalidates.
+ *
+ * Two scopes, matching where the change happened: the GLOBAL map feeds every plate's slice, so a global change
+ * drops everything; a plate override feeds only its own plate, so an override change drops that plate alone —
+ * the other plates' results still describe exactly the settings they were sliced with, and keeping them is the
+ * point of per-plate overrides (tuning one plate must not re-cut the rest). Survivors (imported `.sl1`
+ * archives) are exempt in both scopes, as before.
+ */
+export function stalePlateKeys(results, globalChanged, changedPlateIndices) {
+  return Object.keys(results ?? {}).filter(key =>
+    !survivesSettingsChange(results[key])
+    && (globalChanged || changedPlateIndices.includes(Number(key))))
+}
+
+/**
  * Does this cached plate result survive a settings change?
  *
  * Only an OPENED `.sl1` archive does (`stats.sla_raster`), and it is not merely allowed to but has to: importing

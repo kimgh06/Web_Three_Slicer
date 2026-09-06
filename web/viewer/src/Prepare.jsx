@@ -21,6 +21,7 @@ const webglAvailable = (() => {
 
 export default function Prepare() {
   const [settings, setSettings] = useState({})   // sparse map (edited keys only). Reset on reload.
+  const [plateSettings, setPlateSettings] = useState({})   // per-plate sparse overrides ({plateIndex: map})
   if (!webglAvailable) return (
     <div className="prepare" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#101418', color: '#c9d3de', font: '16px/1.6 system-ui,sans-serif', textAlign: 'center', padding: '2rem' }}>
       <div style={{ maxWidth: '38rem' }}>
@@ -42,7 +43,12 @@ export default function Prepare() {
   return (
     <div className="prepare">
       <Viewport settings={settings} setSettings={setSettings}
-        processPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings} />}
+        plateSettings={plateSettings} setPlateSettings={setPlateSettings}
+        processPanel={(panelSettings, setPanelSettings, meta) =>
+          /* A function, not a node: with >1 plate the card's Global|Plate toggle hands down the selected
+             plate's EFFECTIVE map and a setter that writes overrides — same shape as filamentPanel below. */
+          <SettingsPanel embedded settings={panelSettings} setSettings={setPanelSettings}
+            overriddenKeys={meta?.overriddenKeys} onRevertKey={meta?.onRevertKey} />}
         motionPanel={<SettingsPanel embedded settings={settings} setSettings={setSettings}
           only={{ builder: 'TabPrinter::build_kinematics_page' }} />}
         filamentPanel={(filamentSettings, setFilamentSettings) => <>

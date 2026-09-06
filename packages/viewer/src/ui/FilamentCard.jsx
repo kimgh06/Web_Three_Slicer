@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { filamentPresets } from 'three-slicer/settings'
 import { uiTree } from 'three-slicer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
+import { scopedSettings } from '../core/plate_settings.js'
+import ScopeToggle from './ScopeToggle.jsx'
 
 // What a material owns: every option upstream puts on the filament tab, not just the ten the kernel reads.
 //  Saving only the kernel keys would silently drop the rest of the user's edits from the panel below, and the
@@ -35,9 +37,20 @@ const scalarOf = v => (Array.isArray(v) ? v[0] : v)
 // button happened to be the thing clicked — so picking T2 in the brush panel left this card editing T3's material,
 // and the two disagreed on screen with nothing saying which one the next action would use.
 export default function FilamentCard({
-  colors, onColor, onAdd, onRemove, settings, setSettings, filamentPanel,
+  colors, onColor, onAdd, onRemove, settings: globalSettings, setSettings: setGlobalSettings, filamentPanel,
   paintMode, onPaintExtruder, paintCounts, active = 0, onActive,
+  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null,
 }) {
+  // Plate scope (the shared Global|Plate switch): the whole card — presets, per-extruder columns, the panel
+  //  slot — binds to the selected plate's effective map, and edits diff back into ITS override. The extruder
+  //  projection below composes on top unchanged: it projects whatever pair it is handed.
+  const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
+  const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
+  const settings = scoped.settings, setSettings = scoped.setSettings
+  // A material ASSIGNMENT is a whole set (assign() rebuilds every column), so in plate scope it is written whole —
+  //  a key the plate's material shares with the global one must not stay off the override and follow the next
+  //  global material pick (plate_settings.js writePlateOverride forceKeys). Single-value panel edits stay diffs.
+  const forceFilament = () => (plateScope ? [...new Set([...(api?.keys ?? []), ...FILAMENT_PAGE_KEYS]), 'filament_settings_id', 'filament_type'] : undefined)
   // Materials are printer-specific and live in a lazily loaded artifact, so they arrive after a printer is picked.
   const printer = settings?.printer_settings_id ?? ''
   const [api, setApi] = useState(null)
@@ -96,7 +109,7 @@ export default function FilamentCard({
   const removeExtruder = () => {
     if (count <= 1) return
     onRemove?.(active)
-    setSettings?.(prev => assign(api, custom, materials.filter((_, i) => i !== active), prev))
+    setSettings?.(prev => assign(api, custom, materials.filter((_, i) => i !== active), prev), forceFilament())
   }
 
   // "Modified" = this extruder's column differs from what its preset applies. The map is sparse, so a key being
@@ -121,14 +134,14 @@ export default function FilamentCard({
     const saved = writeCustom({ ...custom, [name]: vals })
     setCustom(saved)
     setTypeChoice('Saved')      // the new material only lives there — staying on ABS would blank the preset box
-    setSettings?.(prev => applyAt(active, name, prev, saved))
+    setSettings?.(prev => applyAt(active, name, prev, saved), forceFilament())
   }
   const remove = () => {
     if (!custom[picked] || !window.confirm(`Delete the saved material "${picked}"?`)) return
     const { [picked]: _gone, ...rest } = custom
     setCustom(writeCustom(rest))
     setTypeChoice(null)         // "Saved" may have just disappeared; fall back to following the picked preset
-    setSettings?.(prev => applyAt(active, '', prev, rest))
+    setSettings?.(prev => applyAt(active, '', prev, rest), forceFilament())
   }
 
   useEffect(() => {
@@ -195,7 +208,7 @@ export default function FilamentCard({
     const inType = catalog.byType.get(next) ?? []
     const recommended = new Set((catalog.byType.get('★ Recommended') ?? []).map(m => m.name))
     const first = inType.find(m => recommended.has(m.name)) ?? inType[0]
-    if (first) setSettings?.(prev => applyAt(active, first.name, prev))
+    if (first) setSettings?.(prev => applyAt(active, first.name, prev), forceFilament())
   }
 
   // The settings form edits one value per key; with several extruders loaded that would flatten the column and
@@ -241,6 +254,10 @@ export default function FilamentCard({
   return (
     <section className="side-card" data-testid="filament-section">
       <div className="sc-head">🧵 Filament <span className="sc-count">{count}</span>
+        {plateCount > 1 && setSettingsScope && (
+          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+            testid="filament-scope-toggle" plateTestid="filament-scope-plate" />
+        )}
         <span className="sc-head-btns">
           {/* 16 is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
               the honest limit here too — the kernel takes per-extruder vectors of any length. */}
@@ -287,7 +304,7 @@ export default function FilamentCard({
         </div>
         <div className="sc-info"><span>Preset</span>
           {/* Native selects on purpose: type-ahead over a long list is free here and hand-written in any custom dropdown. */}
-          <select className="sc-model" value={picked} onChange={e => setSettings?.(prev => applyAt(active, e.target.value, prev))}
+          <select className="sc-model" value={picked} onChange={e => setSettings?.(prev => applyAt(active, e.target.value, prev), forceFilament())}
             data-testid="filament-preset" title="Material preset from the upstream vendor profiles — temperatures, flow ratio, cooling and retraction">
             <option value="">Custom (defaults)</option>
             {presets.map(m => <option key={m.name} value={m.name}>{label(m.name)}</option>)}

@@ -29,6 +29,10 @@
 .lbl-cell { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .lbl-cell .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dirty-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #e8873a; box-shadow: 0 0 0 2px #fff3e6; }
+/* Per-plate override marker: this value is the PLATE's, not the global one; clicking follows global again. */
+.override-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #f0a542; border: 0; padding: 0;
+  cursor: pointer; box-shadow: 0 0 0 2px #fdf1dd; }
+.override-dot:hover { background: #d98c26; }
 .widget-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .reset-btn { flex: 0 0 auto; border: 1px solid #d8b48a; background: #fbf1e4; color: #b5701f;
   border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; }

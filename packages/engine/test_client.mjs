@@ -134,6 +134,22 @@ console.log('\n[result throughput: how fast it ran]')
   check('it survives the trip through the client', value?.throughput?.layersPerSecond === 50)
 }
 
+console.log('\n[client: warmup says which kernel loaded]')
+{
+  const worker = new FakeWorker()
+  const client = createSlicerClient(worker)
+  const promise = client.warmup()
+  check('sends the warmup command', worker.last.cmd === 'warmup')
+  worker.emit({ type: 'warm', kernel: 'mt' })
+  const { value } = await settled(promise)
+  check('resolves with the kernel kind', value?.kernel === 'mt', JSON.stringify(value))
+  // An older worker that reports nothing still resolves — the field is null rather than the call failing.
+  const older = new FakeWorker()
+  const promise2 = createSlicerClient(older).warmup()
+  older.emit({ type: 'warm' })
+  check('a warm reply without the field reads as null', (await settled(promise2)).value?.kernel === null)
+}
+
 console.log('\n[client: replies match callers in order]')
 {
   const worker = new FakeWorker()

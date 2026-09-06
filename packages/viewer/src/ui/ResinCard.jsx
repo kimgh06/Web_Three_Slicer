@@ -1,11 +1,19 @@
 import React from 'react'
 import { deriveSlaParams, resinCatalog, resinSettingsFor, settingRaw } from 'three-slicer/settings'
+import { scopedSettings } from '../core/plate_settings.js'
+import ScopeToggle from './ScopeToggle.jsx'
 
 // Resin (SLA) card — shown in place of the filament card when the printer profile declares SLA: resin has no
 //  extruders, colours or prime tower. The values shown are the ones the contour slicer and the SL1 export will
 //  actually run with (deriveSlaParams), and edits land on the same settings map every other card writes, so a
-//  project save carries them like any other option.
-export default function ResinCard({ settings, setSettings, stats }) {
+//  project save carries them like any other option. Plate scope (the shared Global|Plate switch) binds the
+//  whole card to the selected plate's effective map, so an SLA-override plate's exposure/supports/elevation
+//  edit lands in ITS override — which is where its slice reads from.
+export default function ResinCard({ settings: globalSettings, setSettings: setGlobalSettings, stats,
+  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null }) {
+  const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
+  const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
+  const settings = scoped.settings, setSettings = scoped.setSettings
   const p = deriveSlaParams(settings)
   const write = (key) => (e) => {
     const v = parseFloat(e.target.value)
@@ -31,11 +39,16 @@ export default function ResinCard({ settings, setSettings, stats }) {
   const types = [...new Set(compatible.map(r => r.type || 'Other'))].sort()
   const pickMaterial = (name) => {
     const vals = resinSettingsFor(name)
-    if (vals) setSettings(s => ({ ...s, ...vals }))
+    if (vals) setSettings(s => ({ ...s, ...vals }), plateScope ? Object.keys(vals) : undefined)   // a pick is written whole in plate scope
   }
   return (
     <section className="side-card" data-testid="resin-card">
-      <div className="sc-head">🧪 Resin</div>
+      <div className="sc-head">🧪 Resin
+        {plateCount > 1 && setSettingsScope && (
+          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+            testid="resin-scope-toggle" plateTestid="resin-scope-plate" />
+        )}
+      </div>
       {compatible.length > 0 && (
         <div className="sc-info"><span>Material</span>
           <select className="sc-model" value={picked} onChange={e => pickMaterial(e.target.value)}

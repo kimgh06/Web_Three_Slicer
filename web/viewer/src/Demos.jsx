@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 // The demos are separate npm projects under examples/. `npm run demos` builds them into
 // public/demos/<name>/ and writes the manifest this page reads; without that step the page says so
@@ -46,8 +46,14 @@ const ORDER = ['instant-quote', 'printer-showcase', 'cad-embed', 'farm-dashboard
 
 export default function Demos() {
   const [manifest, setManifest] = useState(null)
-  const [selected, setSelected] = useState(null)
   const [source, setSource] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  // Which demo is open lives in the URL, so one can be linked to directly. `replace` on the default pick
+  // keeps the back button pointing at wherever the visitor came from rather than at this same page.
+  const [params, setParams] = useSearchParams()
+  const selected = params.get('d')
+  const select = (name, replace = false) => setParams(name ? { d: name } : {}, { replace })
 
   useEffect(() => {
     fetch(`${ASSETS}manifest.json`)
@@ -55,21 +61,41 @@ export default function Demos() {
       .catch(() => [])
       .then(entries => {
         setManifest(entries)
-        setSelected(current => current ?? entries[0]?.name ?? null)
+        const known = entries.some(item => item.name === params.get('d'))
+        if (!known && entries[0]) select(entries[0].name, true)
       })
+    // Runs once: a later ?d= change must not refetch the manifest.
   }, [])
-
-  useEffect(() => {
-    if (!selected) return
-    setSource('')
-    fetch(`${ASSETS}${selected}/integration.txt`)
-      .then(response => (response.ok ? response.text() : ''))
-      .catch(() => '')
-      .then(setSource)
-  }, [selected])
 
   const entry = manifest?.find(item => item.name === selected) ?? null
   const meta = selected ? CATALOG[selected] : null
+
+  // Keyed on the MANIFEST entry, not on ?d=, so a name the manifest does not have is never fetched: a dev
+  // server (and most static hosts) answer an unknown path with the SPA's own index.html at status 200, which
+  // `response.ok` accepts — that HTML then lands in the code block. The doctype check is the second half of
+  // that guard, for a demo that is in the manifest but whose integration.txt failed to copy.
+  // `live` because the two fetches can land out of order and the loser must not overwrite the winner.
+  useEffect(() => {
+    if (!entry) return
+    let live = true
+    setSource('')
+    setCopied(false)
+    fetch(`${ASSETS}${entry.name}/integration.txt`)
+      .then(response => (response.ok ? response.text() : ''))
+      .catch(() => '')
+      .then(text => {
+        if (!live) return
+        setSource(/^\s*<(!doctype|html)/i.test(text) ? '' : text)
+      })
+    return () => { live = false }
+  }, [entry?.name])
+
+  const copySource = () => {
+    navigator.clipboard?.writeText(source).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }, () => {})
+  }
 
   return (
     <div className="landing demos">
@@ -101,7 +127,7 @@ export default function Demos() {
                   key={name}
                   type="button"
                   className={`demos-card${name === selected ? ' is-active' : ''}${ready ? '' : ' is-missing'}`}
-                  onClick={() => ready && setSelected(name)}
+                  onClick={() => ready && select(name)}
                   aria-pressed={name === selected}
                 >
                   <span className="demos-card-sells">{info.sells}</span>
@@ -138,8 +164,10 @@ cd web/viewer && npm run demos`}</pre>
                 </div>
                 <div className="demos-actions">
                   <a href={`${ASSETS}${entry.name}/index.html`} target="_blank" rel="noreferrer">Open full page</a>
+                  {/* ?file= or StackBlitz opens the README — the integration file is the thing being sold,
+                      so it is what the tab should already be on. */}
                   <a
-                    href={`https://stackblitz.com/github/${REPO}/tree/main/examples/${entry.name}`}
+                    href={`https://stackblitz.com/github/${REPO}/tree/main/examples/${entry.name}?file=${entry.integration}`}
                     target="_blank"
                     rel="noreferrer"
                   >Edit on StackBlitz</a>
@@ -165,13 +193,30 @@ cd web/viewer && npm run demos`}</pre>
             </section>
 
             <section className="lp-section">
-              <div className="lp-section-head">
-                <h2>The whole integration</h2>
-                <p>
-                  <code>examples/{entry.name}/{entry.integration}</code> · {entry.lines} lines · imports nothing but
-                  the package
-                </p>
+              <div className="demos-frame-head">
+                <div className="lp-section-head">
+                  <h2>The whole integration</h2>
+                  <p>
+                    <code>examples/{entry.name}/{entry.integration}</code> · {entry.lines} lines · imports nothing but
+                    the package
+                  </p>
+                </div>
+                <div className="demos-actions">
+                  <button type="button" onClick={copySource} disabled={!source}>
+                    {copied ? 'Copied' : 'Copy the file'}
+                  </button>
+                </div>
               </div>
+
+              {/* Both lines come from the demo's own package.json via the manifest, so neither can claim a
+                  version or a peer the demo does not actually install. */}
+              {entry.deps?.length > 0 && (
+                <p className="demos-install">
+                  <code>npm i {entry.deps.join(' ')}</code>
+                  {entry.version && <span> · built against three-slicer {entry.version}</span>}
+                </p>
+              )}
+
               <pre className="demos-source">{source || 'Loading…'}</pre>
               <p className="demos-note">
                 Copying that file is the whole integration. The rest of the demo — drop zones, cards, sliders —
@@ -184,7 +229,7 @@ cd web/viewer && npm run demos`}</pre>
 
       <footer className="lp-foot">
         <span>Take one</span>
-        <code>npx degit {REPO}/examples/instant-quote my-app</code>
+        <code>npx degit {REPO}/examples/{selected ?? 'instant-quote'} my-app</code>
       </footer>
     </div>
   )

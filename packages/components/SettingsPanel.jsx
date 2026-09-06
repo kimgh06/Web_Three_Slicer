@@ -84,7 +84,7 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
   }
 }
 
-function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOpen, customWidgets }) {
+function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOpen, customWidgets, overridden, onRevertKey }) {
   if (optKey.startsWith('<')) return <div className="row custom"><span className="muted">⚙ Custom widget {optKey}</span></div>
   const def = schema[optKey]
   const cond = disabled ? disabled[optKey] : undefined
@@ -95,6 +95,8 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOp
   return (
     <div className={'row' + (off ? ' disabled' : '')} title={off ? `Disabled when: ${cond}` : (def?.tooltip ?? '')} data-testid={`row-${optKey}`}>
       <span className="lbl-cell">
+        {overridden && <button type="button" className="override-dot" onClick={() => onRevertKey?.(optKey)}
+          title="This plate's override — click to follow the global value again" data-testid={`override-${optKey}`} />}
         {dirty && <span className="dirty-dot" title="Changed from default" data-testid={`dirty-${optKey}`} />}
         {onOptionOpen
           ? <button type="button" className="lbl lbl-link" onClick={() => onOptionOpen(optKey)} title="Details">{label}</button>
@@ -112,7 +114,7 @@ function EditableOptionRow({ optKey, settings, setSettings, disabled, onOptionOp
 
 // `only` pins the panel to one builder (optionally one page) and drops the search/group/page/mode chrome,
 //  so a host can embed a single page — e.g. the printer's Motion ability — inside another card.
-export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false, customWidgets, only }) {
+export default function SettingsPanel({ settings, setSettings, onOptionOpen, embedded = false, customWidgets, only, overriddenKeys, onRevertKey }) {
   const [builder, setBuilder] = useState(only?.builder ?? MAIN_BUILDERS[0] ?? '')
   const [pageIdx, setPageIdx] = useState(0)
   const [mode, setMode] = useState('all')
@@ -135,7 +137,8 @@ export default function SettingsPanel({ settings, setSettings, onOptionOpen, emb
       .filter(([k, d]) => k.includes(q) || d.label?.toLowerCase().includes(q) || d.full_label?.toLowerCase().includes(q))
       .slice(0, 60).map(([k]) => k)
   }, [q])
-  const row = (k, i) => <EditableOptionRow key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets} />
+  const row = (k, i) => <EditableOptionRow key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets}
+    overridden={overriddenKeys?.includes(k)} onRevertKey={onRevertKey} />
   return (
     <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
