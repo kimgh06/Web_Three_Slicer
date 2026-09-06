@@ -97,6 +97,7 @@ export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
     clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
+    selectedPlateRef, disposePlateToolpath,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   } = deps
@@ -143,7 +144,7 @@ export function makeModelLoad(deps) {
         for (const [id, index, offsetX, offsetY] of assignments) {
           // The bed tops out at MAX_PLATES, so a project with more of them keeps those objects where they landed
           //  rather than piling them onto the last plate — and says so, because a silently merged plate prints wrong.
-          if (index < plateCount) apiRef.current?.placeObjectOnPlate(id, index, offsetX, offsetY)
+          if (index < plateCount) { apiRef.current?.placeObjectOnPlate(id, index, offsetX, offsetY); dropPlateResult(index) }
           else beyondLastPlate++
         }
       })
@@ -176,7 +177,13 @@ export function makeModelLoad(deps) {
       return
     }
     setError(''); setTriWarn(''); setProgress(0)
-    layersDataRef.current = null; segDataRef.current = null; plateResultsRef.current = {}; plateOffsetsRef.current = {}
+    // Only the plate the meshes land on loses its result: another plate's slice still describes objects this load
+    //  does not touch (the per-plate staleness rule, slice_staleness.js). It used to reset every plate, so adding a
+    //  model to plate 2 silently threw plate 1's slice away. A project that places objects on other plates
+    //  invalidates those below, once it knows which.
+    const dropPlateResult = (plate) => { delete plateResultsRef.current[plate]; delete plateOffsetsRef.current[plate]; disposePlateToolpath?.(plate) }
+    layersDataRef.current = null; segDataRef.current = null
+    dropPlateResult(selectedPlateRef?.current ?? 0)
     clearToolpaths(); refreshSlicedCount()
     setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setSliceNotice(''); setDowngradeOffer(null)
     // Presets before the meshes they came with — those are the settings the model is meant to load under — but

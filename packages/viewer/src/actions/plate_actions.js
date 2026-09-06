@@ -566,7 +566,10 @@ export function makePlateActions(deps) {
   }
   function selectPlate(i) {
     selectedPlateRef.current = i; setSelectedPlate(i); placeXRef.current = 0
-    if (canvasMode === 'preview') showPlateResult(i)   // switching plates in Preview -> show that plate's cached result
+    // The focus UI (layer count, stats, the G-code link) follows the plate in BOTH modes: a plate's cached result
+    //  is its own, and in Prepare it is what enables the Preview tab. Preview-only meant a plate sliced earlier
+    //  read as unsliced after a model was added elsewhere, because a load zeroes the focus and nothing refilled it.
+    showPlateResult(i)
   }
 
   return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
