@@ -112,23 +112,29 @@ static bool point_in_region(const IntPoint& pt, const Paths& ps) {
 // report() stays with the caller (a phase now finishes in well under a band's width anyway).
 // A worker exception (Clipper on degenerate input) is captured and rethrown on the caller —
 // escaping a std::thread would terminate.
-template <class Fn>
-static void sla_for_each_layer(int n, const Fn& fn) {
+// `tick(done)` is called on the CALLING thread only, with the shared count of finished layers, after each chunk
+//  it completes itself — it is how a phase reports progress (only that thread may reach JS). The layer->chain
+//  phase measured 6.3s of a 14s slice on a 3M-facet model with no report inside it, which read as a stall.
+static void sla_no_tick(int) {}
+template <class Fn, class Tick = void(*)(int)>
+static void sla_for_each_layer(int n, const Fn& fn, const Tick& tick = sla_no_tick) {
 #ifdef __EMSCRIPTEN_PTHREADS__
   const unsigned hw = std::thread::hardware_concurrency();
   if (n > 3 && hw > 1) {
     const unsigned nt = std::min<unsigned>(hw - 1, (unsigned)n);
     const int chunk = std::max(1, n / int(nt * 8));
-    std::atomic<int> next{0};
+    std::atomic<int> next{0}, done{0};
     std::exception_ptr first_error = nullptr;
     std::mutex error_mutex;
-    auto work = [&] {
+    auto work = [&](bool caller) {
       try {
         for (;;) {
           const int lo = next.fetch_add(chunk);
           if (lo >= n) break;
           const int hi = std::min(n, lo + chunk);
           for (int i = lo; i < hi; ++i) fn(i);
+          done.fetch_add(hi - lo, std::memory_order_relaxed);
+          if (caller) tick(done.load(std::memory_order_relaxed));
         }
       } catch (...) {
         std::lock_guard<std::mutex> hold(error_mutex);
@@ -138,16 +144,16 @@ static void sla_for_each_layer(int n, const Fn& fn) {
     std::vector<std::thread> workers;
     workers.reserve(nt - 1);
     for (unsigned t = 1; t < nt; ++t) {
-      try { workers.emplace_back(work); }   // pool exhausted -> the caller and existing workers absorb
+      try { workers.emplace_back([&]{ work(false); }); }   // pool exhausted -> the caller and existing workers absorb
       catch (...) { break; }
     }
-    work();
+    work(true);
     for (std::thread& worker : workers) worker.join();
     if (first_error) std::rethrow_exception(first_error);
     return;
   }
 #endif
-  for (int i = 0; i < n; ++i) fn(i);
+  for (int i = 0; i < n; ++i) { fn(i); if ((i & 7) == 7 || i == n - 1) tick(i + 1); }
 }
 
 static inline IntPoint ip(double x, double y) {
@@ -198,11 +204,55 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     mids[i] = (i == 0 ? ilh : ilh + i * lh) - th / 2;
   }
   std::vector<std::vector<Seg>> layerSegs(N);
-  { Seg sg;
-    for (const Tri& t : tris) {
-      double zmin = std::min({t.v[0].z, t.v[1].z, t.v[2].z}), zmax = std::max({t.v[0].z, t.v[1].z, t.v[2].z});
-      for (auto it = std::lower_bound(mids.begin(), mids.end(), zmin); it != mids.end() && *it < zmax; ++it)
-        if (tri_plane(t, *it, sg)) layerSegs[(size_t)(it - mids.begin())].push_back(sg);
+  {
+    // Facet -> segment sweep. Parallel in mt the way PASS1 is (pass1.cpp): contiguous facet ranges, one bucket set
+    //  per range, concatenated in range order — so every layer's segment order is exactly the serial loop's and st
+    //  and mt stay byte-identical (test_sla_mt.mjs). The 0 -> 18% progress comes from in here: on a 3M-facet model
+    //  this sweep measured 6.7s alone and 16.9s beside two FFF workers (single-threaded, it lost the cores to
+    //  their 30 threads), and it reported nothing until it was done — which read as the SLA plate not slicing at
+    //  all. Only the calling thread may touch JS, so it sweeps a range itself and reports the shared count as it
+    //  goes; the other threads only count.
+    const size_t T = tris.size();
+    std::atomic<size_t> swept{0};
+    auto sweep = [&](size_t lo, size_t hi, std::vector<std::vector<Seg>>& out, bool reporter) {
+      Seg sg; size_t local = 0;
+      for (size_t k = lo; k < hi; ++k) {
+        const Tri& t = tris[k];
+        double zmin = std::min({t.v[0].z, t.v[1].z, t.v[2].z}), zmax = std::max({t.v[0].z, t.v[1].z, t.v[2].z});
+        for (auto it = std::lower_bound(mids.begin(), mids.end(), zmin); it != mids.end() && *it < zmax; ++it)
+          if (tri_plane(t, *it, sg)) out[(size_t)(it - mids.begin())].push_back(sg);
+        if ((++local & 0x3FFF) == 0) {
+          swept.fetch_add(0x4000, std::memory_order_relaxed);
+          if (reporter) report((int)std::min<size_t>(29, swept.load(std::memory_order_relaxed) * 30 / std::max<size_t>(1, T)), 1000);
+        }
+      }
+      swept.fetch_add(local & 0x3FFF, std::memory_order_relaxed);
+    };
+    unsigned nt = 1;
+#ifdef __EMSCRIPTEN_PTHREADS__
+    { const unsigned hw = std::thread::hardware_concurrency();
+      if (T > 65536 && hw > 1) nt = std::min<unsigned>(hw, (unsigned)(T / 32768)); }
+#endif
+    if (nt > 1) {
+      std::vector<std::vector<std::vector<Seg>>> buckets(nt, std::vector<std::vector<Seg>>(N));
+      const size_t per = (T + nt - 1) / nt;
+      std::vector<std::thread> workers; workers.reserve(nt - 1);
+      unsigned spawned = 1;
+      for (unsigned r = 1; r < nt; ++r) {
+        const size_t lo = r * per, hi = std::min(T, lo + per);
+        try { workers.emplace_back([&, r, lo, hi]{ sweep(lo, hi, buckets[r], false); }); ++spawned; }
+        catch (...) { break; }   // pool exhausted: the caller sweeps the ranges nobody took, after its own
+      }
+      sweep(0, std::min(T, per), buckets[0], true);
+      for (unsigned r = spawned; r < nt; ++r) sweep(r * per, std::min(T, (r + 1) * per), buckets[r], true);
+      for (std::thread& w : workers) w.join();
+      for (int i = 0; i < N; ++i) {
+        size_t total = 0; for (auto& b : buckets) total += b[(size_t)i].size();
+        layerSegs[(size_t)i].reserve(total);
+        for (auto& b : buckets) { auto& src = b[(size_t)i]; layerSegs[(size_t)i].insert(layerSegs[(size_t)i].end(), src.begin(), src.end()); std::vector<Seg>().swap(src); }
+      }
+    } else {
+      sweep(0, T, layerSegs, true);
     }
   }
   // The generator no longer eats these contours — the bridge slices the mesh itself through the real
@@ -217,7 +267,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
                                      [](const Path& q){ return q.size() < 3; }), contours[i].end());
     layerSegs[i].clear(); layerSegs[i].shrink_to_fit();
-  });
+  }, [&](int done) { report(30 + std::min(149, done * 150 / std::max(1, N)), 1000); });   // chaining: 3% -> 18%
   if (CX()) { result.set("error", std::string("canceled")); return result; }
   report(180, 1000);   // contours done: 18%
 
