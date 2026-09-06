@@ -304,15 +304,24 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px
 }
 .demos-frame-head .lp-section-head { margin-bottom: 0; }
 .demos-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.demos-actions a {
+.demos-actions a,
+.demos-actions button {
   padding: 7px 12px;
   border: 1px solid var(--lp-border);
   border-radius: 6px;
+  background: none;
   color: var(--lp-body);
+  font: inherit;
   font-size: 13px;
   text-decoration: none;
+  cursor: pointer;
 }
-.demos-actions a:hover { border-color: var(--lp-accent); color: var(--lp-text); }
+.demos-actions a:hover,
+.demos-actions button:hover:not(:disabled) { border-color: var(--lp-accent); color: var(--lp-text); }
+.demos-actions button:disabled { opacity: .5; cursor: default; }
+
+.demos-install { margin: 0 0 10px; color: var(--lp-muted); font-size: 13px; }
+.demos-install code { color: var(--lp-code); }
 
 .demos-frame {
   width: 100%;

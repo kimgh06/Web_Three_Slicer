@@ -6,11 +6,11 @@
 > How to run it, the measurements and the isolation-verification results are in the app's
 > [README](./printer-showcase/README.md).
 > Measured: A1 mini (180 bed) 15m vs P1S (256 bed) 12m — the same 20mm cube, the profiles' motion-limit difference.
-> **1 unmet item (now solvable)**: automatic sample-model load. The 0.2.2 `files` prop makes this possible —
-> apply it after bumping the dependency. At the time of writing no such prop existed, so it could not be done
-> through the public API alone (neither 0.1.7 nor the local source). A test-cube download plus the viewer's own
-> drop/file picker stood in for it, and no workaround was used.
-> Remaining: a deployment URL, a representative GIF, the model-injection prop.
+> Automatic sample-model load is **done**: the plate opens with the 20 mm cube already sliced, through the
+> `files` prop that landed in 0.2.2 (the demos now pin ^0.2.4). Before that no such prop existed and a
+> test-cube download plus the viewer's own drop/file picker stood in for it; no private access was used
+> either way.
+> Remaining: a deployment URL, a representative GIF.
 
 ## What this demonstrates
 

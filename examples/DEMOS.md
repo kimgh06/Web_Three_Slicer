@@ -84,7 +84,7 @@ they die the moment the demo lands on another site.
 {
   "private": true,
   "dependencies": {
-    "three-slicer": "^0.1.7"
+    "three-slicer": "^0.2.4"
   }
 }
 ```
@@ -94,7 +94,7 @@ missing from `packages/package.json`'s `files`, the demo breaks first.
 
 A demo that needs an unpublished API (marketplace's project codec) only stands from the **next** version
 that publishes the export — one more reason the export work is a prerequisite in §10. To check ahead of a
-release, install a tarball made with `npm pack` (`npm i ../../packages/three-slicer-0.1.8.tgz`).
+release, install a tarball made with `npm pack` (`npm i ../../packages/three-slicer-0.2.5.tgz`).
 
 Consumers use only the same paths the published package exposes.
 
@@ -259,8 +259,8 @@ the headers.
 
 ## 5. The worker usage contract
 
-**These demos pin `three-slicer` ^0.1.7 and create the worker themselves. On 0.2.3 and later that is no
-longer necessary** — `createSlicerClient()` with no argument builds its worker through the literal
+**These demos create the worker themselves. Since 0.2.3 — the demos now pin ^0.2.4 — that is no longer
+necessary** — `createSlicerClient()` with no argument builds its worker through the literal
 `new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })` that Vite and webpack
 recognize as a worker entry, so it reaches dist with its kernel chunks.
 

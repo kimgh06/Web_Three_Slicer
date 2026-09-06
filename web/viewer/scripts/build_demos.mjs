@@ -67,9 +67,15 @@ for (const demo of DEMOS) {
   } else {
     console.log(`[demos] ${demo.name} up to date`)
   }
+  // The install line and the version badge come from the demo's OWN package.json rather than being
+  // written into the page: the two drift, and they already did — the demos sat on ^0.1.7 while the
+  // package published 0.2.4, which nothing on the page could have shown.
+  const { dependencies = {} } = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
   built.push({
     ...demo,
     lines: (await readFile(join(dir, demo.integration), 'utf8')).split('\n').length,
+    deps: Object.keys(dependencies).sort(),
+    version: dependencies['three-slicer'] ?? null,
   })
 }
 
