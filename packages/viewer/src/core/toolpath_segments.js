@@ -1,3 +1,5 @@
+// LICENSE-PROVENANCE: derived from libvgcode SegmentTemplate.cpp / ViewerImpl.cpp (OrcaSlicer, AGPL-3.0-or-later).
+//   This file cannot be relicensed; replacing it is the cost of a permissive viewer. See packages/PROVENANCE.md §2.
 // Stage 24: faithful port of the upstream libvgcode toolpath renderer (CPU geometry builder dropped -> GPU instancing).
 //  Upstream: src/libvgcode/{SegmentTemplate.cpp, ShadersES.hpp(Segments_Vertex_Shader_ES), ViewerImpl.cpp(extract_pos_and_or_hwa)}.
 //  Structure: an 8-vertex diamond template (24 indices) x InstancedBufferGeometry, segment data in a DataTexture (RGBA32F/32UI)
