@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { filamentPresets } from 'three-slicer/settings'
 import { uiTree } from 'three-slicer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
+import { scopedSettings } from '../core/plate_settings.js'
+import ScopeToggle from './ScopeToggle.jsx'
 
 // What a material owns: every option upstream puts on the filament tab, not just the ten the kernel reads.
 //  Saving only the kernel keys would silently drop the rest of the user's edits from the panel below, and the
@@ -35,9 +37,16 @@ const scalarOf = v => (Array.isArray(v) ? v[0] : v)
 // button happened to be the thing clicked — so picking T2 in the brush panel left this card editing T3's material,
 // and the two disagreed on screen with nothing saying which one the next action would use.
 export default function FilamentCard({
-  colors, onColor, onAdd, onRemove, settings, setSettings, filamentPanel,
+  colors, onColor, onAdd, onRemove, settings: globalSettings, setSettings: setGlobalSettings, filamentPanel,
   paintMode, onPaintExtruder, paintCounts, active = 0, onActive,
+  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope,
 }) {
+  // Plate scope (the shared Global|Plate switch): the whole card — presets, per-extruder columns, the panel
+  //  slot — binds to the selected plate's effective map, and edits diff back into ITS override. The extruder
+  //  projection below composes on top unchanged: it projects whatever pair it is handed.
+  const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
+  const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
+  const settings = scoped.settings, setSettings = scoped.setSettings
   // Materials are printer-specific and live in a lazily loaded artifact, so they arrive after a printer is picked.
   const printer = settings?.printer_settings_id ?? ''
   const [api, setApi] = useState(null)
@@ -241,6 +250,10 @@ export default function FilamentCard({
   return (
     <section className="side-card" data-testid="filament-section">
       <div className="sc-head">🧵 Filament <span className="sc-count">{count}</span>
+        {plateCount > 1 && setSettingsScope && (
+          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope}
+            testid="filament-scope-toggle" plateTestid="filament-scope-plate" />
+        )}
         <span className="sc-head-btns">
           {/* 16 is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
               the honest limit here too — the kernel takes per-extruder vectors of any length. */}

@@ -1,4 +1,5 @@
 import { log } from '../core/log.js'
+import { objectRows } from '../core/object_rows.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from '../core/plate_layout.js'
@@ -95,7 +96,7 @@ function droppedFeatures(project, loaded) {
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings, importSl1, loadPresetFile,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   } = deps
@@ -111,7 +112,11 @@ export function makeModelLoad(deps) {
     if (imported?.applied) {
       // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
       //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
+      //  The per-plate overrides go with it, for the same reason: a 3mf carries no per-plate printer state, so a
+      //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
+      //  and reroute its slicer with nothing on screen explaining why.
       setSettings?.(imported.settings)
+      setPlateSettings?.(() => ({}))
       notices.push(`${imported.applied} settings`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
       //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id
@@ -203,7 +208,7 @@ export function makeModelLoad(deps) {
         log.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
       } catch (err) { setError(`Failed to load ${f.name}: ${(err && err.message) || err}`) }
     }
-    setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false })))
+    setObjects(objectRows(objectsRef.current, apiRef.current))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
     for (const f of sl1Files) await importSl1(f)
     // Imported painting only reaches the kernel through the selector, and nothing else registers one until the user
@@ -212,7 +217,7 @@ export function makeModelLoad(deps) {
     if (anyPaint) registerSelectorRef?.current?.()
   }
   function onFiles(e) { loadFiles(e.target.files); e.target.value = '' }
-  function removeObject(id) { apiRef.current?.removeObject(id); setObjects(objectsRef.current.map(o => ({ id: o.id, name: o.name, extruder: o.extruder, visible: o.visible !== false }))) }
+  function removeObject(id) { apiRef.current?.removeObject(id); setObjects(objectRows(objectsRef.current, apiRef.current)) }
   // Stage 26 R4: the whole viewport is a drop zone
   function onDrop(e) { e.preventDefault(); setDragOver(false); loadFiles(e.dataTransfer?.files) }
   function onDragOver(e) { e.preventDefault(); e.dataTransfer && (e.dataTransfer.dropEffect = 'copy'); if (!dragOver) setDragOver(true) }

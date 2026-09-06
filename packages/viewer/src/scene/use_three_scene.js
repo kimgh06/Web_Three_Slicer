@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react'
+import { buildSlaGroup, disposeSceneGroup as disposeGroup } from './sla_preview_mesh.js'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'; import { makeSlaRaster, indexedGeometry } from './sla_raster.js'
+import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster, indexedGeometry } from './sla_raster.js'
 import { buildMergedSTL, exportObjects, stlToSoup } from '../core/model_geometry.js'
-import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'
+import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates } from './plate_scene.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
-import { bedGridLines } from '../core/bed_grid.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
 // model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
@@ -30,6 +30,7 @@ function bakeLocal(modelPos) {
 export function useThreeScene(deps) {
   const {
     apiRef, objectsRef, keyRef, workerRef, selectedPlateRef, placeXRef, plateCountRef,
+    plateTpRef, plateOffsetsRef,
     canvasModeRef, paintModeRef, brushRadiusRef, paintToolRef, paintXformRef, extruderColorsRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setFillAngle,   // the last two are the Ctrl+wheel targets (paint_input.js)
     contextMenu,   // features.contextMenu — false leaves the right-click menu unregistered
@@ -40,12 +41,14 @@ export function useThreeScene(deps) {
   const paintDrawingRef = useRef(false)
   const plateBWRef = useRef(200)        // plate (bed) width/depth — used for PX_i and membership calculations
   const plateBDRef = useRef(200)
+  const plateHeteroRef = useRef(null)   // { dims, layout } only when plates carry DIFFERENT beds; null keeps the closed form
 
   // The grid itself is plate_layout.js (pure, tested). These two only bind it to the refs that hold the live plate
-  //  count and bed size, so every call site in this file keeps reading exactly as it did.
-  const platePos = (i) => platePosition(i, plateCountRef.current, plateBWRef.current, plateBDRef.current)
-  const plateOfXZ = (wx, wz) => plateIndexAtXZ(wx, wz, plateCountRef.current, plateBWRef.current, plateBDRef.current)
-  const plateGrid = () => ({ plateCount: plateCountRef.current, bedWidth: plateBWRef.current, bedDepth: plateBDRef.current })
+  //  count and bed size, so every call site in this file keeps reading exactly as it did — heterogeneous beds
+  //  swap in the cumulative layout through the same two names.
+  const platePos = (i) => plateHeteroRef.current?.layout.position(i) ?? platePosition(i, plateCountRef.current, plateBWRef.current, plateBDRef.current)
+  const plateOfXZ = (wx, wz) => plateHeteroRef.current?.layout.indexAt(wx, wz) ?? plateIndexAtXZ(wx, wz, plateCountRef.current, plateBWRef.current, plateBDRef.current)
+  const plateGrid = () => ({ plateCount: plateCountRef.current, bedWidth: plateBWRef.current, bedDepth: plateBDRef.current, plateDims: plateHeteroRef.current?.dims ?? null })
   // Objects as model_geometry.js takes them: plain data with the world matrix already up to date. WHICH objects go
   //  in is the scene's own call (visibility, selection), so the filter stays here and the geometry work does not.
   const geometryInput = (keep) => objectsRef.current.filter(keep).map(o => {
@@ -519,8 +522,9 @@ export function useThreeScene(deps) {
         const w = (geo.boundingBox.max.x - geo.boundingBox.min.x) * (scale ? Math.abs(scale.x) : 1)
         if (objectsRef.current.length === 0) placeXRef.current = 0
         const pp = platePos(selectedPlateRef.current)
-        mesh.position.set(pp.x + placeXRef.current + w / 2, 0, pp.z)
-        placeXRef.current += w + 8
+        const place = nextPlacement(placeXRef.current, pp.x, w)
+        mesh.position.set(place.x, 0, pp.z)
+        placeXRef.current = place.cursor
       }
       mesh.userData = { name }
       objectsGroup.add(mesh)
@@ -582,12 +586,12 @@ export function useThreeScene(deps) {
     //  kernel frame (z-up, plate offset), model clone lifted by the elevation, materials clip-plane aware so
     //  the layer slider becomes a section cut (upstream SlaCap, minus the filled cap face).
     let slaGroup = null
+    const slaStatics = new Map()   // plateIdx -> { group, source }: the OTHER resin plates, drawn unclipped
     const slaClipPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e9),   // keep world y <= constant
                            new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e9)]    // keep world y >= -constant
     function clearSlaPreview() {
       if (!slaGroup) return
-      slaGroup.parent?.remove(slaGroup)
-      slaGroup.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose() } })
+      disposeGroup(slaGroup)
       slaGroup = null
       invalidate()
     }
@@ -601,33 +605,27 @@ export function useThreeScene(deps) {
       setSlaPreview: (payload) => {
         clearSlaPreview()
         if (!payload) return
-        const { modelSTL, modelIndexed, supportMesh, padMesh, lift = 0, offX = 0, offZ = 0 } = payload
         renderer.localClippingEnabled = true
         slaClipPlanes[0].constant = 1e9; slaClipPlanes[1].constant = 1e9
-        slaGroup = new THREE.Group()
-        slaGroup.rotation.x = -Math.PI / 2
-        slaGroup.position.set(offX, 0, offZ)
-        const material = (color) => new THREE.MeshPhongMaterial({
-          color, side: THREE.DoubleSide, clippingPlanes: slaClipPlanes,
-        })
-        const soup = (arr) => {
-          const geo = new THREE.BufferGeometry()
-          geo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
-          geo.computeVertexNormals(); return geo }
-        // A reconstruction arrives pre-indexed with smooth normals averaged in the worker (indexedGeometry,
-        //  scene/sla_raster.js); a sliced result stays a flat-shaded STL soup.
-        const modelGeo = modelIndexed ? indexedGeometry(modelIndexed) : (modelSTL ? soup(stlToSoup(modelSTL)) : null)
-        if (modelGeo) {
-          const mesh = new THREE.Mesh(modelGeo, Object.assign(material(modelIndexed?.colors ? 0xffffff : 0xd7862a), { vertexColors: !!modelIndexed?.colors }))
-          mesh.position.z = lift            // group is z-up: +z is world up
-          slaGroup.add(mesh)
-        }
-        if (supportMesh && supportMesh.length) slaGroup.add(new THREE.Mesh(soup(supportMesh), material(0x9b78d8)))
-        if (padMesh && padMesh.length) slaGroup.add(new THREE.Mesh(soup(padMesh), material(0xb0a06a)))
+        slaGroup = buildSlaGroup(payload, slaClipPlanes)
         // Inside toolpathGroup, so Prepare/Preview visibility toggling covers the solid preview for free.
         toolpathGroup.add(slaGroup)
         invalidate()
       },
+      // A resin plate that is NOT the focus: drawn whole, unclipped, beside the others — the resin counterpart of
+      //  the toolpaths every FFF plate keeps in the scene after slice-all. Two resin plates used to show only the
+      //  focused one, the other reading as "missing". Idempotent on the result's identity.
+      setSlaStatic: (idx, payload) => {
+        const have = slaStatics.get(idx)
+        if (have && payload && have.source === payload.source) return
+        if (have) { disposeGroup(have.group); slaStatics.delete(idx) }
+        if (!payload) { invalidate(); return }
+        const group = buildSlaGroup(payload, null)
+        toolpathGroup.add(group)
+        slaStatics.set(idx, { group, source: payload.source })
+        invalidate()
+      },
+      clearSlaStatics: () => { for (const [, e] of slaStatics) disposeGroup(e.group); slaStatics.clear(); invalidate() },
       /** Section-cut the SLA preview to [zLo, zHi] (kernel z, mm) — what the layer slider means for meshes.
        *  null/undefined on either side opens that side fully. */
       setSlaClip: (zLo, zHi) => {
@@ -666,7 +664,8 @@ export function useThreeScene(deps) {
         return { name: o.name, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
       },
       // keepPos=true keeps the snapshot's original position (split). false (default) places it beside via the placement cursor (duplicate/paste).
-      spawnSnapshot: (snap, keepPos = false) => snap ? spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, keepPos ? (snap.pos || null) : null) : null,
+      //  `quiet`: a duplicate/paste/split must not reframe the camera — a fresh LOAD is the only spawn where it is the point.
+      spawnSnapshot: (snap, keepPos = false) => snap ? spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, keepPos ? (snap.pos || null) : null, { quiet: true }) : null,
       nudgeSelected: (dx, dz) => { if (!selected) return; selected.position.x += dx; selected.position.z += dz },
       rotateSelectedY: (rad) => { if (!selected) return; selected.rotation.y += rad },
       frame: () => frameObjects(),                                   // Z: zoom to all objects
@@ -831,24 +830,20 @@ export function useThreeScene(deps) {
         })
         t.invalidate?.()
       },
-      // Stage 29-2: render N plates — each plate = grid + border, offset by PX_i, with the selected plate's border highlighted.
-      setPlates: (n, bw, bd, sel) => {
+      // Stage 29-2: render N plates (grid + border + number label; heterogeneous bed cells — an SLA plate's
+      //  cell IS its display) — plate_scene.js. `dims` non-uniform swaps membership onto the cumulative layout.
+      setPlates: (n, bw, bd, sel, dims) => {
         const t = three.current
+        // Objects keep their PLATE when the layout changes — followPlateLayout (plate_scene.js) translates
+        //  them, the cached toolpaths and the display offsets by their old plate's origin delta.
+        const prev = { n: plateCountRef.current, bw: plateBWRef.current, bd: plateBDRef.current, het: plateHeteroRef.current }
         plateBWRef.current = bw; plateBDRef.current = bd; plateCountRef.current = n; selectedPlateRef.current = sel
-        for (const p of (t.plateBeds || [])) for (const m of [p.gridThin, p.gridBold, p.border]) { t.scene.remove(m); m.geometry.dispose(); m.material.dispose() }
-        t.plateBeds = []
-        const { thin, bold } = bedGridLines(bw, bd)   // upstream Bed_2D's spacing rules — bed_grid.js
-        const lineGeo = (a) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return g }
-        for (let i = 0; i < n; i++) {
-          const { x: px, z: pz } = platePos(i)   // the refs above already hold n/bw/bd, so this is the same grid
-          const gt = new THREE.LineSegments(lineGeo(thin), new THREE.LineBasicMaterial({ color: 0x232a31 }))
-          const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: 0x39434d }))
-          gt.position.set(px, 0, pz); gb.position.set(px, 0, pz); t.scene.add(gt); t.scene.add(gb)
-          const sel_ = i === sel
-          const b = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bw, bd)), new THREE.LineBasicMaterial({ color: sel_ ? 0x00ae42 : 0x4a5560, linewidth: sel_ ? 2 : 1 }))
-          b.rotation.x = -Math.PI / 2; b.position.set(px, 0, pz); t.scene.add(b)
-          t.plateBeds.push({ gridThin: gt, gridBold: gb, border: b })
-        }
+        plateHeteroRef.current = dims && !uniformPlateDims(dims) ? { dims, layout: plateLayoutHetero(dims) } : null
+        const moved = followPlateLayout(THREE, { objects: objectsRef?.current ?? [], count: n, prev, platePos,
+          plateOffsets: plateOffsetsRef?.current, plateTp: plateTpRef?.current })
+        rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims: plateHeteroRef.current?.dims })   // the refs above already hold n/bw/bd, so platePos is the same grid
+        refitCameraToPlates(THREE, t, { n, bw, bd, platePos, dims: plateHeteroRef.current?.dims })   // a grown footprint reframes the view (plate_scene.js)
+        return moved   // caller re-registers the paint selector when geometry moved (same as a drag commit)
       },
       setBed: (bw, bd) => { apiRef.current?.setPlates(plateCountRef.current, bw, bd, selectedPlateRef.current) },   // backwards compatible
     }

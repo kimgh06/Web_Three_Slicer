@@ -3,6 +3,7 @@
 //  that is the one asynchronous step here, and it is why this is a module rather than two lines in the toolbar.
 import { log } from '../core/log.js'
 import { write3MFProject, writeSTL } from '../core/write_3mf.js'
+import { assertUniformTechnology, assertHomogeneousBeds } from '../core/plate_settings.js'
 
 // The kernel is not guaranteed to answer (an old build has no selector_export_paint binding, and a worker that is
 //  busy slicing replies late), so the wait is bounded. On timeout the save proceeds with whatever painting was
@@ -84,7 +85,7 @@ export function rebasePaintOntoSubset(paintExport, allObjects, subset) {
 }
 
 export function makeExportActions(deps) {
-  const { apiRef, getWorker, settingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting, onExport } = deps
+  const { apiRef, getWorker, settingsRef, plateSettingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting, onExport } = deps
 
   const baseName = (objects) => {
     const first = objects?.[0]?.name ?? apiRef.current?.exportObjects?.()[0]?.name ?? 'project'
@@ -113,6 +114,10 @@ export function makeExportActions(deps) {
       setError?.(selectedOnly ? 'Nothing selected — click an object first' : 'Nothing to export — load a model first')
       return
     }
+    // A mixed-technology or mixed-bed project has no 3mf representation — refuse with the typed errors (their
+    //  messages name the plates and the way out) instead of writing a file that silently drops the routing.
+    try { assertUniformTechnology(settingsRef.current, plateSettingsRef?.current); assertHomogeneousBeds(plateSettingsRef?.current) }
+    catch (err) { setError?.(err.message); return }
     const gathered = performance.now()
     // The selector holds ONE plate's merge, so its numbering is only meaningful when the whole export sits on that
     //  plate; rebasing across plates would be guesswork. Judged on every VISIBLE object rather than on the subset,

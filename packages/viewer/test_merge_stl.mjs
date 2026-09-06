@@ -136,4 +136,20 @@ assert.deepEqual(sortByExtruder([{ extruder: 3 }, { extruder: undefined }, { ext
   [undefined, 2, 3], 'a missing extruder counts as 1')
 assert.equal(plateOfObject(makeObject(1, { at: [240, 0, 240] }), GRID), 3)
 
+// ---- heterogeneous beds: membership and the plate origin follow plateDims ----
+{
+  // 330 plate beside a 180 plate: plate 1's centre is at x = 330/2 + 40 + 180/2 = 295, not the uniform 240.
+  const dims = [{ w: 330, d: 330 }, { w: 180, d: 180 }]
+  const grid = { plateCount: 2, bedWidth: 330, bedDepth: 330, plateDims: dims }
+  assert.equal(plateOfObject(makeObject(1, { at: [295, 0, 0] }), grid), 1)
+  assert.equal(plateOfObject(makeObject(1, { at: [140, 0, 0] }), grid), 0)
+  const merged = buildMergedSTL([makeObject(1, { at: [295, 0, 0] })], { plateIndex: 1, ...grid })
+  assert.equal(merged.offX, 295, 'display offset is the hetero origin')
+  // Plate-local: the object sits AT the hetero origin, so its slice-frame x centres near 0
+  assert.ok(Math.abs((merged.minX + merged.maxX) / 2) < 1, 'plate-local frame centred on the hetero origin')
+  // Without dims the same call uses the uniform origin (240 + step math) — the two must differ
+  const uniform = buildMergedSTL([makeObject(1, { at: [295, 0, 0] })], { plateIndex: 1, plateCount: 2, bedWidth: 330, bedDepth: 330 })
+  assert.notEqual(uniform.offX, merged.offX)
+}
+
 console.log('merge_stl: ok')

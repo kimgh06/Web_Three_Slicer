@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { platePosition, plateIndexAtXZ } from './plate_layout.js'
+import { platePosition, plateIndexAtXZ, plateLayoutHetero } from './plate_layout.js'
 
 // The object list -> model-space geometry. Both consumers of that conversion live here because they share three
 //  things that must not drift apart: the extruder sort (which decides the merged facet numbering), the
@@ -16,16 +16,18 @@ import { platePosition, plateIndexAtXZ } from './plate_layout.js'
 /** Upstream's merge order: ascending extruder. Stable, so objects on the same tool keep their scene order. */
 export const sortByExtruder = (objects) => [...objects].sort((a, b) => (a.extruder || 1) - (b.extruder || 1))
 
-/** Which plate an object sits on = the plate nearest its world origin. */
-export function plateOfObject(object, { plateCount, bedWidth, bedDepth }) {
+/** Which plate an object sits on = the plate nearest its world origin. `plateDims` (heterogeneous beds)
+ *  switches the closed-form uniform grid for the cumulative one — same rule, per-plate cell sizes. */
+export function plateOfObject(object, { plateCount, bedWidth, bedDepth, plateDims }) {
   const worldPosition = new THREE.Vector3().setFromMatrixPosition(object.matrixWorld)
+  if (plateDims) return plateLayoutHetero(plateDims).indexAt(worldPosition.x, worldPosition.z)
   return plateIndexAtXZ(worldPosition.x, worldPosition.z, plateCount, bedWidth, bedDepth)
 }
 
 // When plateIndex != null, only objects on that plate are used and coordinates are converted to plate-local
 //  (three-x -= PX) (keeps the stage-28 contract).
-export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, plateCount, bedWidth, bedDepth }) {
-  const grid = { plateCount, bedWidth, bedDepth }
+export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, plateCount, bedWidth, bedDepth, plateDims = null }) {
+  const grid = { plateCount, bedWidth, bedDepth, plateDims }
   let arr = objects
   if (plateIndex != null) arr = arr.filter(o => plateOfObject(o, grid) === plateIndex)
   if (!arr.length) return null
@@ -70,7 +72,7 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
   //  infill_lines, fixed: six placements of the same cube now slice to the same 1043.9 mm.)
   //  Upstream does the same thing with m_plate_origin.
   const plate = plateIndex != null ? plateIndex : selectedPlate
-  const origin = platePosition(plate, plateCount, bedWidth, bedDepth)
+  const origin = plateDims ? plateLayoutHetero(plateDims).position(plate) : platePosition(plate, plateCount, bedWidth, bedDepth)
   const originModelX = origin.x, originModelY = -origin.z      // three(x,z) -> model(x,y)
   for (let i = 0; i < out.length; i += 3) { out[i] -= originModelX; out[i + 1] -= originModelY }
   // Toolpath display offset: put the plate back where it lives. Plate 0 is the origin, so a single-plate

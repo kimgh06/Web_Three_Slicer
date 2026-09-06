@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { sameSettings, survivesSettingsChange } from './core/slice_staleness.js'
+import { sameSettings, changedPlates, stalePlateKeys } from './core/slice_staleness.js'
+import { switchTechOverrides } from './core/plate_settings.js'
+import { printerTechnology } from 'three-slicer/settings'
 
 // A settings change invalidates every result on screen.
 //
@@ -25,25 +27,28 @@ import { sameSettings, survivesSettingsChange } from './core/slice_staleness.js'
 // Both decisions — "did the values actually change" and "does this result survive" — live in
 // core/slice_staleness.js, where they are node-testable.
 export function useStaleSlice({
-  settings, gcode, sl1,
+  settings, plateSettings, setPlateSettings, setStatus, gcode, sl1,
   plateResultsRef, selectedPlateRef, canvasModeRef,
   clearToolpaths, showPlateResult, refreshSlicedCount, setCanvasMode,
 }) {
   const seenRef = useRef(settings)
+  const seenPlateRef = useRef(plateSettings)
   useEffect(() => {
     const previous = seenRef.current
+    const previousPlates = seenPlateRef.current
     seenRef.current = settings
+    seenPlateRef.current = plateSettings
     if (gcode != null || sl1 != null) return
-    if (sameSettings(previous, settings)) return
+    // Two invalidation scopes (core/slice_staleness.js): the global map feeds every plate, a plate override
+    //  feeds only its own — so a per-plate edit drops that plate's result and leaves the rest cached.
+    const globalChanged = !sameSettings(previous, settings)
+    const plateIndices = globalChanged ? [] : changedPlates(previousPlates, plateSettings)
+    if (!globalChanged && !plateIndices.length) return
 
     const results = plateResultsRef.current
-    let dropped = 0
-    for (const key of Object.keys(results)) {
-      if (survivesSettingsChange(results[key])) continue
-      delete results[key]
-      dropped++
-    }
-    if (!dropped) return
+    const stale = stalePlateKeys(results, globalChanged, plateIndices)
+    for (const key of stale) delete results[key]
+    if (!stale.length) return
     // showPlateResult's own "plate without a result" branch is what clears the stats, the layer range, the SLA
     //  preview meshes and the G-code URL — reached here by having just removed the entry it looks for.
     clearToolpaths()
@@ -52,5 +57,27 @@ export function useStaleSlice({
     // Leaving the user on a Preview tab that has nothing left to preview: the tab disables itself once the layer
     //  count drops to 0, but the canvas would stay on it.
     if (canvasModeRef.current === 'preview') setCanvasMode('prepare')
-  }, [settings])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settings, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The other consequence of a settings change, and the reason it lives beside the invalidation rather than in
+  //  Viewport: a GLOBAL technology switch invalidates the plate OVERRIDES the same way it invalidates the
+  //  results — they were authored against the technology that just went away, and under the new one they are
+  //  resin values wearing filament key names. They are set aside rather than lost, and come back when the
+  //  technology does (plate_settings.js switchTechOverrides). A plate that declares its own printer_technology
+  //  states the technology it prints in and stays in place. The stash is a ref: session state of the viewer,
+  //  outside the host's plateSettings contract and outside undo (which stops at plate settings anyway).
+  const tech = printerTechnology(settings)
+  const techRef = useRef(tech)
+  const stashRef = useRef({})
+  useEffect(() => {
+    const from = techRef.current
+    techRef.current = tech
+    if (from === tech) return
+    const moved = switchTechOverrides(plateSettings, stashRef.current, from, tech)
+    stashRef.current = moved.stash
+    if (moved.plateSettings !== plateSettings) setPlateSettings?.(moved.plateSettings)
+    const label = (list) => list.map(i => `Plate ${i + 1}`).join(', ')
+    if (moved.stashed.length) setStatus?.(`${label(moved.stashed)} override set aside (${from}) — it returns when the printer does`)
+    else if (moved.restored.length) setStatus?.(`${label(moved.restored)} ${tech} override restored`)
+  }, [tech])   // eslint-disable-line react-hooks/exhaustive-deps
 }
