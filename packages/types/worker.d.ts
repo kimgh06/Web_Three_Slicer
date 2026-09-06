@@ -98,7 +98,8 @@ export type SlicerRequest =
   | { stl: ArrayBuffer; params: string | object }
 
 export type SlicerResponse =
-  | { type: 'warm' }
+  /** `kernel` says which variant loaded: 'mt' under crossOriginIsolated, 'st' otherwise (or after an mt load failure). */
+  | { type: 'warm'; kernel: 'mt' | 'st' | null }
   | { type: 'prepared'; facets: number; kept: boolean }
   /**
    * `enf`/`blk` are the counts for states 1 and 2 and are always present, so a listener predating the

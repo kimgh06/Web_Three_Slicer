@@ -28,17 +28,22 @@ const paramsText = (params) => (typeof params === 'string' ? params : JSON.strin
 let quiet = false
 const say = (level, ...args) => { if (!quiet) console[level](...args) }
 
+// Which variant loaded is also REPORTED (the 'warm' reply carries `kernel`), not just logged: mt vs st is a
+//  measured 9.8x on a 3M-facet model, and the viewer sizes its plate-parallel worker pool by it.
+let kernelKind = null
 const loadCore = async () => {
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
   if (isolated) {
     try {
       const M = await (await import('./slicer_core.mt.js')).default()
       say('info', '[slicer.worker] core: mt (threads)')
+      kernelKind = 'mt'
       return M
     } catch (e) { say('warn', '[slicer.worker] mt load failed — falling back to st:', e) }
   }
   const M = await (await import('./slicer_core.js')).default()
   say('info', '[slicer.worker] core: st')
+  kernelKind = 'st'
   return M
 }
 
@@ -213,7 +218,7 @@ self.onmessage = async (e) => {
     if (!modPromise) modPromise = loadCore()
     const Module = await modPromise
     // Warmup: only load the kernel (+ spawn the mt pthread pool) ahead of time — removes the perceived load on the first slice
-    if (d.cmd === 'warmup') { self.postMessage({ type: 'warm' }); return }
+    if (d.cmd === 'warmup') { self.postMessage({ type: 'warm', kernel: kernelKind }); return }
     // Stage 20: manual support painting — selector state persists in this worker Module (slicing uses the same Module).
     // `keepPaint` says the mesh is the same model in a new place, so the marks carry over — the reply reports whether
     //  they actually did, since a face-count change makes the kernel fall back to a clean registration.

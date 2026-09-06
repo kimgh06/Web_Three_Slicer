@@ -3,12 +3,42 @@ import type * as React from 'react'
 import type { SlicerSettings } from './settings-keys.d.ts'
 
 export interface ViewportProps {
-  /** Sparse settings map. Defaults to `{}`. */
+  /**
+   * Sparse settings map. Defaults to `{}`. Two viewer knobs ride in it beside the schema keys: `sla_antialias`
+   * (SL1 mask MSAA, 1|2|4) and `slice_workers` — how many plates an all-plates run slices at once (0/absent =
+   * Auto: half the cores on the threaded kernel, one per core on the single-threaded one; the in-app select
+   * writes it). Neither reaches a 3mf.
+   */
   settings?: SlicerSettings
   /** React setState shape. Defaults to a no-op. */
   setSettings?: React.Dispatch<React.SetStateAction<SlicerSettings>>
-  /** Left process-panel slot — usually `<SettingsPanel embedded/>`. Defaults to null. */
+  /**
+   * Per-plate overrides: `{[plateIndex]: sparse map}`, merged over `settings` for that plate's slice only —
+   * a key's absence means "follow the global value" (delete the key to clear an override). Plate identity is
+   * the plate index; deleting the last plate truncates its entry. Editing one plate's override invalidates only
+   * that plate's cached result. Any key can be overridden: `printer_technology` routes that plate to the
+   * FFF or SLA slicer (an SLA plate's grid cell is sized to its resin display), and a bed override
+   * (`printable_area`/`printable_height`) resizes that plate's own grid cell. What a 3mf cannot represent —
+   * a mixed-technology or mixed-bed project — is refused at project export with a typed error
+   * (`error.code` `'UNSUPPORTED_MIXED_TECH_3MF'` / `'UNSUPPORTED_MIXED_BED_3MF'`); per-plate G-code/.sl1
+   * exports always work. Defaults to `{}`.
+   */
+  plateSettings?: Record<number, SlicerSettings>
+  /** React setState shape for {@link ViewportProps.plateSettings}. Defaults to a no-op. */
+  setPlateSettings?: React.Dispatch<React.SetStateAction<Record<number, SlicerSettings>>>
+  /**
+   * Left process-panel slot — usually `<SettingsPanel embedded/>`. Defaults to null.
+   *
+   * Pass a FUNCTION to opt into the per-plate scope toggle (shown with more than one plate): in plate scope
+   * the panel receives the selected plate's EFFECTIVE map and a setter that writes only the changed keys into
+   * {@link ViewportProps.plateSettings}; `meta.overriddenKeys`/`meta.onRevertKey` drive the override badges
+   * (`<SettingsPanel overriddenKeys={...} onRevertKey={...}/>`). In global scope the pair is simply
+   * `settings`/`setSettings`. A plain node keeps the global-only binding.
+   */
   processPanel?: React.ReactNode
+    | ((settings: SlicerSettings, setSettings: React.Dispatch<React.SetStateAction<SlicerSettings>>,
+        meta: { scope: 'global' | 'plate', selectedPlate: number, overriddenKeys: string[],
+                onRevertKey: ((key: string) => void) | null }) => React.ReactNode)
   /** Motion-limits editor, folded into the printer card — usually `<SettingsPanel only={{builder:'TabPrinter::build_kinematics_page'}}/>`. */
   motionPanel?: React.ReactNode
   /**
@@ -99,6 +129,15 @@ export interface ViewportProps {
     plate: number; stats: Record<string, unknown>; gcode: string
     throughput?: { ms: number; kernelMs: number | null; layersPerSecond: number; msPerMsegment: number | null }
   }) => void
+  /**
+   * An all-plates run as it moves: the run map on every change, `null` when none is on. `workers.pool` is how
+   * many slice at once, `workers.kernel` which kernel loaded ('mt' threads / 'st'); each plate carries its state
+   * and its own progress (0..1) and layers/second. Fired several times a second while a run is on.
+   */
+  onSliceRun?: (run: {
+    workers: { pool: number; active: number; kernel: 'mt' | 'st' | null }
+    plates: Record<number, { state: 'queued' | 'busy' | 'done' | 'failed'; progress: number; rate: number }>
+  } | null) => void
 }
 
 /**

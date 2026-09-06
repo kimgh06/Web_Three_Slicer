@@ -1,4 +1,5 @@
 import { log } from '../core/log.js'
+import { slaPreviewPayload } from '../core/sla_preview.js'
 import * as THREE from 'three'
 import { settingRaw } from 'three-slicer/settings'
 import { buildSegmentData, roleRatios } from '../core/toolpath_segments.js'
@@ -10,12 +11,13 @@ import { computeColors } from '../core/toolpath_views.js'
 //  render so the values it closes over (settings) stay fresh.
 export function makeToolpathView(deps) {
   const {
-    three, plateTpRef, toolpathRef, segDataRef, layersDataRef, plateResultsRef, plateOffsetsRef,
+    three, apiRef, plateTpRef, toolpathRef, segDataRef, layersDataRef, plateResultsRef, plateOffsetsRef,
     lineWidthRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef, selectedPlateRef, extruderColorsRef,
     settings, setSegCount, setColorRange, setRoleLegend,
   } = deps
 
   function disposePlateToolpath(idx) {
+    apiRef.current?.setSlaStatic?.(idx, null)   // a resin plate's static preview goes with its slot
     const e = plateTpRef.current[idx]
     if (!e) return
     e.group.remove(e.ctl.mesh); e.group.remove(e.ctl.travLines); e.ctl.dispose()
@@ -25,6 +27,7 @@ export function makeToolpathView(deps) {
   }
   function clearToolpaths() {
     for (const k of Object.keys(plateTpRef.current)) disposePlateToolpath(Number(k))
+    apiRef.current?.clearSlaStatics?.()
     toolpathRef.current = null; segDataRef.current = null
   }
   // (Re)builds the real toolpath for plate idx — the subgroup carries its own offset, so it shows alongside other plates.
@@ -56,9 +59,14 @@ export function makeToolpathView(deps) {
     for (const [k, r] of Object.entries(plateResultsRef.current)) {
       const idx = Number(k)
       if (!r || r.error || !r.layers || !r.layers.length) continue
-      // A resin result previews as solid meshes (setSlaPreview), not as outline toolpaths — and if this plate's
-      //  PREVIOUS result was FFF, its toolpath entry is still in the scene and must go, or the two render together.
-      if (r.stats?.sla) { disposePlateToolpath(idx); continue }
+      // A resin result previews as solid meshes, not as outline toolpaths — and if this plate's PREVIOUS result
+      //  was FFF, its toolpath entry is still in the scene and must go, or the two render together. Every resin
+      //  plate gets a static (unclipped) preview here; showPlateResult swaps the focused one for the clipped slot.
+      if (r.stats?.sla) {
+        disposePlateToolpath(idx)
+        apiRef.current?.setSlaStatic?.(idx, slaPreviewPayload(r, plateOffsetsRef.current[idx]))
+        continue
+      }
       const e = plateTpRef.current[idx]
       if (!e || e.layers !== r.layers) buildPlateToolpath(idx, r.layers)
     }

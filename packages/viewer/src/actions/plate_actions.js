@@ -2,9 +2,15 @@ import { log } from '../core/log.js'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer/settings'
 import { roleRatios } from '../core/toolpath_segments.js'
 import { MAX_PLATES } from '../core/plate_layout.js'
+import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
+import { slaPreviewPayload } from '../core/sla_preview.js'
+import { resolveWorkerCount, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../core/slice_pool.js'
 import { makeSL1 } from '../core/sl1_write.js'
 import { parseSl1, sl1DisplayAffine, sl1SettingsFrom } from '../core/sl1_read.js'
 import { makeSlaReconstructWorker, makeSlaSliceWorker, makeSl1EncodeWorker } from '../make_worker.js'
+import { makeSl1GpuRaster } from '../core/sl1_raster_gpu.js'
+import { makeSl1ParityGpu } from '../core/sl1_parity_gpu.js'
+import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from './use_slicer.js'
 import { download, saveWindowOpen } from './export_actions.js'
 
@@ -32,8 +38,9 @@ export function makePlateActions(deps) {
   const {
     apiRef, selectedPlateRef, plateCountRef, placeXRef, plateResultsRef, plateOffsetsRef, plateTpRef,
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
-    settings, canvasMode, downgradeOffer, onExport,
-    runSlice, ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
+    settings, plateSettings, setPlateSettings, canvasMode, downgradeOffer, onExport,
+    runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
+    ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
@@ -67,15 +74,10 @@ export function makePlateActions(deps) {
     // A resin result previews as SOLID meshes (the model lifted by its elevation + the kernel's support/pad
     //  meshes) — upstream's architecture; the layer stream stays raster-only. An FFF focus tears that down.
     const isSla = !!r.stats?.sla
-    // A raster import shows as meshes once it HAS any: the scene sidecar's originals arrive with the file,
-    //  a reconstruction lands seconds later. Until then, and if reconstruction failed, the ghost stack stands in.
-    apiRef.current?.setSlaPreview?.(isSla && (!r.slaRaster || r.modelIndexed || r.modelSTL) ? {
-      modelSTL: r.modelSTL, modelIndexed: r.modelIndexed, supportMesh: r.support_mesh, padMesh: r.pad_mesh,
-      // lift_layers = pad zone + elevation (the kernel's whole-scene lift). elevation_layers alone is the
-      // pre-pad fallback for results sliced by an older kernel.
-      lift: (r.stats.lift_layers ?? r.stats.elevation_layers ?? 0) * (r.stats.layer_height || 0.05),
-      offX: plateOffsetsRef.current[idx]?.offX ?? 0, offZ: plateOffsetsRef.current[idx]?.offZ ?? 0,
-    } : null)
+    // The focused resin plate moves from its static preview (ensurePlateToolpaths gave every resin plate one)
+    //  to the clipped slot the layer slider cuts; a raster import without meshes yet shows the ghost stack instead.
+    if (isSla) apiRef.current?.setSlaStatic?.(idx, null)
+    apiRef.current?.setSlaPreview?.(isSla ? slaPreviewPayload(r, plateOffsetsRef.current[idx]) : null)
     // Before reconstruction an imported SL1 has no meshes — the raster plane stack stands in for it.
     const rasterOnly = !!r.slaRaster && !r.modelIndexed && !r.modelSTL
     apiRef.current?.setSlaRaster?.(rasterOnly ? slaRasterPayload(r, idx) : null)
@@ -331,10 +333,33 @@ export function makePlateActions(deps) {
     if (r.sl1Pending) { const pending = r.sl1Pending; r.sl1Pending = null; setSl1Ready?.(null); await download(pending, name, 'application/zip', onExport); return }
     setExporting?.('Building SL1…')
     try {
+      // Anti-aliasing is opt-in via the host's settings map (sla_antialias: 1|2|4 — a viewer knob,
+      //  not a schema key). At aa>1 the GPU MSAA rasterizer takes the masks when a device exists
+      //  (measured 11.8x at 1440x2560, 13.8x on a 12K display vs CPU supersampling); the CPU
+      //  supersample path is the always-available reference (test_sl1_gpu.mjs pins the parity).
+      const aa = Math.max(1, settings?.sla_antialias | 0 || 1)
+      const gpuDevice = aa > 1 ? await acquireGpuDevice() : null
+      // Two GPU raster backends, tried in fidelity order. PARITY slices the mesh itself (stencil
+      //  even-odd per layer plane — immune to whatever contour stitching drops; measured 0.007%
+      //  avg pixel diff vs the contour reference on a 775k-facet scan), and needs the merged STL
+      //  the SLA slice kept for the scene sidecar. The contour MSAA raster is the fallback for a
+      //  result without modelSTL (an imported archive re-export never reaches here).
+      let gpuRaster = null
+      if (gpuDevice && r.modelSTL) {
+        const parity = makeSl1ParityGpu(gpuDevice)
+        if (parity.prepare(new Uint8Array(r.modelSTL))) {
+          const lh = r.stats.layer_height || 0.05
+          gpuRaster = (paths, t, aa2, layer) => parity.rasterize(layer.z - lh / 2, t, aa2)
+        }
+      }
+      if (gpuDevice && !gpuRaster) gpuRaster = makeSl1GpuRaster(gpuDevice).rasterize
       const bytes = await makeSL1({
         layers: r.layers, params: r.slaParams ?? {}, stats: r.stats,
         jobName: `plate_${idx + 1}`, timestamp: new Date().toISOString(),
-        makeWorker: makeSl1EncodeWorker,
+        aa, gpuRaster,
+        // The worker pool rasterizes on the CPU; at aa>1 with a GPU the sequential gpuRaster path
+        //  is faster than 8 CPU workers supersampling, so the pool stands down.
+        makeWorker: gpuRaster ? null : makeSl1EncodeWorker,
         workerCount: SL1_TUNE('sl1Encode', Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 6) - 2))),
         // The scene sidecar: what the preview is showing right now, so a reimport gets the ORIGINAL surface
         //  back instead of a voxel reconstruction of it.
@@ -390,40 +415,103 @@ export function makePlateActions(deps) {
   async function onSlice(scope = 'current') {
     setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
     const idx0 = selectedPlateRef.current
-    lineWidthRef.current = deriveKernelParams(settings).line_width
+    // Per plate, not once for the run: a plate override can change line_width, and the toolpath mesh built when
+    //  that plate's result lands reads whatever this ref holds at the time.
+    const plateLineWidth = (i) => { lineWidthRef.current = deriveKernelParams(effectiveSettings(settings, plateSettings, i)).line_width }
+    plateLineWidth(idx0)
+    setPlateRun(null)   // a fresh slice of either scope drops the last run's tab marks
     if (scope === 'all') {
-      setSlicing(true); setProgress(0)
-      let sliced = 0, anyEconomy = false, anyClassic = false; const failed = []
+      // Plate-parallel (core/slice_pool.js): every plate with objects goes into one queue that K workers drain.
+      //  The selector worker is one of the K — it takes the selected plate FIRST, because that is the mesh the
+      //  brush painted and the pool workers hold no selector — and the other K-1 are spawned for this run and
+      //  terminated after it (their wasm heaps do not shrink; measured 8.8GB for five on a 3M-facet model).
+      //  Selection does not move during the run any more: the pool has no single "current" plate to follow.
+      // The queue holds plate INDICES; each worker builds the merge when it takes the plate and drops it after.
+      //  Building all of them up front held N x 143MB of STL for the whole run in the one renderer process the
+      //  workers' heaps also live in — on a five-plate scene that is 715MB before a single worker has started.
+      const plates = []; const sizes = []
       for (let i = 0; i < plateCountRef.current; i++) {
-        const merged = apiRef.current?.buildMergedSTL(i); if (!merged) continue
-        // Follow the work: highlighting the plate about to be cut turns its border green, so a run over six plates
-        //  shows WHICH one is busy instead of one progress number with no place attached to it.
-        //  Deliberately NOT selectPlate(): in Preview that also swaps the result view, which would mean tearing the
-        //  toolpaths down and back up once per plate — and showing an empty one for every plate not yet sliced.
-        selectedPlateRef.current = i; setSelectedPlate(i)
-        //  Compared against the plate selected when the run STARTED, not the one selection now points at — the line
-        //  above moves that every iteration, and the brush painted the mesh of the original one.
+        const m = apiRef.current?.buildMergedSTL(i); if (!m) continue
+        plates.push(i); sizes.push(m.buf.byteLength)
+      }
+      if (!plates.length) { setError('No plate has objects'); return }
+      const queue = plates.filter(i => i !== idx0)
+      if (plates.includes(idx0)) queue.unshift(idx0)
+      const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 0
+      const largestBytes = Math.max(...sizes)
+      const pool = resolveWorkerCount({ setting: settings?.slice_workers, kernel: kernelKindRef.current, cores, plates: plates.length, largestBytes })
+      let run = makePlateRun(plates, pool, kernelKindRef.current)
+      // The one button and the rate line show the run as a whole; the tabs and the per-plate row read the map.
+      const publish = () => { setPlateRun(run); const sum = runSummary(run); setProgress(sum.progress); setSliceRate(sum.rate) }
+      const patch = (i, p) => { run = patchPlate(run, i, p); publish() }
+      setSlicing(true); publish()
+      const started = performance.now()
+      let sliced = 0, anyEconomy = false, anyClassic = false, canceled = false; const failed = []
+      // Plates whose pool worker died (memory, most likely): re-run alone on the selector worker after the pool
+      //  has drained, with the full ladder. The dead worker is dropped, so the pool shrinks by itself.
+      const deferred = []
+      const slicePlate = async (i, ctx) => {
+        const merged = apiRef.current?.buildMergedSTL(i)
+        if (!merged) { failed.push(i + 1); patch(i, { state: PLATE_STATES.failed, error: 'plate is empty' }); return }
         if (i === idx0) syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
+        ;(ctx ? ctx.holder : sink).plate = i   // route this worker's progress to the plate it is on
+        patch(i, { state: PLATE_STATES.busy })
         try {
-          const { r, economy, classicWalls } = await runSlice(merged)
+          const { r, economy, classicWalls } = await runSlice(merged, ctx)
+          plateLineWidth(i)
           plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
           if (economy) anyEconomy = true
           if (classicWalls) anyClassic = true
-        } catch (e) { failed.push(i + 1) }   // E1: even on failure, g-code from plates that already finished is preserved and available
+          patch(i, { state: PLATE_STATES.done })
+        } catch (e) {   // E1: even on failure, g-code from plates that already finished is preserved and available
+          const why = String(e?.message || e)
+          if (why.includes('canceled')) canceled = true
+          else if (ctx && /out of memory|failed to load|watchdog/.test(why)) {
+            log.warn(`[vp-pool] plate ${i + 1}: pool worker died (${why}) — dropping the worker, re-queued for the selector worker`)
+            ctx.dead = true; ctx.terminate(); deferred.push(i); patch(i, { state: PLATE_STATES.queued, progress: 0, rate: 0 })
+            return
+          }
+          else log.warn(`[vp-pool] plate ${i + 1} failed on ${ctx ? 'a pool worker' : 'the selector worker'}: ${why}`)
+          failed.push(i + 1); patch(i, { state: PLATE_STATES.failed, error: why })   // the reason rides on the tab
+        }
       }
+      const drain = async (ctx) => { while (!canceled && !ctx?.dead) { const job = queue.shift(); if (job === undefined) return; await slicePlate(job, ctx) } }   // plate 0 is a job too
+      // The selector worker reports through the hook's own progress path; the sink re-routes that to its plate.
+      const sink = { plate: idx0, progress: (v) => patch(sink.plate, { progress: v }), rate: (v) => patch(sink.plate, { rate: v }) }
+      const makeCtx = () => {
+        const holder = { plate: -1 }
+        const ctx = createPoolContext({ onProgress: (v) => patch(holder.plate, { progress: v }), onRate: (v) => patch(holder.plate, { rate: v }) })
+        ctx.holder = holder
+        return ctx
+      }
+      const extras = Array.from({ length: pool - 1 }, makeCtx)
+      progressSinkRef.current = sink
+      try {
+        await Promise.all([drain(null), ...extras.map(drain)])
+        // A dead pool worker can leave plates in the queue too (it stopped draining); everything left runs alone.
+        for (const job of [...deferred, ...queue.splice(0)]) { if (canceled) break; await slicePlate(job, null) }
+      }
+      finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); setSliceRate(0) }
       setSlicing(false)
-      if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('All plates failed to slice (economy mode included) — try the simplified retry'); return }
-      if (failed.length) setError(`Plate ${failed.join(', ')} failed — the ${sliced} finished result(s) are kept (inspect/export from the tabs)`)
+      if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); setError(''); }
+      else if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('All plates failed to slice (economy mode included) — try the simplified retry'); return }
+      else if (failed.length) {
+        // Say WHY, not just which: every reason the ladder can end on names memory, and a row of crosses does not.
+        const reasons = [...new Set(failed.map(n => run.plates[n - 1]?.error).filter(Boolean))]
+        setError(`Plate ${failed.join(', ')} failed — the ${sliced} finished result(s) are kept (inspect/export from the tabs)`
+          + (reasons.length ? `. ${reasons[0]}` : '') + (reasons.length > 1 ? ` (+${reasons.length - 1} more, see the tab tooltips)` : ''))
+      }
       else { setError(''); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('Memory pressure — some plates finished in economy mode (no preview, G-code is fine)')
       else if (anyClassic) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
-      // The run walked the selection across every plate; put it back where the user left it (or on the one plate
-      //  that actually produced a result, which is what gets shown).
-      //  Moved the same way as inside the loop rather than through selectPlate, because in Preview that would run
-      //  showPlateResult a second time on top of the call below.
+      else if (!canceled && !failed.length) setSliceNotice(`Sliced ${sliced} plate${sliced === 1 ? '' : 's'} in ${((performance.now() - started) / 1000).toFixed(1)}s with ${pool} worker${pool === 1 ? '' : 's'}`
+        + (deferred.length ? ` — ${deferred.length} re-run alone after a worker ran out of memory (pick fewer workers for this model)` : ''))
+      // Show the selected plate's result, or the first plate that produced one if the selected plate failed.
       const landOn = plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0]
-      selectedPlateRef.current = landOn; setSelectedPlate(landOn); placeXRef.current = 0
+      if (landOn == null) return
+      if (landOn !== idx0) { selectedPlateRef.current = landOn; setSelectedPlate(landOn); placeXRef.current = 0 }
+      plateLineWidth(landOn)
       showPlateResult(landOn)
     } else {
       const __tm0 = performance.now()   // [vp-prof] preprocessing timing (temporary)
@@ -469,6 +557,9 @@ export function makePlateActions(deps) {
             wipe_tower_x: Array.isArray(s.wipe_tower_x) ? s.wipe_tower_x.slice(0, last) : s.wipe_tower_x,
             wipe_tower_y: Array.isArray(s.wipe_tower_y) ? s.wipe_tower_y.slice(0, last) : s.wipe_tower_y }
         : s)
+      // The plate's own override follows the same truncation rule (identity-preserving when there is none, so
+      //  a delete with no overrides does not read as a plate-settings change to the staleness watcher).
+      setPlateSettings?.(ps => truncatePlateSettings(ps, last))
       if (selectedPlateRef.current >= last) selectPlate(last - 1)
       return last
     })
