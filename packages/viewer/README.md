@@ -130,6 +130,8 @@ Every panel can be switched off, and the values the component owns can be seeded
 - **`onSliced`** — `{plate, stats, gcode, throughput}` when a slice is cached. Switching plate tabs does not
   re-fire it. `throughput` sits beside `stats` rather than inside it, because that is where the engine puts it:
   it is measured around the call, not reported by the kernel.
+- **`onSliceRun`** — an all-plates run as it moves: `{workers: {pool, active, kernel}, plates: {[i]: {state,
+  progress, rate}}}` on every change, `null` between runs. For a host drawing its own per-plate progress.
 
 `sliceRate` is live throughput — layers finished per second over a 250ms window, `0` between slices, and shown in
 the slice bar as well. When it appears depends on the technology, because the two publish per-layer news at
@@ -341,7 +343,53 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-No headers → falls back to the single-threaded kernel. Nothing else to change.
+No headers → falls back to the single-threaded kernel. Nothing else to change. Which one loaded is shown as a
+badge (`mt`/`st`) beside the Workers select in the slice menu, and the `warmup()` client call resolves with it —
+the two are a measured 9.8x apart on a 3M-facet model, which is too much to leave to the console.
+
+### Slicing several plates at once
+
+**All plates** in the slice menu drains the plates through a pool of workers instead of one after another. The
+**Workers** select beside it sets the pool: *Auto* is half the cores on the threaded kernel and one per core on the
+single-threaded one, capped at the plate count and by model size (below); the select offers every value up to
+that memory cap and nothing past it, because past it the tab itself dies (measured: five workers on a 143MB
+model), which nothing in the page can catch. The plate tabs show each plate's state (queued, slicing with its own percentage, done, failed)
+independently of which one is selected, and the slice bar lists them on one row. Cancel stops every worker. A worker that dies mid-run (memory, most
+often) is dropped and its plate is re-run alone once the others finish, so a count that was too high for the
+model costs time rather than results; the notice says which plates that happened to.
+
+The numbers behind Auto (node harness, 3M-facet model, 15 cores, 30 plates, wall time against one worker):
+
+| kernel | preset | 3 workers | 5 | 10 | 15 |
+|---|---|---|---|---|---|
+| mt | classic walls, no support | 1.10x | 1.15x | 1.15x | 1.14x |
+| mt | arachne + tree support | 2.08x | 2.60x | 3.16x | 3.31x |
+| st | classic walls, no support | — | — | — | 7.2x (14 workers) |
+
+The gain is the kernel's serial share: with classic walls one worker already keeps ~77% of the cores busy, with
+arachne (whose emission pass runs serial) and tree support far less, and the extra workers fill that. More workers
+than cores gained nothing (17 = 15), and no count ever made a run slower — what a worker costs is memory: each
+holds its own copy of the model and its own wasm heap, measured 2.5GB for one, 8.8GB for five and 11.6GB for
+fifteen on that model. That is why Auto stops at half the cores and why the select goes higher only by hand.
+Three things were measured NOT to matter and are deliberately absent: giving each worker a thread budget, slicing
+the largest plate first, and whether the count divides the plate count. The value is `slice_workers` in the
+settings map (0 = Auto), a viewer knob like `sla_antialias`, and it does not reach a 3mf.
+
+The browser is tighter than that harness, because every worker's wasm heap lives in the one renderer process that
+already holds each plate's STL buffer and three.js geometry. Measured in Chromium on the same 143MB-STL model
+over nine plates (classic preset, 15 cores):
+
+| workers | wall | Chromium RSS peak |
+|---|---|---|
+| 1 | 17.8s | 10.4GB |
+| 2 | 15.7s (1.13x) | 13.7GB |
+| 3 | crashed the tab once; 18.7s once | 10.2GB |
+| 8 (Auto by cores) | crashed the tab | 11.6GB |
+
+So Auto is also capped by model size — a worker's heap is taken as 12x the STL it slices (node measured ~1.7GB
+for 143MB) against a 4GB pool budget, which gives 2 for that model and does not bind below ~40MB per plate. A
+manual count is capped the same way. What the browser has NOT measured yet is
+the arachne + tree-support preset, where the harness gains were largest.
 
 ## Bundler notes
 

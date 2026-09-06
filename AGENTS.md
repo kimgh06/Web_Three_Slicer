@@ -192,6 +192,55 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   is left where the model used to be. `restoreScene` re-creates a deleted object **under its original id** — the id
   is half the paint topology key (`${id}:${ext}:${faces}`), so a fresh one silently drops that object's painting.
   Record at the ACTION layer, never on the buttons: delete alone is reachable from four entry points.
+- **Per-plate settings are a sparse override, and absence means "follow the global map".** `plateSettings`
+  (`{[plateIndex]: sparse map}`, a host prop beside `settings`) merges over the global map for that plate's
+  slice only (`viewer/src/core/plate_settings.js` -> `use_slicer.js buildParams`) — upstream's
+  PartPlate::m_config applied over full_config, in this package's omission discipline. With no override the
+  merge returns the global map BY IDENTITY, which is what keeps the no-override path byte-identical to the
+  pre-feature output. `PLATE_SETTING_BLOCKED_KEYS` is EMPTY since the heterogeneous-bed stage (the exported
+  array stays the source of truth for any future scene-global key, and `test_plate_settings.mjs` gates this
+  paragraph): `printer_technology` routes per plate (`plateTechnology` -> `use_slicer.js`, so an SLA-override
+  plate goes to `slice_sla` beside FFF neighbours, its grid cell sized to its resin display), and a
+  bed override (`printable_area`/`printable_height`) resizes that plate's own grid CELL — `plateLayoutHetero`
+  (plate_layout.js) swaps the closed-form uniform grid for a cumulative one whose uniform case is pinned
+  byte-equal by `test_plate_layout.mjs`, and membership/origins follow through `plateGrid()`/`buildMergedSTL`'s
+  `plateDims`. What the 3mf CANNOT represent is refused typed at export, never approximated:
+  `UNSUPPORTED_MIXED_TECH_3MF` for mixed technologies, `UNSUPPORTED_MIXED_BED_3MF` for mixed beds (same
+  instanceof+`.code` shape as the engine's SlaRequestError). Staleness has two scopes:
+  a global settings change still invalidates every plate's cached result, a plate-override change invalidates
+  that plate alone (`slice_staleness.js`). Plate identity is the plate INDEX, and only the last plate is
+  deletable, so a delete truncates overrides exactly as it truncates `wipe_tower_x/y`. New code deciding what a
+  specific plate slices with must read that plate's EFFECTIVE map, not the global one; the purely visual
+  readers of the global `kp` (tower stand-in boxes, G-code injection, stats labels) predate this rule and
+  diverge only when an override touches their keys.
+- **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
+  sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
+  `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
+  the classic/economy ladder — lives in one closure, because it exists for one run and paints nothing. The
+  selected plate goes FIRST and to the selector worker: it is the mesh the brush painted, and a pool worker has no
+  selector, so `buildParams` reads the paint counts only for the selector worker (`painted`) — for a pool plate
+  they are someone else's facets. The selector worker's progress is re-routed through `progressSinkRef` for the
+  run's duration so it reports per plate like the others; `reuse_stages` stays the selector worker's alone (a pool
+  worker is terminated after the run — wasm heaps do not shrink, measured 8.8GB for five on a 3M-facet model).
+  The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
+  buffer is detached. Policy is measured, not designed (see the README tables): in a node harness worker count
+  never made a run slower up to the core count and memory was the only ceiling; a per-worker thread budget,
+  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. The
+  BROWSER ceiling is far lower, because the renderer process already holds every plate's STL buffer and geometry:
+  on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
+  crashed it every time. So `resolveWorkerCount` also caps Auto by the largest plate's STL size
+  (`HEAP_PER_STL_BYTE` x bytes against `POOL_HEAP_BUDGET`, both measured constants) — a manual count is not
+  capped, because the user chose it. A pool worker that dies (memory, a script that failed to load, the watchdog)
+  is the POOL's failure, not the plate's: the ladder does not retry it under the same pressure, the worker is
+  dropped, and the plate is re-queued to run alone on the selector worker after the pool drains — so a too-high
+  count degrades to serial instead of to a row of failed plates. Selection no longer follows the run; the tabs
+  carry each plate's state (`plateRun`), with the failure reason in the tooltip.
+- **Every resin plate keeps a preview in the scene, not just the focused one.** The focused resin plate is the
+  clipped `setSlaPreview` slot the layer slider cuts; every other resin plate with a result gets a static,
+  unclipped group through `setSlaStatic` (`scene/sla_preview_mesh.js` builds both), the resin counterpart of the
+  toolpaths every FFF plate keeps after slice-all. Before this, two resin plates showed only the focused one and
+  the other read as a missing result. `core/sla_preview.js` is the one place the payload (lift, offsets, meshes)
+  is derived, so the two previews cannot disagree on where a support tree stands.
 - UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS.
 - **SLA is a second technology, not an FFF variant.** `printer_technology` routes it: `deriveSlaParams` ->
   `slice_sla`, with a JS contour fallback when the wasm is absent. The support chain under
@@ -208,9 +257,38 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   lifted onto a pad that is not there. `pad_around_object` (embed) is SUPPORTED: it forces zero elevation
   (upstream `is_zero_elevation`), and an EMPTY embed pad is legal (the ring survives only where supports
   stand) — the layer frame is fixed only after pad generation so an empty pad lifts nothing.
+- **`slice_sla` reports progress from inside its contour phase, and only the calling thread may do it.** The
+  phase used to be silent until it finished: on a 3M-facet model that is 6.4s of a 14s slice (mt, node), and
+  beside two FFF workers it stretched to 16.9s of contention — which read as "the SLA plate does not slice until
+  the FFF plates finish". Two things now carry it. The facet -> segment sweep is parallel in mt the way PASS1 is
+  (contiguous facet ranges, per-range buckets, concatenated in range order, so segment order is the serial
+  loop's and `test_sla_mt.mjs` keeps st and mt byte-identical) and reports 0 -> 3% as it goes; it measured
+  ~30ms of the phase. The per-layer chain/simplify (`sla_for_each_layer`) is where the time is, and its `tick`
+  argument is called on the caller's thread with the shared finished-layer count, 3 -> 18%. Parity for the
+  parallel sweep is only exercised above 65536 facets — the box in `test_sla_mt.mjs` does not reach it — so a
+  change there needs a large-model st/mt byte comparison (scratch `sla_parity.mjs` did 1816 layers).
 - **The SLA layer frame lifts by `stats.lift_layers`, not elevation.** A pad occupies `[0, pad]` and the
   scene above rises by pad + elevation; the viewer overlay must use `lift_layers` — lifting by elevation
   alone is exactly the bug that floated supports in mid-air on pad-enabled previews.
+- **SL1 masks are gray8, rasterized in-house, and NOT golden.** The mask encoder is `png_gray.js`
+  (color type 0, bit depth 8 — the one layout upstream's SL1 reader accepts; the old canvas
+  `convertToBlob` emitted RGBA, which `PNGReadWrite.cpp` rejects). The fill is `raster_mask.js`
+  (CPU AET even-odd, the REFERENCE implementation and the always-available fallback — it is what
+  finally lets an SL1 export run under plain node), with `sl1_raster_gpu.js` as the MSAA path for
+  anti-aliasing: opt-in via the host settings key `sla_antialias` (1|2|4, a viewer knob, not a
+  schema key), measured 11.8x at 1440x2560 aa=4 and 13.8x on a 12K display vs CPU supersampling.
+  The GPU module takes an injected GPUDevice and never touches `navigator` (layer guard); only
+  `scene/gpu_device.js` does. When the SLA result still holds its merged STL (`modelSTL`), the GPU
+  path upgrades to `sl1_parity_gpu.js` — slice-by-rendering: the MESH itself is drawn per layer
+  plane with stencil-invert even-odd, so the mask never depends on contour stitching (measured
+  0.007% avg / 0.047% worst pixel diff vs the contour reference over a 775k-facet scan model, all
+  658 layers rendered in 0.6s). Its `prepare()` reproduces the kernel's frame exactly: XY kept as
+  the mesh's own, z seated to 0 — both measured, and the wrong half of that guess read as a 41%
+  mask diff before it was pinned. Masks are outside the golden discipline on purpose: same device +
+  same input -> same bytes (pinned in `test_sl1_gpu.mjs`), but cross-vendor f32 rasterization may
+  move boundary pixels within the tolerance that test asserts — a byte-diff between two machines'
+  archives is expected, not a bug. GPU checks skip (not fail) without a device; run them under
+  node via `SL1_GPU_WEBGPU_PATH=<dawn index.js> node packages/viewer/test_sl1_gpu.mjs`.
 - **The SL1 export is PORTRAIT by default**, like every Prusa SL1-family profile: the mask canvas is
   `pixels_y` wide by `pixels_x` tall, columns run along the display's y axis and rows along the X-mirrored
   x axis (`slaRasterTransform`, validated against masks a real 2.9.6 archive holds). `config.ini` is
@@ -220,11 +298,31 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
 
 ## Commands
 
+**Running the project goes through `web/Makefile`, not through raw npm/vite/docker invocations.** It exists
+because the two things that make a run correct are not in any `package.json`: the demos under `examples/` are
+standalone projects that install `three-slicer` from npm, so the repo's `npm ci`/workspaces never reach them
+(`demos-install` does the explicit install, `demos` builds them into `viewer/public/demos`), and the dev and
+compose targets free the port first (`kill PORT=n`) instead of failing on a stale process. `dev` depends on
+`pkg demos`, so a viewer source change is rebuilt into the dist the app actually loads — running `vite`
+directly is what silently serves the previous build. The port comes from `web/.env` (copy `.env.example`),
+defaulting to 5173 / 8080.
+
+```bash
+cd web
+make dev            # pkg + demos, then vite on DEV_PORT with /demos ready
+make up / down      # docker compose on UP_PORT (demos built first, then copied by the image)
+make logs
+make pkg            # rebuild the three-slicer dist alone
+make demos          # rebuild examples/* into viewer/public/demos (FORCE=1 for all)
+make demos-clean
+make kill PORT=n
+```
+
 ```bash
 # Install (once, at the root) + build the packages (components/viewer dist)
 npm i && npm run build
 
-# Viewer demo app (uses the committed WASM — emscripten not required)
+# The viewer demo app on its own — prefer `make dev`, which also builds the package and the demos
 cd web/viewer && npm run dev
 
 # Everything `npm test` runs, in two halves:
@@ -263,6 +361,10 @@ node packages/viewer/test_scale_box.mjs
 
 # Undo/redo stack semantics (branch discard, coalescing, limit) + the Ctrl+Z/Y binding
 node packages/viewer/test_history.mjs
+
+# Per-plate settings: the override merge, the blocked-key gate, isolation, and the two-scope staleness
+node packages/viewer/test_plate_settings.mjs
+node packages/viewer/test_stale_slice.mjs
 
 # SLA: the kernel invariants + pad + mt parity + the hollowing gate run inside test:kernel; the rest standalone
 node packages/wasm-core/test_sla_kernel.mjs        # slice_sla end to end: contours, supports, lift frame
