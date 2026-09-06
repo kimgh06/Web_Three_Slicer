@@ -6,8 +6,10 @@
 // Split the way write_3mf.js is: everything mm->px and text is pure and node-tested; only the actual PNG encode
 //  needs a canvas, which the caller INJECTS (`makeCanvas`) — the browser passes OffscreenCanvas, a test passes a
 //  recorder stub. Nothing here touches the DOM at import time, which is what keeps core/ under the layer guard.
-import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
+import { zipSync, strToU8, zlibSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { log } from './log.js'
+import { rasterizeMask } from './raster_mask.js'
+import { encodeGray8 } from './png_gray.js'
 
 /** mm -> px mapping of the resin display. Model coordinates are plate-local (origin at the plate centre); the
  *  display's origin is its own centre, so the transform is scale + half-display offset. `mirrorX` is the default
@@ -165,7 +167,7 @@ export function sl1RolesSidecar(layers) {
  *  the reassembly a plain index write). Layer paths are structured-clone COPIES — the main thread's arrays
  *  stay untouched for the sidecars below. Any worker error kills the whole pool and rejects: a partial
  *  archive is not an archive. */
-function encodeParallel({ layers, params, makeWorker, workerCount, onProgress }) {
+function encodeParallel({ layers, params, makeWorker, workerCount, onProgress, aa = 1 }) {
   return new Promise((resolve, reject) => {
     const pngs = new Array(layers.length)
     const progress = new Array(workerCount).fill(0)
@@ -189,14 +191,17 @@ function encodeParallel({ layers, params, makeWorker, workerCount, onProgress })
         worker.terminate()
         if (++finished === workerCount) resolve(pngs)
       }
-      worker.postMessage({ indices, paths, params })
+      worker.postMessage({ indices, paths, params, aa })
     }
   })
 }
 
-export async function makeSL1({ layers, params, stats, jobName = 'plate', timestamp, makeCanvas, onProgress, scene = null, makeWorker = null, workerCount = 0 }) {
-  const canvasFactory = makeCanvas
-    ?? (typeof OffscreenCanvas !== 'undefined' ? (w, h) => new OffscreenCanvas(w, h) : null)
+export async function makeSL1({ layers, params, stats, jobName = 'plate', timestamp, makeCanvas, onProgress, scene = null, makeWorker = null, workerCount = 0, aa = 1, gpuRaster = null }) {
+  // An EXPLICITLY injected canvas keeps the legacy path (that injection is a published contract, and
+  //  the node tests' recorder stubs ride on it). Without one the default is now the own rasterizer +
+  //  gray8 encoder — which is what upstream's SL1 reader requires (PNG_COLOR_TYPE_GRAY, depth 8; the
+  //  canvas encoder emits RGBA and gets rejected), and what lets an export run under plain node.
+  const canvasFactory = makeCanvas ?? null
   const transform = slaRasterTransform(params)
   const files = {}
   // The worker pool is the fast path; the sequential loop below stays for callers without one (node tests
@@ -208,7 +213,7 @@ export async function makeSL1({ layers, params, stats, jobName = 'plate', timest
     makeWorker,
     workerCount: Math.max(1, Math.min(workerCount > 0 ? workerCount : 4, layers.length)),
   } : null
-  if (!pool && !canvasFactory) throw new Error('SL1 export needs a canvas (OffscreenCanvas or an injected factory)')
+  // No throw without a canvas any more: the rasterizer path needs nothing injected.
   // Per-stage cost, on the [vp-prof] channel the 3mf export and the sl1 import already use. One total says
   //  nothing about which stage to attack, and the candidates have completely different fixes (a canvas pool,
   //  a smaller mask, a worker pool, a different encoder). Caveat when reading it: a 2d context may defer its
@@ -220,6 +225,19 @@ export async function makeSL1({ layers, params, stats, jobName = 'plate', timest
   let pngBytes = 0, loops = 0
   const encodeOne = async (i) => {
     let t = now()
+    if (!canvasFactory) {   // default: own rasterizer -> gray8 PNG. gpuRaster (injected, may be null)
+      //  carries the MSAA path for high-res AA; the CPU AET fill is the reference and the fallback.
+      //  The layer object and index ride along for raster backends that do not consume the contour
+      //  stream at all — the parity renderer (sl1_parity_gpu.js) slices the MESH at layers[i].z instead.
+      const mask = gpuRaster
+        ? await gpuRaster(layers[i].paths, transform, aa, layers[i], i)
+        : rasterizeMask(layers[i].paths, transform, aa)
+      t = mark('draw', t)
+      const bytes = await encodeGray8(mask, transform.px, transform.py, { deflate: zlibSync })
+      mark('encode', t)
+      pngBytes += bytes.length
+      return bytes
+    }
     const canvas = canvasFactory(transform.px, transform.py)
     const ctx = canvas.getContext('2d')
     t = mark('canvas', t)
@@ -243,7 +261,7 @@ export async function makeSL1({ layers, params, stats, jobName = 'plate', timest
   //  (write_3mf's level-3 reasoning).
   const tRaster = now()
   if (pool) {
-    const pngs = await encodeParallel({ layers, params, onProgress, ...pool })
+    const pngs = await encodeParallel({ layers, params, onProgress, aa, ...pool })
     for (let i = 0; i < layers.length; i++) {
       files[sl1LayerName(jobName, i)] = [pngs[i], { level: 0 }]
       pngBytes += pngs[i].length
