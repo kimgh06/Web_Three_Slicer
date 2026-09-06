@@ -28,27 +28,41 @@ export function plateTechnology(settings, plateSettings, plate) {
 }
 
 /**
- * The printable bounds plate `plate` is judged against (the pre-slice bed check). On a globally-FFF project an
- * SLA-override plate prints inside ITS resin display, not the global bed — the same substitution the pure-SLA
- * kp makes for the whole scene, applied to one plate. `slaDims(effectiveMap)` is injected by the caller
- * (deriveSlaParams) so this stays a pure module; `globalBounds` is `{bedW, bedD, bedH}` from the global kp.
- * Height is 0 under SLA — the display states no ceiling here, exactly like the pure-SLA kp.
+ * THE description of what plate `plate` prints with — the one place a per-plate fact is derived, so that no
+ * consumer has to choose between the global map and the plate's own. `dims` injects the two derivations
+ * (`fffDims` = deriveKernelParams, `slaDims` = deriveSlaParams) so this stays a pure module.
+ *
+ *   effective   the map it slices with (global ⊕ override; the global map BY IDENTITY when there is no override)
+ *   tech        'FFF' | 'SLA', from that map
+ *   params      the derived parameters of that technology
+ *   bedW/bedD/bedH   the frame the kernel enforces: the resin display (height 0 — it states no ceiling) or the bed
+ *   nozzle      the nozzle diameter (FFF), undefined under SLA
+ *
+ * Pass `plateSettings` null for the GLOBAL frame — what is laid out once (the uniform grid cell, a project
+ * import's fallback bed, the 3mf plate stride). Everything else is per plate, and reading the global frame for
+ * it is the bug class this replaced: the grid, the tower boxes, the bed check, the nozzle and bed rows each
+ * read the global kp in turn and each was wrong for the one plate whose override differed.
+ */
+export function plateContext(settings, plateSettings, plate, { fffDims, slaDims }) {
+  const effective = effectiveSettings(settings, plateSettings, plate)
+  const tech = effective.printer_technology === 'SLA' ? 'SLA' : 'FFF'
+  if (tech === 'SLA') {
+    const params = slaDims?.(effective) ?? {}
+    return { effective, tech, params, bedW: params.display_width, bedD: params.display_height, bedH: 0 }
+  }
+  const params = fffDims?.(effective) ?? {}
+  return { effective, tech, params, bedW: params.bed_width, bedD: params.bed_depth, bedH: params.bed_height ?? 0, nozzle: params.nozzle_diameter }
+}
+
+/**
+ * The printable bounds plate `plate` is judged against (the pre-slice bed check) — plateContext's frame as a
+ * `{bedW, bedD, bedH}`, with `globalBounds` filling whatever the injected derivation does not state (a test
+ * stub, or an SLA plate whose map holds no display size).
  */
 export function plateBedBounds(settings, plateSettings, plate, globalBounds, slaDims, fffDims) {
-  if (settings?.printer_technology === 'SLA') return globalBounds   // globally SLA: kp is already display-sized
-  const override = plateSettings?.[plate]
-  if (plateTechnology(settings, plateSettings, plate) === 'SLA') {
-    const dims = slaDims?.(effectiveSettings(settings, plateSettings, plate))
-    return dims?.display_width > 0 && dims?.display_height > 0
-      ? { bedW: dims.display_width, bedD: dims.display_height, bedH: 0 }
-      : globalBounds
-  }
-  // Heterogeneous beds: an FFF plate with its own bed keys is judged against ITS bed (fffDims = deriveKernelParams).
-  if (fffDims && override && ('printable_area' in override || 'printable_height' in override)) {
-    const p = fffDims(effectiveSettings(settings, plateSettings, plate))
-    return { bedW: p.bed_width ?? globalBounds?.bedW, bedD: p.bed_depth ?? globalBounds?.bedD, bedH: p.bed_height ?? globalBounds?.bedH ?? 0 }
-  }
-  return globalBounds
+  const frame = plateContext(settings, plateSettings, plate, { fffDims, slaDims })
+  if (!(frame.bedW > 0 && frame.bedD > 0)) return globalBounds
+  return { bedW: frame.bedW, bedD: frame.bedD, bedH: frame.bedH ?? globalBounds?.bedH ?? 0 }
 }
 
 /**
@@ -225,51 +239,17 @@ export function truncatePlateSettings(plateSettings, plateCount) {
 }
 
 /**
- * Move the plate overrides aside when the GLOBAL technology changes, and bring them back when it returns.
- *
- * An override is authored against the technology in force when it was written, and it is the whole map that is
- * authored, not the keys that happen to name it: a printer picked in plate scope records only what it CHANGED
- * (writePlateOverride), and the Resin card writes `layer_height` / `initial_layer_height`, which are ordinary
- * FFF keys as well. So after "globally resin, tune a plate, back to a filament machine" that plate carries
- * resin values under FFF names, shadowing every later printer, model and preset pick on that plate — which is
- * what reads as "the change did not take effect there". Classifying the keys cannot separate them; the
- * technology they were written under can, and that is the whole map's.
- *
- * Rather than dropped, the override is STASHED under the technology it leaves (`stash[plate][fromTech]`) and
- * restored when the global technology comes back to it — but only onto a plate that holds no override by then,
- * so a value the user wrote in the meantime is never overwritten. The stash is session state of the viewer
- * (a ref beside the invalidation, use_stale_slice.js), not part of the host's `plateSettings` contract.
- *
- * A plate that declares its own `printer_technology` is the deliberate mixed-technology override — it states
- * the technology it prints in, so a global switch is not about it and it is kept in place by identity.
- *
- * Returns `{ plateSettings, stash, stashed, restored }` (the plate indices moved each way, as numbers); both
- * maps come back by identity when nothing moved.
+ * The plate overrides a GLOBAL technology switch leaves without a technology. A plate-scope profile pick always
+ * writes `printer_technology` (PrinterCard.apply), so an override that declares one describes its own machine and
+ * stays; one without it is hand-edited values authored against the technology that just went away — the Resin
+ * card's `layer_height` is an FFF key too, so under FFF they would shadow every later pick on that plate. Those are
+ * dropped. Returns `{ plateSettings, dropped }` — the same map by identity when nothing is dropped.
  */
-export function switchTechOverrides(plateSettings, stash, fromTech, toTech) {
-  if (fromTech === toTech) return { plateSettings: plateSettings ?? {}, stash: stash ?? {}, stashed: [], restored: [] }
-  let nextPlates = null, nextStash = null
-  const stashed = [], restored = []
-  const plates = new Set([...Object.keys(plateSettings ?? {}), ...Object.keys(stash ?? {})])
-  for (const plate of plates) {
-    const override = plateSettings?.[plate]
-    if (override?.printer_technology) continue
-    if (override && Object.keys(override).length) {
-      nextPlates = nextPlates ?? { ...plateSettings }
-      delete nextPlates[plate]
-      nextStash = nextStash ?? { ...(stash ?? {}) }
-      nextStash[plate] = { ...(nextStash[plate] ?? {}), [fromTech]: override }
-      stashed.push(Number(plate))
-    }
-    const back = stash?.[plate]?.[toTech]
-    if (back && !(nextPlates ?? plateSettings)?.[plate]) {
-      nextPlates = nextPlates ?? { ...(plateSettings ?? {}) }
-      nextPlates[plate] = back
-      nextStash = nextStash ?? { ...(stash ?? {}) }
-      const rest = { ...nextStash[plate] }; delete rest[toTech]
-      if (Object.keys(rest).length) nextStash[plate] = rest; else delete nextStash[plate]
-      restored.push(Number(plate))
-    }
-  }
-  return { plateSettings: nextPlates ?? (plateSettings ?? {}), stash: nextStash ?? (stash ?? {}), stashed, restored }
+export function dropStaleTechOverrides(plateSettings) {
+  const dropped = Object.keys(plateSettings ?? {})
+    .filter(plate => { const o = plateSettings[plate]; return o && Object.keys(o).length && !o.printer_technology })
+  if (!dropped.length) return { plateSettings: plateSettings ?? {}, dropped: [] }
+  const kept = { ...plateSettings }
+  for (const plate of dropped) delete kept[plate]
+  return { plateSettings: kept, dropped: dropped.map(Number) }
 }

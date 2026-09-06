@@ -83,10 +83,10 @@ export function useSlicer(deps) {
   //  Measured time share per phase (774k tri): PASS1 7% · surfaces 6% · support 48% · emission 38% -> budget 15/5/40/40.
   const supSabRef = useRef(null)     // { arr: Uint32Array(SAB, ptr, 1) } — shared once by the mt worker
   const supPollRef = useRef(0)
-  // Which support path this slice will take — the progress counter behaves too differently between them to read the
-  //  same way (see startSupPoll). A ref because the worker's message handler is installed once, on the first render.
+  // Which support path the RUNNING slice takes — the progress counter behaves too differently between them to read
+  //  the same way (see startSupPoll). A ref because the worker's message handler is installed once; written from the
+  //  plate's own params at slice start, not from the global map (a tree override on one plate polled the wrong shape).
   const treeSupportRef = useRef(false)
-  treeSupportRef.current = deriveKernelParams(settings).support_style === 'tree'
   const stopSupPoll = () => { if (supPollRef.current) { clearInterval(supPollRef.current); supPollRef.current = 0 } }
   // G002: cancel an in-flight slice — written straight into the SAB flag (the kernel loop observes it even while the worker is blocked in wasm)
   const cancelSlice = () => {
@@ -495,6 +495,7 @@ export function useSlicer(deps) {
       const out = await sliceLadder(merged.buf, params, ctx)
       return { ...out, params }
     }
+    treeSupportRef.current = params.support_style === 'tree'
     const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
     try {
       const out = await sliceLadder(merged.buf, params)   // on a normal failure: classic walls -> economy retry

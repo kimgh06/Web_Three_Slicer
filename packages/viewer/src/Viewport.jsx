@@ -26,7 +26,7 @@ import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
 import { towerBoxes, usesMultipleTools, towerResultStats } from './core/tower_layout.js'
-import { overriddenPlateKeys, plateTechnology, plateBedBounds, plateDimsList } from './core/plate_settings.js'
+import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } from './core/plate_settings.js'
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
@@ -73,10 +73,14 @@ export default function Viewport({
   panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
   sliceRequest = null, onEvent = null, onSliced = null, onSliceRun = null, onExport = null,
 }) {
-  // Two technology reads since the mixed-tech stage: `tech` (assigned below the state block — it needs
-  //  selectedPlate; showPanel closes over the binding) follows the SELECTED PLATE's effective map and drives
-  //  the per-plate UI; `globalTech` owns what is laid out ONCE — the grid size (kp) and the bed-size inputs.
-  const globalTech = printerTechnology(settings)
+  // Two frames, one derivation (core/plate_settings.js plateContext): `globalFrame` is the GLOBAL map's own —
+  //  what is laid out once (the uniform grid cell, a project import's fallback bed, the 3mf stride, the global
+  //  bed inputs); `ctx` (assigned below the state block — it needs selectedPlate; showPanel closes over `tech`)
+  //  is the SELECTED PLATE's, and every per-plate decision reads it or `frameOf(plate)`. Nothing reads the
+  //  global map for a plate-level fact any more — test_layers.mjs guards that.
+  const DIMS = { fffDims: deriveKernelParams, slaDims: deriveSlaParams }
+  const globalFrame = plateContext(settings, null, 0, DIMS)
+  const globalTech = globalFrame.tech
   // A panel is shown unless the host explicitly said false — an unknown key is therefore visible, so a panel added
   //  later does not silently disappear for hosts that listed the ones they wanted.
   //  A second, technology-driven cut on top of the host contract: the FFF-only panels (extruder colours, the prime
@@ -157,9 +161,11 @@ export default function Viewport({
   const [settingsScope, setSettingsScope] = useState('global')  // process panel writes: 'global' | 'plate' (the selected one)
   const [selectedPlate, setSelectedPlate] = useState(0) // selected plate (0-based)
   const { plateRun, setPlateRun, autoWorkers, cores, memoryWorkers } = useSliceRun({ onSliceRun, kernelKind, plateCount, objects })   // an all-plates run's state (use_slice_run.js)
-  const tech = plateTechnology(settings, plateSettings, selectedPlate)   // the SELECTED plate's technology (see the note at globalTech)
-  const scopeProps = { plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope, setSettingsScope }   // the settings cards' shared scope
+  const ctx = plateContext(settings, plateSettings, selectedPlate, DIMS)   // the SELECTED plate (see the note at globalFrame)
+  const tech = ctx.tech
   const overridePlates = Object.keys(plateSettings ?? {}).filter(i => overriddenPlateKeys(plateSettings, i).length).map(Number)   // PlateBar dots + object-list headers
+  const onResetPlate = overridePlates.includes(selectedPlate) ? () => setPlateSettings(ps => { const next = { ...ps }; delete next[selectedPlate]; return next }) : null
+  const scopeProps = { plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope, setSettingsScope, onResetPlate }   // the settings cards' shared scope
   const [sliceMenu, setSliceMenu] = useState(false)     // whether the [Slice ▾] dropdown is open
   const [showHelp, setShowHelp] = useState(false)       // '?' shortcut help overlay
   const [slicedPlateCount, setSlicedPlateCount] = useState(0)   // number of plates holding a result (drives the export-all button)
@@ -280,43 +286,35 @@ export default function Viewport({
       const idx = plate ?? selectedPlateRef.current
       const o = apiRef.current?.platePos?.(idx) ?? { x: 0, z: 0 }
       setSettings(s => writeTowerPosition(s, idx, plateCountRef.current,
-        Math.round((x - o.x + kpRef.current.bedW / 2) * 10) / 10,
-        Math.round((y + o.z + kpRef.current.bedD / 2) * 10) / 10))
+        Math.round((x - o.x + frameOf(idx).bedW / 2) * 10) / 10,
+        Math.round((y + o.z + frameOf(idx).bedD / 2) * 10) / 10))
     },
   })
 
-  // Refresh the bed grid from the value derived from settings (printable_area).
-  //  Under SLA the print area is the resin DISPLAY's physical size, not printable_area — slice_sla judges
-  //  over-bed against display_width/height (deriveSlaParams maps them onto bed_width/depth), so drawing the
-  //  printable_area bed here showed a 200mm plate while the kernel enforced 120.96x68.04: a model that looked
-  //  well inside came back over_bed with no visible reason. The grid, checkBed and the printer card now all
-  //  follow the frame the kernel actually enforces.
-  //  kp keys off globalTech: a per-plate SLA override must NOT resize the shared grid (it gets an overlay).
-  const kpFFF = deriveKernelParams(settings)
-  const kp = globalTech === 'SLA'
-    ? (({ display_width, display_height }) => ({ ...kpFFF, bed_width: display_width, bed_depth: display_height, bed_height: 0 }))(deriveSlaParams(settings))
-    : kpFFF
-  // The bed size the tower drag needs, in a ref because the handler is installed once by the scene effect.
-  const kpRef = useRef({ bedW: 200, bedD: 200, bedH: 0 })
-  kpRef.current = { bedW: kp.bed_width, bedD: kp.bed_depth, bedH: kp.bed_height }
+  // The frame of any plate, read through refs: the scene installs its handlers once, and checkBed runs from
+  //  effects and callbacks that would otherwise see the render they were created in.
+  const frameOf = (plate) => plateContext(settingsRef.current, plateSettingsRef.current, plate, DIMS)
+  // The global frame in ref form for the 3mf writer's plate stride (uniform by construction — mixed beds are refused).
+  const bedRef = useRef({ bedW: 200, bedD: 200, bedH: 0 })
+  bedRef.current = { bedW: globalFrame.bedW, bedD: globalFrame.bedD, bedH: globalFrame.bedH }
   // checkBed rides along because the bed can change WITHOUT anything moving — a printer pick, or the FFF->SLA
   //  switch (the resin display is a fraction of a filament bed); a stale null here hid the over-bed state until
   //  the slice reported it, which surfaced as an Export button disabled for no visible reason.
   useEffect(() => {
-    const moved = apiRef.current?.setPlates(plateCount, kp.bed_width, kp.bed_depth, selectedPlate, plateDimsList(settings, plateSettings, plateCount, { w: kp.bed_width, d: kp.bed_depth }, deriveKernelParams, deriveSlaParams))
+    const moved = apiRef.current?.setPlates(plateCount, globalFrame.bedW, globalFrame.bedD, selectedPlate, plateDimsList(settings, plateSettings, plateCount, { w: globalFrame.bedW, d: globalFrame.bedD }, deriveKernelParams, deriveSlaParams))
     if (moved && selectorGeomRef.current) registerSelectorRef.current?.()   // objects followed their plates — same re-registration a drag commit runs
     if (moved) refreshObjects(); else checkBed()   // refreshObjects re-annotates plate membership and runs checkBed itself
-  }, [kp.bed_width, kp.bed_depth, plateCount, selectedPlate, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [globalFrame.bedW, globalFrame.bedD, plateCount, selectedPlate, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Does this fit on the bed?" for the plate on screen — reads refs only (the scene installs handlers once).
   function checkBed() {
     const api = apiRef.current; if (!api) { setBedOver(null); return }
     const plate = selectedPlateRef.current
-    const { bedW, bedD, bedH } = plateBedBounds(settingsRef.current, plateSettingsRef.current, plate, kpRef.current, deriveSlaParams, deriveKernelParams)   // a plate with its own display/bed is judged against IT
+    const { bedW, bedD, bedH } = frameOf(plate)   // the plate's own frame — display or bed
     const origin = api.platePos?.(plate) ?? { x: 0, z: 0 }
     setBedOver(bedOverflow(api.modelBounds?.(plate), origin, bedW, bedD, bedH))
   }
-  useEffect(checkBed, [objects.length, selectedPlate, plateSettings, kp.bed_width, kp.bed_depth, kp.bed_height])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(checkBed, [objects.length, selectedPlate, plateSettings, globalFrame.bedW, globalFrame.bedD, globalFrame.bedH])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The tower stand-in follows the same rules the slicer applies: a tower exists with two filaments, its footprint
   //  is the real tower's width or the ring's 15mm, and an unset position means "beside the model". Recomputed here
@@ -327,16 +325,16 @@ export default function Viewport({
     const multi = extruderColors.length > 1 && usesMultipleTools(objects, paintStateCounts)
     // No box when there is no tower: nothing switching tools, the preview, an empty plate, the tower switched off —
     //  or a resin printer, which has no extruders to purge between.
-    const towerOff = settings?.enable_prime_tower === false
+    const towerOff = ctx.effective?.enable_prime_tower === false
     if (!multi || towerOff || tech === 'SLA' || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
     // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
     api.setPrimeTower?.(towerBoxes({
-      plateCount, settings, bedWidth: kp.bed_width, bedDepth: kp.bed_depth,
+      plateCount, settings, bedOf: (plate) => { const f = plateContext(settings, plateSettings, plate, DIMS); return { w: f.bedW, d: f.bedD } },
       size: wipeTowerReal ? (Number(settingRaw(settings, 'prime_tower_width')) || 30) : 15,
       modelBounds: (plate) => api.modelBounds?.(plate),
       plateOrigin: (plate) => api.platePos?.(plate),
     }))
-  }, [extruderColors.length, canvasMode, objects, paintStateCounts, wipeTowerReal, settings, selectedPlate, plateCount, kp.bed_width, kp.bed_depth])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [extruderColors.length, canvasMode, objects, paintStateCounts, wipeTowerReal, settings, plateSettings, selectedPlate, plateCount])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -407,8 +405,8 @@ export default function Viewport({
   //  plate past the first drifted by 56mm per column (plate 2 by 112mm), which is exactly what it looked like.
   const applyProjectPlates = (needed, bedWidth, bedDepth, place) => {
     const n = Math.min(MAX_PLATES, Math.max(plateCountRef.current, needed))
-    const width = bedWidth > 0 ? bedWidth : kp.bed_width
-    const depth = bedDepth > 0 ? bedDepth : kp.bed_depth
+    const width = bedWidth > 0 ? bedWidth : globalFrame.bedW
+    const depth = bedDepth > 0 ? bedDepth : globalFrame.bedD
     apiRef.current?.setPlates(n, width, depth, selectedPlateRef.current)
     setPlateCount(n)
     place(n)
@@ -424,6 +422,7 @@ export default function Viewport({
   //  and the `files` prop ----
   const { loadFiles, onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
     ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments, importSl1, loadPresetFile,
+    selectedPlateRef, disposePlateToolpath,
   })
 
   // Initial content (the `files` prop): mount-only import + a warning on a later change (use_initial_files.js).
@@ -435,7 +434,7 @@ export default function Viewport({
   const settingsRef = useRef(settings); settingsRef.current = settings
   const plateSettingsRef = useRef(plateSettings); plateSettingsRef.current = plateSettings   // same reason, same shape
   const { exportProject, exportSTL, exportSelectedProject, exportSelectedSTL } = makeExportActions({
-    ...wiring, onExport, getWorker, settingsRef, plateSettingsRef, bedRef: kpRef,
+    ...wiring, onExport, getWorker, settingsRef, plateSettingsRef, bedRef,
   })
 
   // G004: auto re-slice — 0.8s debounce after a settings or model change, for the current plate.
@@ -472,7 +471,8 @@ export default function Viewport({
 
   // ---- Injection: the `gcode` and `sl1` props, rendered on the selected plate without running the kernel ----
   useInjection({
-    gcode, sl1, importSl1, tech, kp, apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
+    gcode, sl1, importSl1, tech, kp: { ...ctx.params, bed_width: ctx.bedW, bed_depth: ctx.bedD },   // the SELECTED plate's params — injected content renders on it
+    apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
     lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult,
   })
 
@@ -643,7 +643,7 @@ export default function Viewport({
     toggleHelp: () => setShowHelp(v => !v),
   })
 
-  const nozzleDia = kp.nozzle_diameter || settingRaw(settings, 'nozzle_diameter') || '0.4'
+  const nozzleDia = globalFrame.nozzle || settingRaw(settings, 'nozzle_diameter') || '0.4'
   three.current.invalidate?.()   // render on demand: invalidate one frame per React re-render (slider/toggle/state change)
 
   // Preview controls (view type + dual slider + legend) — placed in the sidebar
@@ -793,7 +793,8 @@ export default function Viewport({
             <div className="sidebar-scroll">
               {showPanel('printerCard') && (
                 <Panel panels={panels} name="printerCard">
-                  <PrinterCard bedWidth={kp.bed_width} bedDepth={kp.bed_depth} nozzleDia={nozzleDia} onBedSize={setBedSize}
+                  <PrinterCard bedWidth={globalFrame.bedW} bedDepth={globalFrame.bedD} nozzleDia={nozzleDia} onBedSize={setBedSize}
+                    plateFrame={{ w: ctx.bedW, d: ctx.bedD, nozzle: ctx.nozzle }}
                     settings={settings} setSettings={setSettings} motionPanel={motionPanel} {...scopeProps}
                     onExportPreset={exportPrinterPreset}
                     onImportPreset={feature('filePicker') ? openPresetPicker : null} />

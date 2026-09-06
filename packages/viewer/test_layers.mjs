@@ -76,6 +76,18 @@ check('use_three_scene.js stays under 900 lines', scene.split('\n').length < 900
 
 // The build resolves these two by path (vite lib entry / the `cp` in the package build script), so a move that
 //  looks harmless from inside src/ would break the published tarball instead of a test.
+console.log('\n[layers: a per-plate fact is read from plateContext, never from the global map]')
+// The bug class the plate context replaced: Viewport derived `kp` from the GLOBAL map and the grid, the tower
+//  boxes, the bed check and the nozzle/bed rows each read it — each wrong for the one plate whose override
+//  differed. The global frame is `plateContext(settings, null, ...)`; nothing else derives it.
+const viewportSrc = readFileSync(join(src, 'Viewport.jsx'), 'utf8')
+for (const token of ['deriveKernelParams(settings)', 'deriveSlaParams(settings)', 'kp.', 'kpRef', 'plateBedBounds('])
+  check(`Viewport.jsx does not read the global map for a plate fact (${token})`, !viewportSrc.includes(token))
+for (const dir of ['ui', 'actions']) for (const name of readdirSync(join(src, dir)).filter(n => /\.jsx?$/.test(n))) {
+  const text = readFileSync(join(src, dir, name), 'utf8')
+  check(`${dir}/${name} carries no global kp`, !/\bkp\.|kpRef/.test(text))
+}
+
 console.log('\n[layers: the worker entries stay where the build looks for them]')
 const root = readdirSync(src)
 for (const name of ['make_worker.js', 'parse_3mf.worker.js', 'Viewport.jsx'])
