@@ -208,11 +208,32 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   `UNSUPPORTED_MIXED_TECH_3MF` for mixed technologies, `UNSUPPORTED_MIXED_BED_3MF` for mixed beds (same
   instanceof+`.code` shape as the engine's SlaRequestError). Staleness has two scopes:
   a global settings change still invalidates every plate's cached result, a plate-override change invalidates
-  that plate alone (`slice_staleness.js`). Plate identity is the plate INDEX, and only the last plate is
-  deletable, so a delete truncates overrides exactly as it truncates `wipe_tower_x/y`. New code deciding what a
-  specific plate slices with must read that plate's EFFECTIVE map, not the global one; the purely visual
-  readers of the global `kp` (tower stand-in boxes, G-code injection, stats labels) predate this rule and
-  diverge only when an override touches their keys.
+  that plate alone, and a model load drops only the plate it lands on (`slice_staleness.js`, `model_load.js`).
+  Plate identity is the plate INDEX, and only the last plate is deletable, so a delete truncates overrides
+  exactly as it truncates `wipe_tower_x/y`.
+  Two rules came out of the bug class this feature kept producing, and `test_plate_settings.mjs` /
+  `test_layers.mjs` gate both. **(1) One derivation of what a plate prints with: `plateContext(settings,
+  plateSettings, plate, dims)`** — effective map, technology, derived params and the frame the kernel enforces
+  (bed, or the resin display with no ceiling). Viewport holds `globalFrame` (`plateSettings` null: the uniform
+  grid cell, a project import's fallback bed, the 3mf stride, the global bed inputs) and `ctx` for the selected
+  plate; the grid cells, the bed check, the tower boxes, the nozzle and bed rows, the injected-G-code frame and
+  the support-progress shape all read a plate's context. Before this each of them read a `kp` derived from the
+  global map and each was wrong for the one plate whose override differed — the last one measured was a resin
+  project's single FFF plate keeping a 120x68 cell under a card that said 256x256. `test_layers.mjs` fails the
+  build on `deriveKernelParams(settings)` / `kp.` in Viewport, ui/ and actions/. **(2) A plate-scope profile
+  pick is written WHOLE and describes its own machine.** An override is additive — it cannot unset a global key
+  — so a pick recorded as a diff left every key shared with the global machine off the override, and the next
+  global printer change moved them: a plate ended up on a mixture of two machines. A printer pick in plate scope
+  therefore writes the machine row, `printer_technology` (vendor rows carry it only for resin — an FFF row omits
+  it, and a diff read that as "follow the global technology"), the vendor's recommended print preset and both
+  ids in one `writePlateOverride(..., forceKeys)` call; material picks do the same for their column set. Single
+  value edits stay diffs. A global technology switch then has one rule: an override without its own
+  `printer_technology` is hand-edited values authored against the technology that just left (the Resin card's
+  `layer_height` is an FFF key too) and is dropped, saying so in the status line; one with it stays. The scope
+  toggle's ↺ drops a plate's whole override — the one-click complement of a pick writing a whole machine. The
+  `printerKeys` union must not be used as "what the printer owns" against a preset: it holds `layer_height`
+  because two resin rows set it, and guarding it blanketly meant no FFF quality preset could change the layer
+  height (measured); `applyProcessPreset` guards only the picked row's own keys.
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
