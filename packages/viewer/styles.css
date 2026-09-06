@@ -388,3 +388,7 @@
    pointer, keyboard and focus — this only has to make that legible, or the card reads as broken rather than locked. */
 .vp-readonly { opacity: .62; cursor: default; }
 .vp-readonly * { cursor: default !important; }
+
+/* The scope toggle's ↺ — drops the plate's whole override (ScopeToggle onReset). */
+.scope-toggle .scope-reset { margin-left: 4px; padding: 0 6px; font-size: 12px; line-height: 18px; border: 1px solid #c9d3de; border-radius: 4px; background: transparent; cursor: pointer; }
+.scope-toggle .scope-reset:hover { background: #eef2f6; }

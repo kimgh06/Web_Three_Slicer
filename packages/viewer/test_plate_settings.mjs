@@ -8,10 +8,11 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { effectiveSettings, truncatePlateSettings, overriddenPlateKeys, writePlateOverride, revertPlateKey,
-  plateTechnology, plateBedBounds, plateDimsList, uniformPlateDims,
+  plateTechnology, plateBedBounds, plateDimsList, uniformPlateDims, plateContext,
   assertUniformTechnology, MixedTechExportError, assertHomogeneousBeds, MixedBedExportError,
-  PLATE_SETTING_BLOCKED_KEYS, switchTechOverrides } from './src/core/plate_settings.js'
+  PLATE_SETTING_BLOCKED_KEYS, dropStaleTechOverrides } from './src/core/plate_settings.js'
 import { deriveKernelParams } from '../engine/src/settings.js'
+import { applyPrinterPick, applyProcessPreset } from './src/core/printer_pick.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -58,12 +59,12 @@ console.log('\n[mixed tech: per-plate bounds, overlays, and the typed 3mf refusa
 const dims = (map) => ({ display_width: map.display_width, display_height: map.display_height })
 const kpBounds = { bedW: 200, bedD: 200, bedH: 250 }
 const mixedPs = { 1: { printer_technology: 'SLA', display_width: 120.96, display_height: 68.04 } }
-check('an FFF plate keeps the global bounds', plateBedBounds({}, mixedPs, 0, kpBounds, dims) === kpBounds)
+check('an FFF plate keeps the global bounds', plateBedBounds({}, mixedPs, 0, kpBounds, dims) === kpBounds)   // no fffDims injected -> nothing stated -> the fallback
 check('an SLA-override plate is judged against its display', (() => {
   const b = plateBedBounds({}, mixedPs, 1, kpBounds, dims)
   return b.bedW === 120.96 && b.bedD === 68.04 && b.bedH === 0
 })())
-check('a globally-SLA project keeps kp (already display-sized)',
+check('a globally-SLA project without a display in the map falls back to kp',
   plateBedBounds({ printer_technology: 'SLA' }, {}, 0, kpBounds, dims) === kpBounds)
 check('an SLA override without display dims falls back to the global bounds',
   plateBedBounds({}, { 1: { printer_technology: 'SLA' } }, 1, kpBounds, dims) === kpBounds)
@@ -71,9 +72,16 @@ check('an SLA plate\'s grid cell IS its display', (() => {
   const cells = plateDimsList({}, mixedPs, 2, { w: 200, d: 200 }, undefined, dims)
   return cells[0].w === 200 && cells[1].w === 120.96 && cells[1].d === 68.04
 })())
-check('a globally-SLA project keeps the global cells (kp is already display-sized)', (() => {
+check('a globally-SLA project: a plate without a display override keeps the global cell, one with it gets its own', (() => {
   const cells = plateDimsList({ printer_technology: 'SLA' }, mixedPs, 2, { w: 120, d: 68 }, undefined, dims)
-  return cells[0].w === 120 && cells[1].w === 120
+  return cells[0].w === 120 && cells[1].w === 120.96 && cells[1].d === 68.04
+})())
+check('the FFF plate of a globally-SLA project is sized by ITS bed, not the resin display', (() => {
+  const fff = (map) => ({ bed_width: map.printable_area ? map.printable_area[2][0] : 200, bed_depth: map.printable_area ? map.printable_area[2][1] : 200, bed_height: 250 })
+  const ps = { 1: { printer_technology: 'FFF', printable_area: [[0, 0], [256, 0], [256, 256], [0, 256]] }, 2: { printer_technology: 'FFF' } }
+  const cells = plateDimsList({ printer_technology: 'SLA' }, ps, 3, { w: 120, d: 68 }, fff, dims)
+  const bounds = plateBedBounds({ printer_technology: 'SLA' }, ps, 1, { bedW: 120, bedD: 68, bedH: 0 }, dims, fff)
+  return cells[0].w === 120 && cells[1].w === 256 && cells[2].w === 200 && bounds.bedW === 256 && bounds.bedH === 250
 })())
 check('a uniform project exports', (() => { assertUniformTechnology({}, { 1: { layer_height: 0.1 } }); return true })())
 check('a mixed project is refused with the typed code', (() => {
@@ -146,8 +154,10 @@ check('a bed-override plate is judged against ITS bed', (() => {
   const b = plateBedBounds({}, bedPs, 1, { bedW: 200, bedD: 200, bedH: 250 }, undefined, fff)
   return b.bedW === 330 && b.bedD === 330
 })())
-check('plates without a bed override keep the global bounds',
-  plateBedBounds({}, bedPs, 0, kpBounds, undefined, fff) === kpBounds)
+check('plates without a bed override are judged against the global bed', (() => {
+  const b = plateBedBounds({}, bedPs, 0, kpBounds, undefined, fff)
+  return b.bedW === 200 && b.bedD === 200
+})())
 check('plateDimsList sizes each cell', (() => {
   const dims = plateDimsList({}, bedPs, 2, { w: 200, d: 200 }, fff)
   return dims[0].w === 200 && dims[1].w === 330 && dims[1].d === 330
@@ -164,30 +174,36 @@ check('a mixed-bed project is refused with the typed code', (() => {
   catch (e) { return e instanceof MixedBedExportError && e.code === 'UNSUPPORTED_MIXED_BED_3MF' && e.plates.includes(1) }
 })())
 
-console.log('\n[technology switch: a plate override is set aside with the technology it was authored under]')
-// The reported flow: globally resin, a plate tuned in PLATE scope, then globally back to filament. The override
-// was authored against SLA — and the keys do not say so (a plate printer pick records only what it CHANGED, and
-// the Resin card writes layer_height / initial_layer_height, which are FFF keys too), so left in place it shadows
-// every later printer, model and preset pick on that plate. It is stashed, and returns with the technology.
-const resinEra = { 1: { layer_height: 0.05, initial_layer_height: 0.05, exposure_time: 2.3 }, 2: { printer_technology: 'SLA', exposure_time: 4 } }
-const toFff = switchTechOverrides(resinEra, {}, 'SLA', 'FFF')
-check('a resin-era override leaves the plate when the global technology changes', !toFff.plateSettings[1] && toFff.stashed.includes(1))
-check('the plate follows the new global values again',
-  effectiveSettings({ printer_technology: 'FFF', layer_height: 0.2 }, toFff.plateSettings, 1).layer_height === 0.2)
-check('a deliberate mixed-technology override stays in place by identity', toFff.plateSettings[2] === resinEra[2] && !toFff.stashed.includes(2))
-check('the stash holds it under the technology it left', toFff.stash[1].SLA === resinEra[1])
-check('the input map is copied, not mutated', resinEra[1].layer_height === 0.05)
-const fffEdit = { ...toFff.plateSettings, 1: { layer_height: 0.3 } }
-const stayed = switchTechOverrides(fffEdit, toFff.stash, 'FFF', 'SLA')
-check('coming back stashes the FFF-era edit and restores the resin one', stayed.plateSettings[1] === resinEra[1] && stayed.stash[1].FFF === fffEdit[1] && !stayed.stash[1].SLA)
-const back = switchTechOverrides(toFff.plateSettings, toFff.stash, 'FFF', 'SLA')
-check('a round trip restores the override and empties the stash', back.plateSettings[1] === resinEra[1] && back.restored.includes(1) && !back.stash[1])
-check('nothing to move returns both maps by identity', (() => {
-  const ps = { 2: { printer_technology: 'SLA' } }, st = {}
-  const r = switchTechOverrides(ps, st, 'FFF', 'SLA')
-  return r.plateSettings === ps && r.stash === st && !r.stashed.length && !r.restored.length
+console.log('\n[plate context: the one derivation of what a plate prints with]')
+const fffDimsStub = (map) => ({ bed_width: map.printable_area ? map.printable_area[2][0] : 200, bed_depth: map.printable_area ? map.printable_area[2][1] : 200, bed_height: 250, nozzle_diameter: map.nozzle_diameter ?? 0.4 })
+const both = { fffDims: fffDimsStub, slaDims: dims }
+check('no override: the effective map is the global one by identity', (() => { const g = { layer_height: 0.2 }; return plateContext(g, {}, 0, both).effective === g })())
+check('an FFF plate reports its bed, height and nozzle', (() => {
+  const c = plateContext({}, { 1: { nozzle_diameter: 0.6, printable_area: [[0, 0], [256, 0], [256, 256], [0, 256]] } }, 1, both)
+  return c.tech === 'FFF' && c.bedW === 256 && c.bedH === 250 && c.nozzle === 0.6
 })())
-check('the same technology moves nothing', switchTechOverrides(resinEra, {}, 'SLA', 'SLA').plateSettings === resinEra)
+check('an SLA plate reports its display with no ceiling and no nozzle', (() => {
+  const c = plateContext({}, mixedPs, 1, both)
+  return c.tech === 'SLA' && c.bedW === 120.96 && c.bedD === 68.04 && c.bedH === 0 && c.nozzle === undefined
+})())
+check('the global frame is plateSettings null', plateContext({ printer_technology: 'SLA', display_width: 120, display_height: 68 }, null, 0, both).bedW === 120)
+check('plateBedBounds is the context frame', (() => {
+  const b = plateBedBounds({ printer_technology: 'SLA' }, { 1: { printer_technology: 'FFF' } }, 1, { bedW: 120, bedD: 68, bedH: 0 }, dims, fffDimsStub)
+  return b.bedW === 200 && b.bedH === 250
+})())
+
+console.log('\n[technology switch: an override without a technology of its own is dropped, one with it stays]')
+// Every plate-scope profile pick writes printer_technology, so an override that declares one describes its own
+// machine. One without it is hand-edited values authored against the technology that just went away (the Resin
+// card's layer_height is an FFF key too) and would shadow every later pick on that plate.
+const resinEra = { 1: { layer_height: 0.05, initial_layer_height: 0.05, exposure_time: 2.3 }, 2: { printer_technology: 'SLA', exposure_time: 4 } }
+const after = dropStaleTechOverrides(resinEra)
+check('the hand-edited override is dropped and reported', !after.plateSettings[1] && after.dropped.length === 1 && after.dropped[0] === 1)
+check('the plate follows the new global values again', effectiveSettings({ printer_technology: 'FFF', layer_height: 0.2 }, after.plateSettings, 1).layer_height === 0.2)
+check('a self-describing override stays by identity', after.plateSettings[2] === resinEra[2])
+check('the input map is copied, not mutated', resinEra[1].layer_height === 0.05)
+check('nothing to drop returns the same map', (() => { const ps = { 2: { printer_technology: 'SLA' } }; const r = dropStaleTechOverrides(ps); return r.plateSettings === ps && !r.dropped.length })())
+check('an empty override is not "without a technology"', (() => { const ps = { 1: {} }; return dropStaleTechOverrides(ps).plateSettings === ps })())
 check('a profile pick is written whole, so a later global pick cannot mix two machines', (() => {
   // The same-technology half of the report: plate picks machine B while the global machine is A, then the global
   // machine moves to C. Recorded as a diff, every key B shares with A would follow C and leave the plate on neither.
@@ -202,6 +218,36 @@ check('a profile pick is written whole, so a later global pick cannot mix two ma
 check('a forced write with nothing new returns the same reference', (() => {
   const ps = { 1: { m_nozzle: 0.6, printer_settings_id: 'B' } }
   return writePlateOverride(ps, 1, { m_nozzle: 0.4 }, { m_nozzle: 0.6, printer_settings_id: 'B' }, ['m_nozzle', 'printer_settings_id']) === ps
+})())
+
+console.log('\n[printer pick: the technology key survives an FFF row that omits it]')
+// Vendor rows carry printer_technology only for resin machines. Deleting every printer key and merging an FFF
+// profile therefore drops the key — harmless globally (the default is FFF), but in a plate override it reads as
+// "follow the global technology", which flipped a resin project's one FFF plate back to resin on the pick.
+const pk = ['printer_technology', 'nozzle_diameter', 'printable_area']
+const fffRow = { nozzle_diameter: 0.4, printable_area: [[0, 0], [256, 0], [256, 256], [0, 256]] }
+check('an FFF pick on an FFF plate of an SLA project keeps the plate FFF', (() => {
+  const global = { printer_technology: 'SLA', display_width: 120 }
+  const ps = { 1: { printer_technology: 'FFF' } }
+  const before = effectiveSettings(global, ps, 1)
+  const after = applyPrinterPick(before, fffRow, 'X1C', { printerKeys: pk })
+  const written = writePlateOverride(ps, 1, before, after, [...Object.keys(fffRow), 'printer_settings_id'])
+  return plateTechnology(global, written, 1) === 'FFF' && written[1].printer_settings_id === 'X1C'
+})())
+check('a resin row applies its own technology', applyPrinterPick({ printer_technology: 'FFF' }, { printer_technology: 'SLA', display_width: 120 }, 'SL1', { printerKeys: pk }).printer_technology === 'SLA')
+check('a map without the key does not gain one (global FFF stays byte-identical)', !('printer_technology' in applyPrinterPick({ layer_height: 0.2 }, fffRow, 'X1C', { printerKeys: pk })))
+check('the outgoing machine and its print preset are cleared', (() => {
+  const out = applyPrinterPick({ nozzle_diameter: 0.6, outer_wall_speed: 99, print_settings_id: 'old', printer_settings_id: 'old' }, fffRow, 'X1C', { printerKeys: pk, processKeys: ['outer_wall_speed'] })
+  return out.nozzle_diameter === 0.4 && !('outer_wall_speed' in out) && !('print_settings_id' in out) && out.printer_settings_id === 'X1C'
+})())
+
+console.log('\n[process preset: the machine row guards only the keys it sets]')
+const preset = { layer_height: 0.16, outer_wall_speed: 200, nozzle_diameter: 0.25 }
+check('a quality preset changes the layer height', applyProcessPreset({ layer_height: 0.2 }, preset, 'fine', { processKeys: ['layer_height', 'outer_wall_speed'], printerOwnedKeys: ['nozzle_diameter'] }).layer_height === 0.16)
+check('a key the machine row sets is kept over the preset', applyProcessPreset({ nozzle_diameter: 0.4 }, preset, 'fine', { processKeys: ['layer_height'], printerOwnedKeys: ['nozzle_diameter'] }).nozzle_diameter === 0.4)
+check('the outgoing preset\'s keys are cleared, the machine\'s are not', (() => {
+  const out = applyProcessPreset({ outer_wall_speed: 99, nozzle_diameter: 0.4, print_settings_id: 'old' }, null, '', { processKeys: ['outer_wall_speed', 'nozzle_diameter'], printerOwnedKeys: ['nozzle_diameter'] })
+  return !('outer_wall_speed' in out) && out.nozzle_diameter === 0.4 && !('print_settings_id' in out)
 })())
 
 console.log('\n[doc gate: the blocked-key list in AGENTS.md is the exported one]')

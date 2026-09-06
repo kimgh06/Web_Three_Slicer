@@ -10,7 +10,7 @@ import ScopeToggle from './ScopeToggle.jsx'
 //  whole card to the selected plate's effective map, so an SLA-override plate's exposure/supports/elevation
 //  edit lands in ITS override — which is where its slice reads from.
 export default function ResinCard({ settings: globalSettings, setSettings: setGlobalSettings, stats,
-  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope }) {
+  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null }) {
   const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
   const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
   const settings = scoped.settings, setSettings = scoped.setSettings
@@ -39,13 +39,13 @@ export default function ResinCard({ settings: globalSettings, setSettings: setGl
   const types = [...new Set(compatible.map(r => r.type || 'Other'))].sort()
   const pickMaterial = (name) => {
     const vals = resinSettingsFor(name)
-    if (vals) setSettings(s => ({ ...s, ...vals }))
+    if (vals) setSettings(s => ({ ...s, ...vals }), plateScope ? Object.keys(vals) : undefined)   // a pick is written whole in plate scope
   }
   return (
     <section className="side-card" data-testid="resin-card">
       <div className="sc-head">🧪 Resin
         {plateCount > 1 && setSettingsScope && (
-          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope}
+          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
             testid="resin-scope-toggle" plateTestid="resin-scope-plate" />
         )}
       </div>

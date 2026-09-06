@@ -10,7 +10,7 @@ import ScopeToggle from './ScopeToggle.jsx'
 // A plain node slot keeps the pre-feature global binding and shows no toggle.
 export default function ProcessCard({
   processPanel, settings, setSettings, plateSettings, setPlateSettings,
-  plateCount, selectedPlate, settingsScope, setSettingsScope,
+  plateCount, selectedPlate, settingsScope, setSettingsScope, onResetPlate = null,
 }) {
   const active = settingsScope === 'plate' && plateCount > 1 && typeof processPanel === 'function'
   const scoped = scopedSettings(settings, setSettings, plateSettings, setPlateSettings, selectedPlate, active)
@@ -20,7 +20,7 @@ export default function ProcessCard({
     <section className="side-card process-card" data-testid="process-section">
       <div className="sc-head">⚙ Process
         {plateCount > 1 && typeof processPanel === 'function' && (
-          <ScopeToggle plateScope={active} selectedPlate={selectedPlate} onScope={setSettingsScope} />
+          <ScopeToggle plateScope={active} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate} />
         )}
       </div>
       {panel}

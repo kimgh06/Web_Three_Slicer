@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { sameSettings, changedPlates, stalePlateKeys } from './core/slice_staleness.js'
-import { switchTechOverrides } from './core/plate_settings.js'
+import { dropStaleTechOverrides } from './core/plate_settings.js'
 import { printerTechnology } from 'three-slicer/settings'
 
 // A settings change invalidates every result on screen.
@@ -60,24 +60,20 @@ export function useStaleSlice({
   }, [settings, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other consequence of a settings change, and the reason it lives beside the invalidation rather than in
-  //  Viewport: a GLOBAL technology switch invalidates the plate OVERRIDES the same way it invalidates the
-  //  results — they were authored against the technology that just went away, and under the new one they are
-  //  resin values wearing filament key names. They are set aside rather than lost, and come back when the
-  //  technology does (plate_settings.js switchTechOverrides). A plate that declares its own printer_technology
-  //  states the technology it prints in and stays in place. The stash is a ref: session state of the viewer,
-  //  outside the host's plateSettings contract and outside undo (which stops at plate settings anyway).
+  //  Viewport: a GLOBAL technology switch invalidates the plate OVERRIDES the same way it invalidates the results.
+  //  A plate that declares its own printer_technology describes its own machine (every plate-scope pick writes
+  //  one) and is not about the global switch; an override without it is a handful of hand-edited values authored
+  //  against the technology that just went away — under the new one they are resin values wearing filament key
+  //  names — and is dropped, saying so (plate_settings.js dropStaleTechOverrides).
   const tech = printerTechnology(settings)
   const techRef = useRef(tech)
-  const stashRef = useRef({})
   useEffect(() => {
     const from = techRef.current
     techRef.current = tech
     if (from === tech) return
-    const moved = switchTechOverrides(plateSettings, stashRef.current, from, tech)
-    stashRef.current = moved.stash
-    if (moved.plateSettings !== plateSettings) setPlateSettings?.(moved.plateSettings)
-    const label = (list) => list.map(i => `Plate ${i + 1}`).join(', ')
-    if (moved.stashed.length) setStatus?.(`${label(moved.stashed)} override set aside (${from}) — it returns when the printer does`)
-    else if (moved.restored.length) setStatus?.(`${label(moved.restored)} ${tech} override restored`)
+    const { plateSettings: kept, dropped } = dropStaleTechOverrides(plateSettings)
+    if (!dropped.length) return
+    setPlateSettings?.(kept)
+    setStatus?.(`${dropped.map(i => `Plate ${i + 1}`).join(', ')}: ${from} settings dropped — the printer is now ${tech}`)
   }, [tech])   // eslint-disable-line react-hooks/exhaustive-deps
 }
