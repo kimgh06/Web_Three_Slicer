@@ -48,7 +48,16 @@ export function computeColors(data, viewType, ctx) {
   // Continuous views: value range (extrusion vertices only) -> heatmap
   let lo = Infinity, hi = -Infinity
   const vals = new Float32Array(nV)
-  for (let i = 0; i < nV; i++) { const v = viewValue(viewType, meta, i, ctx); vals[i] = v; if (v < lo) lo = v; if (v > hi) hi = v }
+  // Every ctx field is optional, so a caller that omits one produces undefined here — and NaN compares false
+  //  against both bounds, so it slipped past the range scan and reached rangeColorAt as a palette index.
+  //  Measured: computeColors(data, 'fan', ctx) threw a TypeError for any caller following the published
+  //  ColorContext, which declared fanByType/fanFirstLayers that nothing reads. Coerce once, here, rather
+  //  than guarding each field: a view value that cannot be derived is not a colour, it is zero.
+  for (let i = 0; i < nV; i++) {
+    const raw = viewValue(viewType, meta, i, ctx)
+    const v = Number.isFinite(raw) ? raw : 0
+    vals[i] = v; if (v < lo) lo = v; if (v > hi) hi = v
+  }
   if (!Number.isFinite(lo)) { lo = 0; hi = 1 }
   for (let i = 0; i < nV; i++) { const c = rangeColorAt(vals[i], lo, hi, DEFAULT_RANGES_COLORS); color[i * 4] = packColor(c) }
   return { color, min: lo, max: hi, viewType, label: vt.label, unit: vt.unit, cont: true }
