@@ -1,6 +1,10 @@
 import { settingRaw } from 'three-slicer/settings'
-import { schema } from 'three-slicer/data'
+import { leanSchema } from 'three-slicer/data'
 import { effectiveSettings, writePlateOverride } from './plate_settings.js'
+
+/** snake_case identifier -> a display label. */
+const titleCase = (value) => String(value).split('_')
+  .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
 
 // The Objects card's support state, PLATE-scoped since the multi-printer stage: the card's controls always
 // mean "this plate" (the plate group header is the context), so reads come from the plate's effective map and
@@ -16,9 +20,11 @@ export function makeSupportSettings({ settings, plateSettings, setPlateSettings,
     onToggleSupport: (e) => writePlateKey(selectedPlate, 'enable_support', e.target.checked),
     supportOn: !!settingRaw(effective, 'enable_support'),
     supportOnOf: (plate) => !!effectiveSettings(settings, plateSettings, plate).enable_support,
-    // Support style options come from the schema enum, so the list stays whatever upstream defines.
-    supportStyles: (schema.support_style?.enum_values ?? [])
-      .map((value, i) => ({ value, label: schema.support_style?.enum_labels?.[i] ?? value })),
+    // The VALUES still come from the schema enum, so the list stays whatever the kernel accepts. The labels
+    //  are derived from those values here rather than read from the schema's `enum_labels`: that field is
+    //  upstream's authored text and is dropped from the reduced artifact (packages/PROVENANCE.md section 5).
+    //  Title-casing an identifier reproduces every one of them ("tree_slim" -> "Tree Slim").
+    supportStyles: (leanSchema.support_style?.enum_values ?? []).map(value => ({ value, label: titleCase(value) })),
     supportStyle: String(settingRaw(effective, 'support_style') ?? 'default'),
     // Both upstream coInt keys where 0 means "Default — keep whatever tool is loaded"; deriveKernelParams
     // omits them entirely at 0, so leaving the selects alone produces the same kernel params as before.
