@@ -62,4 +62,8 @@ Development docs (demo app, stage-by-stage log, reverse-engineering guide, forma
 
 ## License
 
-AGPL-3.0-or-later (see [`LICENSE.txt`](LICENSE.txt)) — derived from OrcaSlicer. Note that AGPL extends to network use: a web service embedding these packages must offer its source to its users.
+`three-slicer` is AGPL-3.0-or-later (see [`LICENSE.txt`](LICENSE.txt)) — derived from OrcaSlicer. The viewer, the settings
+form, G-code parsing and toolpath rendering are published separately as [`three-slicer-viewer`](packages-mit/) under MIT,
+which contains no upstream code (`packages/PROVENANCE.md`); only slicing itself, and the vendor presets, are AGPL.
+
+AGPL-3.0-or-later — derived from OrcaSlicer. Note that AGPL extends to network use: a web service embedding these packages must offer its source to its users.
