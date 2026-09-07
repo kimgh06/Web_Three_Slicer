@@ -44,6 +44,7 @@
     "COMPONENTS.md",
     "LICENSE",
     "README.md",
+    "THIRD-PARTY-NOTICES.md",
     "TOOLPATH_SPEC.md",
     "VIEWER.md",
     "data",
@@ -76,6 +77,7 @@
     }
   },
   "scripts": {
-    "build": "vite build && cp src/make_worker.js dist/make_worker.js"
+    "build": "vite build && cp src/make_worker.js dist/make_worker.js",
+    "prepublishOnly": "npm run build && node test_version_lockstep.mjs && node test_toolpath_contract.mjs"
   }
 }

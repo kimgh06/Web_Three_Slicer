@@ -1,7 +1,7 @@
 # Third-party notices
 
 `three-slicer` is licensed AGPL-3.0-or-later (see `LICENSE.txt`). The distributed artifacts — the WASM
-kernels embedded in `engine/src/slicer_core.js` / `slicer_core.mt.js` and the bundled viewer/components —
+kernels embedded in `engine/src/slicer_core.js` / `slicer_core.mt.js` —
 contain compiled or bundled code from the following projects. Full license texts ship in the source
 repository at the paths given (the package's `repository` field points there); the kernel's vendored copies
 live under `packages/wasm-core/third_party/deps_src/`.
@@ -23,7 +23,12 @@ live under `packages/wasm-core/third_party/deps_src/`.
 | SGI glu-libtess (the GLU tessellator) | SGI Free Software License B 2.0 | `deps_src/glu-libtess/` (header of each source file) |
 | Emscripten runtime (the generated JS glue around the kernels) | MIT | emscripten.org |
 
-## Bundled into the viewer/components builds
+## The viewer and the settings panel
+
+Since the split, `three-slicer/viewer` and `three-slicer/components` are re-exports of `three-slicer-viewer` (MIT), a
+separate package with its own `THIRD-PARTY-NOTICES.md`. This package bundles no viewer code of its own.
+
+## Bundled into the viewer/components builds (historical — see above)
 
 | Component | License | Note |
 | --- | --- | --- |
