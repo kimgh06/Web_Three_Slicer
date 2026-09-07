@@ -1,6 +1,6 @@
 import { log } from '../core/log.js'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer/settings'
-import { roleRatios } from '../core/toolpath_segments.js'
+import { roleRatios } from 'three-slicer-viewer-core'
 import { MAX_PLATES } from '../core/plate_layout.js'
 import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'

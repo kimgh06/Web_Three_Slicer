@@ -28,14 +28,21 @@ const src = join(here, 'src')
 /** Derived from upstream — cannot carry a license other than AGPL-3.0-or-later without being replaced.
  *  Each entry names the upstream work, so the reason survives without opening PROVENANCE.md. */
 const DERIVED = {
-  'core/toolpath_shaders.js': 'libvgcode Segments_Vertex_Shader_ES',
-  'core/toolpath_segments.js': 'libvgcode toolpath renderer (SegmentTemplate, ViewerImpl)',
-  'scene/toolpath_mesh.js': 'libvgcode SegmentTemplate.cpp VERTEX_DATA',
-  'core/toolpath_palette.js': 'libvgcode ColorRange (DEFAULT_RANGES_COLORS, get_color_at)',
+  // EMPTY, as of the toolpath rewrite. The four libvgcode-derived files (toolpath_shaders, toolpath_segments,
+  //  toolpath_mesh, toolpath_palette) were reimplemented from viewer/TOOLPATH_SPEC.md — a functional
+  //  contract written from the published types, the consumers and a recorded run, with no upstream
+  //  reference. They are listed under MIT_CLEAN below instead.
+  //
+  //  An entry belongs here the moment any file becomes a port again. The check below is what notices.
 }
 
-/** Verified independently authored AND free of AGPL imports today. Grows as G003 lands. */
-const MIT_CLEAN = ['core/gcode_parse.js']
+/** Files still inside the AGPL viewer that are verified clean and are candidates for a later move.
+ *  The toolpath and G-code modules are no longer here — they SHIPPED, to packages-mit/. */
+const MIT_CLEAN = ['core/plate_layout.js']
+
+/** The permissive package. This is where the boundary actually is now: everything under it must be
+ *  installable and usable with no AGPL anywhere in its dependency tree. */
+const PERMISSIVE = join(here, '..', '..', 'packages-mit')
 
 /** The machine-readable marker a derived file must carry. Prose is not a reliable signal in either
  *  direction — `toolpath_palette.js` never used the word "port" (its derivation is a copied colour table),
@@ -84,6 +91,8 @@ check('sources were found', sources.length > 50, `${sources.length}`)
 for (const [path, reason] of Object.entries(DERIVED)) {
   check(`${path} exists`, existsSync(join(src, path)), `derived from ${reason}`)
 }
+if (Object.keys(DERIVED).length === 0)
+  console.log('  ok: nothing in this viewer is currently derived from upstream')
 
 console.log('\n[license: each derived file still admits it in its own header]')
 // The header is what a reader (or a future audit) sees first. If a refactor drops it, the file looks clean
@@ -118,6 +127,44 @@ for (const path of MIT_CLEAN) {
   check(`${path}: reaches no derived file`, reaches.length === 0, reaches.join(' '))
 }
 
+console.log('\n[license: the permissive package carries no AGPL]')
+// The split only means something if this holds. A single import of the AGPL package from here would make the
+//  permissive tarball a combined work, and the MIT grant on it would be one nobody had the right to give.
+if (!existsSync(PERMISSIVE)) {
+  check('packages-mit exists', false, 'the permissive package is missing')
+} else {
+  const manifest = JSON.parse(readFileSync(join(PERMISSIVE, 'package.json'), 'utf8'))
+  check('declares a permissive license', manifest.license === 'MIT', manifest.license)
+  const deps = { ...manifest.dependencies, ...manifest.peerDependencies }
+  const agplDeps = Object.keys(deps).filter(name => name === 'three-slicer' || name.startsWith('three-slicer/'))
+  check('depends on nothing AGPL', agplDeps.length === 0, agplDeps.join(' '))
+
+  const permissiveSources = []
+  const walkPermissive = (dir, prefix) => {
+    for (const entry of readdirSync(join(PERMISSIVE, dir), { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walkPermissive(join(dir, entry.name), rel)
+      else if (/\.jsx?$/.test(entry.name))
+        permissiveSources.push([rel, readFileSync(join(PERMISSIVE, dir, entry.name), 'utf8')])
+    }
+  }
+  walkPermissive('src', 'src')
+  check('has sources', permissiveSources.length > 0, `${permissiveSources.length}`)
+  for (const [rel, text] of permissiveSources) {
+    const specs = [...stripStrings(text).matchAll(/from\s+['"]([^'"]+)['"]/g)].map(m => m[1])
+    const bad = specs.filter(spec => spec === 'three-slicer' || spec.startsWith('three-slicer/'))
+    check(`${rel}: imports no AGPL package`, bad.length === 0, bad.join(' '))
+    check(`${rel}: reaches nothing outside the package`, !specs.some(spec => spec.startsWith('../../')),
+      specs.filter(spec => spec.startsWith('../../')).join(' '))
+  }
+  // The pair is published together (packages/RELICENSE.md section 3); a mismatch here would publish a
+  //  combination nobody built.
+  const agpl = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
+  check('versions are a locked pair', agpl.version === manifest.version, `${agpl.version} vs ${manifest.version}`)
+  check('the AGPL package pins it exactly', agpl.dependencies?.[manifest.name] === manifest.version,
+    String(agpl.dependencies?.[manifest.name]))
+}
+
 console.log('\n[license: the verdict is written down where it can be read]')
 const provenance = join(here, '..', 'PROVENANCE.md')
 check('packages/PROVENANCE.md exists', existsSync(provenance))
@@ -125,6 +172,8 @@ if (existsSync(provenance)) {
   const text = readFileSync(provenance, 'utf8')
   for (const path of Object.keys(DERIVED))
     check(`PROVENANCE.md names ${path}`, text.includes(path.split('/').pop()))
+  check('PROVENANCE.md records the rewrite', text.includes('TOOLPATH_SPEC'),
+    'section 2 should point at the spec the replacement was written from')
 }
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : '\nALL LICENSE BOUNDARY CHECKS PASSED')

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { layerMoveCount, moveCursor, topMoveLayer } from './core/toolpath_segments.js'
+import { layerMoveCount, moveCursor, topMoveLayer } from 'three-slicer-viewer-core'
 
 // The move scrub — the horizontal counterpart of the layer slider, and upstream's sequential view
 // (GCodeViewer's update_sequential_view_current) in this viewer's terms: the vertical slider picks WHICH layers

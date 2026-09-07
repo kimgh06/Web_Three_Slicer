@@ -1,0 +1,43 @@
+{
+  "name": "three-slicer-viewer-core",
+  "version": "0.2.5",
+  "description": "G-code parsing and GPU toolpath rendering for 3D printing \u2014 the display half of three-slicer, without the slicer. MIT.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./types/toolpath.d.ts",
+      "default": "./dist/toolpath.js"
+    },
+    "./gcode": {
+      "types": "./types/gcode.d.ts",
+      "default": "./dist/gcode_parse.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "3d-printing",
+    "gcode",
+    "toolpath",
+    "three",
+    "viewer"
+  ],
+  "peerDependencies": {
+    "three": "^0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "vite build"
+  }
+}

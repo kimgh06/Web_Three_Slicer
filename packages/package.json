@@ -39,7 +39,7 @@
     },
     "./viewer/toolpath": {
       "types": "./types/viewer-toolpath.d.ts",
-      "default": "./viewer/dist/toolpath_gpu.js"
+      "default": "./viewer/dist/toolpath_reexport.js"
     },
     "./viewer/loaders": {
       "types": "./types/viewer-loaders.d.ts",
@@ -47,7 +47,7 @@
     },
     "./viewer/gcode": {
       "types": "./types/viewer-gcode.d.ts",
-      "default": "./viewer/dist/gcode_parse.js"
+      "default": "./viewer/dist/gcode_reexport.js"
     },
     "./components": {
       "types": "./types/components.d.ts",
@@ -74,9 +74,15 @@
     "three": "^0.160.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true },
-    "three": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "typescript": "^5.6.0",
@@ -93,6 +99,8 @@
     "viewer/styles.css",
     "components/styles.css",
     "data",
+    "data/ui-tree-keys.json",
+    "data/config-schema-lean.json",
     "!data/config-schema-builddump.json",
     "!data/**/.omc",
     "README.md",
@@ -127,6 +135,8 @@
     "3d",
     "mesh",
     "clipping"
-  ]
+  ],
+  "dependencies": {
+    "three-slicer-viewer-core": "0.2.5"
+  }
 }
-

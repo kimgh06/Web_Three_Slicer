@@ -2,9 +2,9 @@ import { log } from '../core/log.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
 import * as THREE from 'three'
 import { settingRaw } from 'three-slicer/settings'
-import { buildSegmentData, roleRatios } from '../core/toolpath_segments.js'
-import { makeToolpath } from '../scene/toolpath_mesh.js'
-import { computeColors } from '../core/toolpath_views.js'
+import { buildSegmentData, roleRatios } from 'three-slicer-viewer-core'
+import { makeToolpath } from 'three-slicer-viewer-core'
+import { computeColors } from 'three-slicer-viewer-core'
 
 // Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
