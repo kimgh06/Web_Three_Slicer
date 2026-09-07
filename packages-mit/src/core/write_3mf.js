@@ -8,7 +8,7 @@
 //   · plates live in WORLD space under upstream's own grid (corner origin, gap = bed/5, rows along -y)
 //   · painting rides on the <triangle> tag as paint_color / paint_supports hex, not in model_settings.config
 import { zipSync, zip, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { serializeProjectSettings } from 'three-slicer/settings'
+import { serializeProjectSettings } from 'three-slicer-viewer/settings'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
 
 // Deflate is the single largest cost of writing a project, and on the main thread every millisecond of it is a

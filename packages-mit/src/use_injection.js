@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { parseGcode } from 'three-slicer-viewer-core/gcode'
+import { parseGcode } from 'three-slicer-viewer/gcode'
 import { platePosition } from './core/plate_layout.js'
 import { asSl1File } from './core/sl1_read.js'
 import { log } from './core/log.js'

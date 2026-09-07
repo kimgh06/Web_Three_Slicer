@@ -8,8 +8,8 @@
 //
 // Zero dependencies, so this lives in the engine and works headless. The zip bundle formats (.orca_printer) need
 // a deflate and therefore live in the viewer, which already has one.
-import { schema, presetKeys } from './data.js'
-import { normalizeProjectSettings, serializeProjectSettings } from './settings.js'
+import { leanSchema as schema, presetKeys } from './data.js'   // .default is all it reads
+import { normalizeProjectSettings, serializeProjectSettings } from './settings_core.js'   // not settings.js: that re-exports this file, and a cycle through it is avoidable
 
 /** `machine` for printers, `process` for print settings, `filament` for materials — upstream's own `type` field. */
 const KEY_LIST = { machine: 'printer', process: 'process', filament: 'filament' }

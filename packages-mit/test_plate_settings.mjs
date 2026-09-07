@@ -11,7 +11,7 @@ import { effectiveSettings, truncatePlateSettings, overriddenPlateKeys, writePla
   plateTechnology, plateBedBounds, plateDimsList, uniformPlateDims, plateContext,
   assertUniformTechnology, MixedTechExportError, assertHomogeneousBeds, MixedBedExportError,
   PLATE_SETTING_BLOCKED_KEYS, dropStaleTechOverrides } from './src/core/plate_settings.js'
-import { deriveKernelParams } from '../engine/src/settings.js'
+import { deriveKernelParams } from './src/settings/index.js'
 import { applyPrinterPick, applyProcessPreset } from './src/core/printer_pick.js'
 
 let failures = 0
@@ -253,7 +253,7 @@ check('the outgoing preset\'s keys are cleared, the machine\'s are not', (() => 
 console.log('\n[doc gate: the blocked-key list in AGENTS.md is the exported one]')
 // The code is the source of truth (PLATE_SETTING_BLOCKED_KEYS above); AGENTS.md must name every key so the
 // documented contract cannot drift from the enforced one — same direction as test_kernel_params.mjs for PARAMS.md.
-const agentsMd = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8')
+const agentsMd = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
 for (const key of PLATE_SETTING_BLOCKED_KEYS)
   check(`AGENTS.md names blocked plate key ${key}`, agentsMd.includes(key))
 check('AGENTS.md mentions the per-plate settings contract', agentsMd.includes('plateSettings'))

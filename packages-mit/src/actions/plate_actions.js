@@ -1,6 +1,6 @@
 import { log } from '../core/log.js'
-import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer/settings'
-import { roleRatios } from 'three-slicer-viewer-core'
+import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
+import { roleRatios } from 'three-slicer-viewer'
 import { MAX_PLATES } from '../core/plate_layout.js'
 import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
@@ -11,7 +11,7 @@ import { makeSlaReconstructWorker, makeSlaSliceWorker, makeSl1EncodeWorker } fro
 import { makeSl1GpuRaster } from '../core/sl1_raster_gpu.js'
 import { makeSl1ParityGpu } from '../core/sl1_parity_gpu.js'
 import { acquireGpuDevice } from '../scene/gpu_device.js'
-import { statsFromKernel } from './use_slicer.js'
+import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,

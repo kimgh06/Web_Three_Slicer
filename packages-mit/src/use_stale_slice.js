@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { sameSettings, changedPlates, stalePlateKeys } from './core/slice_staleness.js'
 import { dropStaleTechOverrides } from './core/plate_settings.js'
-import { printerTechnology } from 'three-slicer/settings'
+import { printerTechnology } from 'three-slicer-viewer/settings'
 
 // A settings change invalidates every result on screen.
 //

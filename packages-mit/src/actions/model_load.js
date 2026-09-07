@@ -1,6 +1,6 @@
 import { log } from '../core/log.js'
 import { objectRows } from '../core/object_rows.js'
-import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer/settings'
+import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer-viewer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'

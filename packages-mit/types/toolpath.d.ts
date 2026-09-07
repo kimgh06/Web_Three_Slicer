@@ -1,4 +1,4 @@
-// three-slicer-viewer-core — kernel layers -> GPU-instanced toolpath.
+// three-slicer-viewer — kernel layers -> GPU-instanced toolpath.
 // Also published as three-slicer/viewer/toolpath, which re-exports this package.
 // Does not import three: makeToolpath takes the THREE namespace as an argument (guaranteeing a single instance).
 

@@ -5,7 +5,7 @@
 import { write3MFProject, writeSTL } from './src/core/write_3mf.js'
 import { rebasePaintOntoSubset } from './src/actions/export_actions.js'
 import { parse3MFProject } from './src/core/parse_3mf.js'
-import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../engine/src/settings.js'
+import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from './src/settings/index.js'
 import { platePlacements } from './src/actions/model_load.js'
 import { plateStep, plateCols } from './src/core/plate_layout.js'
 

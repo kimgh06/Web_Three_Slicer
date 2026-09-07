@@ -1,12 +1,16 @@
 {
-  "name": "three-slicer-viewer-core",
+  "name": "three-slicer-viewer",
   "version": "0.2.5",
-  "description": "G-code parsing and GPU toolpath rendering for 3D printing \u2014 the display half of three-slicer, without the slicer. MIT.",
+  "description": "The three-slicer viewer without the slicer \u2014 model loading, G-code parsing, GPU toolpath rendering and the settings transforms, under MIT. Plug a slicer in through the `slicer` prop.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
+      "types": "./types/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./toolpath": {
       "types": "./types/toolpath.d.ts",
       "default": "./dist/toolpath.js"
     },
@@ -14,13 +18,39 @@
       "types": "./types/gcode.d.ts",
       "default": "./dist/gcode_parse.js"
     },
-    "./package.json": "./package.json"
+    "./loaders": {
+      "types": "./types/loaders.d.ts",
+      "default": "./dist/model_loaders.js"
+    },
+    "./settings": {
+      "types": "./types/settings.d.ts",
+      "default": "./src/settings/index.js"
+    },
+    "./data": {
+      "types": "./types/data.d.ts",
+      "default": "./src/data.js"
+    },
+    "./package.json": "./package.json",
+    "./toggle": {
+      "types": "./types/toggle.d.ts",
+      "default": "./src/settings/toggle_eval.js"
+    },
+    "./components": {
+      "types": "./types/components.d.ts",
+      "default": "./dist/components.js"
+    }
   },
   "files": [
-    "dist",
-    "types",
+    "COMPONENTS.md",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "TOOLPATH_SPEC.md",
+    "VIEWER.md",
+    "data",
+    "dist",
+    "src/data.js",
+    "src/settings",
+    "types"
   ],
   "keywords": [
     "3d-printing",
@@ -30,14 +60,22 @@
     "viewer"
   ],
   "peerDependencies": {
-    "three": "^0.160.0"
+    "three": "^0.160.0",
+    "react": ">=18",
+    "react-dom": ">=18"
   },
   "peerDependenciesMeta": {
     "three": {
       "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
     }
   },
   "scripts": {
-    "build": "vite build"
+    "build": "vite build && cp src/make_worker.js dist/make_worker.js"
   }
 }

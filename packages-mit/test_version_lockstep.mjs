@@ -1,7 +1,7 @@
 // The two packages ship as a locked pair, as a check rather than a convention.
 //   Run: node packages-mit/test_version_lockstep.mjs
 //
-// three-slicer re-exports three-slicer-viewer-core (viewer/toolpath, viewer/gcode). If the dependency were a
+// three-slicer re-exports three-slicer-viewer (viewer/toolpath, viewer/gcode). If the dependency were a
 // RANGE, `three-slicer@0.3.0` would happily resolve a later `0.3.7` of this package, and the first place that
 // combination ever got assembled would be a user's node_modules — a pair nobody built and nobody tested.
 //
@@ -49,14 +49,14 @@ console.log('\n[lockstep: every re-exported subpath exists on the other side]')
 // three-slicer/viewer/toolpath and /viewer/gcode are entry points consumers already depend on. They now
 //  resolve THROUGH this package, so a rename here breaks them silently — the AGPL build would still emit a
 //  shim, and the shim would export nothing.
-const REEXPORTED = { './viewer/toolpath': '.', './viewer/gcode': './gcode' }
+const REEXPORTED = { './viewer': '.', './viewer/toolpath': './toolpath', './viewer/gcode': './gcode', './viewer/loaders': './loaders' }
 for (const [agplPathKey, permissiveKey] of Object.entries(REEXPORTED)) {
   check(`${agpl.name} publishes ${agplPathKey}`, !!agpl.exports?.[agplPathKey])
   check(`${permissive.name} publishes ${permissiveKey}`, !!permissive.exports?.[permissiveKey])
   const target = permissive.exports?.[permissiveKey]
   const file = typeof target === 'string' ? target : target?.default
   if (file) check(`${permissiveKey} resolves to a file that the build produces (${file})`,
-    existsSync(join(here, file)), 'run `npm run build -w three-slicer-viewer-core` first')
+    existsSync(join(here, file)), 'run `npm run build -w three-slicer-viewer` first')
 }
 
 console.log('\n[lockstep: the permissive tarball ships what it points at]')

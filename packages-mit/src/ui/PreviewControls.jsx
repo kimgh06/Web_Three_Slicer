@@ -1,6 +1,6 @@
 import React from 'react'
-import { VIEW_TYPES } from 'three-slicer-viewer-core'
-import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from 'three-slicer-viewer-core'
+import { VIEW_TYPES } from 'three-slicer-viewer'
+import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from 'three-slicer-viewer'
 import MoveBar from './MoveBar.jsx'
 
 const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`

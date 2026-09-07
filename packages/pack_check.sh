@@ -12,7 +12,7 @@ TMP="$(mktemp -d /tmp/three-slicer-packcheck.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 echo "== pack -> $TMP"
 mkdir -p "$TMP/tarballs"
-# BOTH packages, and installed together below. three-slicer depends on three-slicer-viewer-core at an exact
+# BOTH packages, and installed together below. three-slicer depends on three-slicer-viewer at an exact
 #  pin, so packing only three-slicer would send npm to the REGISTRY for its other half — which either fails
 #  (the version is not published yet) or, worse, succeeds against an older build and passes a check that was
 #  supposed to be about these two tarballs.
@@ -20,18 +20,20 @@ npm pack "$MIT" --pack-destination "$TMP/tarballs" >/dev/null
 npm pack "$PKG" --pack-destination "$TMP/tarballs" >/dev/null
 T=("$TMP"/tarballs/*.tgz)
 
-echo "== permissive consumer (three-slicer-viewer-core alone)"
+echo "== permissive consumer (three-slicer-viewer alone)"
 # The whole point of the split: this package installs and works with NO AGPL anywhere in the tree. If that
 #  ever stops holding, the MIT grant on it is one nobody had the right to give.
-MIT_TGZ=("$TMP"/tarballs/three-slicer-viewer-core-*.tgz)
+MIT_TGZ=("$TMP"/tarballs/three-slicer-viewer-*.tgz)
 mkdir -p "$TMP/permissive" && cd "$TMP/permissive"
 cat > package.json <<'EOF'
 { "name": "packcheck-permissive", "private": true, "type": "module" }
 EOF
 npm i --no-audit --no-fund "${MIT_TGZ[@]}" >/dev/null
 cat > run.mjs <<'EOF'
-import { parseGcode } from 'three-slicer-viewer-core/gcode'
-import { buildSegmentData, roleRatios, computeColors, TYPE_LABEL } from 'three-slicer-viewer-core'
+import { parseGcode } from 'three-slicer-viewer/gcode'
+// The toolpath SUBPATH, not the main entry: '.' is the whole viewer and imports react, which a headless
+//  consumer does not have (react is an optional peer). The rendering-only surface must stay react-free.
+import { buildSegmentData, roleRatios, computeColors, TYPE_LABEL } from 'three-slicer-viewer/toolpath'
 const gcode = [';LAYER_CHANGE', ';Z:0.2', ';TYPE:Outer wall', ';WIDTH:0.42',
   'G1 X0 Y0 Z0.2 E0', 'G1 X10 Y0 E0.5', 'G1 X10 Y10 E1.0'].join('\n')
 const { layers, stats } = parseGcode(gcode)

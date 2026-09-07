@@ -9,7 +9,7 @@
 // preset in the file replaces the printer's keys; a process or filament preset in the same file is applied too,
 // because a bundle exists precisely to carry the three together.
 import { readPresetFile, writePresetFile,
-         presetOptionKeys } from 'three-slicer/settings'
+         presetOptionKeys } from 'three-slicer-viewer/settings'
 import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../core/preset_bundle.js'
 import { download } from './export_actions.js'
 import { log } from '../core/log.js'

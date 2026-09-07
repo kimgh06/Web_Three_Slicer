@@ -1,5 +1,5 @@
-import { settingRaw } from 'three-slicer/settings'
-import { leanSchema } from 'three-slicer/data'
+import { settingRaw } from 'three-slicer-viewer/settings'
+import { leanSchema } from 'three-slicer-viewer/data'
 import { effectiveSettings, writePlateOverride } from './plate_settings.js'
 
 /** snake_case identifier -> a display label. */

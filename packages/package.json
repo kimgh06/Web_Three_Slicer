@@ -43,7 +43,7 @@
     },
     "./viewer/loaders": {
       "types": "./types/viewer-loaders.d.ts",
-      "default": "./viewer/dist/model_loaders.js"
+      "default": "./viewer/dist/loaders_reexport.js"
     },
     "./viewer/gcode": {
       "types": "./types/viewer-gcode.d.ts",
@@ -65,7 +65,7 @@
   },
   "sideEffects": false,
   "scripts": {
-    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js",
+    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js",
     "check": "bash pack_check.sh"
   },
   "peerDependencies": {
@@ -137,6 +137,6 @@
     "clipping"
   ],
   "dependencies": {
-    "three-slicer-viewer-core": "0.2.5"
+    "three-slicer-viewer": "0.2.5"
   }
 }

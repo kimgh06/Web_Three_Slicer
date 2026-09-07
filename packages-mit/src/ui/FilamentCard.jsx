@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { uiTreeKeys } from 'three-slicer/data'
+import { uiTreeKeys } from 'three-slicer-viewer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
 import { scopedSettings } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'

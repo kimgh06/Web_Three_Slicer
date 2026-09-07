@@ -1,5 +1,5 @@
 import React from 'react'
-import { deriveSlaParams, settingRaw } from 'three-slicer/settings'
+import { deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { scopedSettings } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
 import { resolveCatalog } from '../core/catalog.js'

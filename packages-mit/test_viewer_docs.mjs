@@ -27,7 +27,7 @@ const check = (label, condition, detail = '') => {
 }
 
 const keymap = srcFile('shortcut_keymap.js')
-const readme = readFileSync(join(here, 'README.md'), 'utf8')
+const readme = readFileSync(join(here, 'VIEWER.md'), 'utf8')
 const table = readme.slice(readme.indexOf('## Keyboard and mouse'), readme.indexOf('## Undo and redo'))
 
 // Letter bindings are written `key('m')`; named keys are compared against e.key as 'Delete', 'ArrowUp', …
@@ -66,12 +66,14 @@ check('...and the table says it does not escape to the host', /never reaches you
 console.log('\n[viewer features: declared, honoured, documented]')
 // Three places have to agree, and each can be edited without the other two: the union in types/viewer.d.ts, the
 //  `feature('x')` call that actually gates something, and the README row telling a host the key exists.
-const viewerTypes = readFileSync(join(here, '..', 'types', 'viewer.d.ts'), 'utf8')
+const viewerTypes = readFileSync(join(here, 'types', 'viewer.d.ts'), 'utf8')   // this package's own declaration; three-slicer's is a re-export stub
 const declared = (viewerTypes.match(/export type ViewportFeature =([^\n]*(?:\n\s*\|[^\n]*)*)/)?.[1] ?? '')
   .match(/'([a-zA-Z]+)'/g)?.map(s => s.replace(/'/g, '')) ?? []
 check('ViewportFeature declares keys', declared.length >= 5, declared.join(' '))
 
-const sources = ['Viewport.jsx', 'use_slicer.js', 'use_three_scene.js', 'log.js']
+// use_slicer.js is the AGPL package's now; the features it consumed (warmup, quiet) are read where Viewport
+//  hands them to the slicer hook, so Viewport.jsx still covers them.
+const sources = ['Viewport.jsx', 'use_three_scene.js', 'log.js']
   .map(name => srcFile(name)).join('\n')
 const unwired = declared.filter(key => !sources.includes(`feature('${key}')`))
 check('every declared feature gates something', unwired.length === 0, unwired.join(' '))

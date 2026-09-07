@@ -13,7 +13,7 @@
 // This lives in the viewer and not the engine because a zip needs a deflate, and the only one in reach is the copy
 // fflate ships inside three — which the engine deliberately does not depend on.
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { writePresetFile, readPresetFile } from 'three-slicer/settings'
+import { writePresetFile, readPresetFile } from 'three-slicer-viewer/settings'
 
 const MANIFEST = 'bundle_structure.json'
 const FOLDER = { machine: 'printer', process: 'process', filament: 'filament' }

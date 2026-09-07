@@ -2,7 +2,7 @@
 // makes a barrel pay here. Files inside actions/ import each other DIRECTLY (plate_actions -> use_slicer,
 // export_actions) and must keep doing so: importing your own folder's barrel is how cycles start.
 export { makeToolpathView } from './toolpath_view.js'
-export { useSlicer } from './use_slicer.js'
+export { useNoopSlicer } from './use_noop_slicer.js'
 export { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
 export { makePlateActions } from './plate_actions.js'
 export { makeModelLoad } from './model_load.js'

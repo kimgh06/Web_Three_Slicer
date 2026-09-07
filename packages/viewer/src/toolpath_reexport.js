@@ -1,3 +1,2 @@
-// three-slicer/viewer/toolpath -> the permissive package. The surface is unchanged; only the license of
-// the code behind it is (packages/RELICENSE.md).
-export * from 'three-slicer-viewer-core'
+// three-slicer/viewer/toolpath -> the permissive package's toolpath entry (packages/RELICENSE.md).
+export * from 'three-slicer-viewer/toolpath'

@@ -6,7 +6,7 @@ import assert from 'node:assert'
 //  back with the permissive parser — so it stays on the AGPL side. The permissive package must not
 //  depend on the kernel, in tests either.
 import createSlicer from '../engine/src/slicer_core.js'
-import { parseGcode } from 'three-slicer-viewer-core/gcode'
+import { parseGcode } from 'three-slicer-viewer/gcode'
 
 const ROLE_OF = (v) => v & 15, TOOL_OF = (v) => v >>> 4
 

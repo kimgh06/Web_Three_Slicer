@@ -20,10 +20,12 @@
 import assert from 'node:assert'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = join(here, 'src')
+// The viewer's source lives in the permissive package now; what is left beside this test is the AGPL residue
+//  (the slicing hook, the kernel worker factory, the bundled catalog and three re-export shims).
+const src = join(here, '..', '..', 'packages-mit', 'src')
 
 /** Derived from upstream — cannot carry a license other than AGPL-3.0-or-later without being replaced.
  *  Each entry names the upstream work, so the reason survives without opening PROVENANCE.md. */
@@ -38,7 +40,7 @@ const DERIVED = {
 
 /** Files still inside the AGPL viewer that are verified clean and are candidates for a later move.
  *  The toolpath and G-code modules are no longer here — they SHIPPED, to packages-mit/. */
-const MIT_CLEAN = ['core/plate_layout.js']
+const MIT_CLEAN = ['core/gcode_parse.js', 'core/plate_layout.js', 'core/toolpath_segments.js']
 
 /** The permissive package. This is where the boundary actually is now: everything under it must be
  *  installable and usable with no AGPL anywhere in its dependency tree. */
@@ -154,8 +156,8 @@ if (!existsSync(PERMISSIVE)) {
     const specs = [...stripStrings(text).matchAll(/from\s+['"]([^'"]+)['"]/g)].map(m => m[1])
     const bad = specs.filter(spec => spec === 'three-slicer' || spec.startsWith('three-slicer/'))
     check(`${rel}: imports no AGPL package`, bad.length === 0, bad.join(' '))
-    check(`${rel}: reaches nothing outside the package`, !specs.some(spec => spec.startsWith('../../')),
-      specs.filter(spec => spec.startsWith('../../')).join(' '))
+    const escapes = specs.filter(spec => spec.startsWith('.') && !resolve(join(PERMISSIVE, dirname(rel)), spec).startsWith(PERMISSIVE + sep))
+    check(`${rel}: reaches nothing outside the package`, escapes.length === 0, escapes.join(' '))
   }
   // The pair is published together (packages/RELICENSE.md section 3); a mismatch here would publish a
   //  combination nobody built.
