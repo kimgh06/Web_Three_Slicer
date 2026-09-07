@@ -1,4 +1,4 @@
-// three-slicer/viewer/loaders — pure loaders, independent of the kernel.
+// three-slicer-viewer/loaders — pure loaders, independent of the kernel.
 
 /** The 5 built-ins plus any extension registered via `registerLoader()`, which pushes onto this array. */
 export const SUPPORTED_EXT: string[]
@@ -20,7 +20,7 @@ export function loadModel(name: string, buffer: ArrayBuffer): Promise<LoadedObje
  * so the app wires them up itself. The `<Viewport/>` file dialog and drag-and-drop filters pick them up automatically.
  *
  * ```js
- * import { registerLoader } from 'three-slicer/viewer/loaders'
+ * import { registerLoader } from 'three-slicer-viewer/loaders'
  * registerLoader('step,stp', async (buffer, name) => [{ name, modelPos }])
  * ```
  */

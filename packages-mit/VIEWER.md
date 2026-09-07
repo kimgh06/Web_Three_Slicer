@@ -1,4 +1,7 @@
-# three-slicer/viewer
+# three-slicer-viewer — the viewer
+
+(Published as `three-slicer-viewer`, MIT. `three-slicer/viewer` is the same component with the WASM kernel and the
+vendor catalog plugged in; everything below applies to both.)
 
 3D slicer viewer as a React component: three.js viewport (orbit/transform gizmos), model import (STL/OBJ/3MF/AMF/PLY + pluggable formats such as STEP, multi-object, drag & drop), Web Worker slicing via `three-slicer`, support and material painting, per-extruder filament presets, multi-plate, and a GPU-instanced volumetric toolpath preview ported from OrcaSlicer's libvgcode (millions of segments in a single draw path, per-feature colors, layer range slider, G-code export).
 

@@ -1,4 +1,7 @@
-# three-slicer/components
+# three-slicer-viewer/components — the settings form
+
+(Published as `three-slicer-viewer/components`, MIT. `three-slicer/components` is the same component with upstream's
+schema, tab tree and toggle rules plugged in; everything below applies to both.)
 
 Reusable React components for the browser slicer. Props-driven — no global state, no React context, no router coupling (proven standalone by the tarball consumer gate `packages/pack_check.sh`).
 
