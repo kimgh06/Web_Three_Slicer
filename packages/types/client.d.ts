@@ -86,3 +86,6 @@ export interface SlicerClient {
  */
 export function createSlicerClient(worker?: Worker): SlicerClient
 export default createSlicerClient
+
+/** The WASM kernel's worker, as a factory — what `three-slicer-viewer`'s `useSlicer` takes as `deps.makeWorker`. */
+export function makeSlicerWorker(): Worker
