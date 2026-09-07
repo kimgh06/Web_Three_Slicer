@@ -86,7 +86,11 @@ const allSources = () => {
 }
 
 const sources = allSources()
-const stripStrings = (text) => text.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, "''")
+// Comments are dropped before an import scan, never string literals: an import path IS a string literal, and
+//  the version that stripped them saw an empty list and passed everything (it let `three-slicer/settings`
+//  through in use_slicer.js after the hook moved).
+const dropComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const isAgpl = (spec) => spec === 'three-slicer' || spec.startsWith('three-slicer/')
 
 console.log('[license: the derived list matches what is on disk]')
 check('sources were found', sources.length > 50, `${sources.length}`)
@@ -116,9 +120,9 @@ check('every self-declared port is on the DERIVED list', unlisted.length === 0,
 
 console.log('\n[license: the MIT-bound files import nothing that is not MIT-able]')
 for (const path of MIT_CLEAN) {
-  const text = stripStrings(readFileSync(join(src, path), 'utf8'))
+  const text = dropComments(readFileSync(join(src, path), 'utf8'))
   const imports = [...text.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(m => m[1])
-  const agpl = imports.filter(spec => spec.startsWith('three-slicer'))
+  const agpl = imports.filter(isAgpl)
   check(`${path}: no three-slicer import`, agpl.length === 0, agpl.join(' '))
   // A relative import can reach a derived file; resolve each one against the DERIVED paths.
   const dir = dirname(path)
@@ -141,24 +145,49 @@ if (!existsSync(PERMISSIVE)) {
   const agplDeps = Object.keys(deps).filter(name => name === 'three-slicer' || name.startsWith('three-slicer/'))
   check('depends on nothing AGPL', agplDeps.length === 0, agplDeps.join(' '))
 
+  // Every surface a reverse dependency could ride in on, not only .js/.jsx: type-only imports in .d.ts, CSS
+  //  @import/url(), string values in JSON, and worker URLs. The reviewer of the split named each of these as a
+  //  gap; the negative tests below plant one of each.
   const permissiveSources = []
   const walkPermissive = (dir, prefix) => {
     for (const entry of readdirSync(join(PERMISSIVE, dir), { withFileTypes: true })) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory()) walkPermissive(join(dir, entry.name), rel)
-      else if (/\.jsx?$/.test(entry.name))
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules' && entry.name !== 'dist') walkPermissive(join(dir, entry.name), rel) }
+      else if (/\.(jsx?|mjs|ts|css|json)$/.test(entry.name))
         permissiveSources.push([rel, readFileSync(join(PERMISSIVE, dir, entry.name), 'utf8')])
     }
   }
-  walkPermissive('src', 'src')
+  for (const top of ['src', 'types', 'data']) if (existsSync(join(PERMISSIVE, top))) walkPermissive(top, top)
+  permissiveSources.push(['styles.css', readFileSync(join(PERMISSIVE, 'styles.css'), 'utf8')])
   check('has sources', permissiveSources.length > 0, `${permissiveSources.length}`)
+  // A `// from 'three-slicer/x'` in prose cannot trip this (comments dropped); the negative test pins both directions.
   for (const [rel, text] of permissiveSources) {
-    const specs = [...stripStrings(text).matchAll(/from\s+['"]([^'"]+)['"]/g)].map(m => m[1])
-    const bad = specs.filter(spec => spec === 'three-slicer' || spec.startsWith('three-slicer/'))
+    const code = dropComments(text)
+    // import/export … from, dynamic import(), require(), type-only imports (same syntax), worker URLs, and
+    //  CSS @import / url(). JSON has no comments, so every string value is a candidate.
+    const specs = rel.endsWith('.json')
+      ? [...code.matchAll(/"((?:three-slicer)[^"]*)"/g)].map(m => m[1])
+      : [...code.matchAll(/(?:from|import|require|new\s+URL|@import|url)\s*\(?\s*['"]([^'"]+)['"]/g)].map(m => m[1])
+    const bad = specs.filter(isAgpl)
     check(`${rel}: imports no AGPL package`, bad.length === 0, bad.join(' '))
     const escapes = specs.filter(spec => spec.startsWith('.') && !resolve(join(PERMISSIVE, dirname(rel)), spec).startsWith(PERMISSIVE + sep))
     check(`${rel}: reaches nothing outside the package`, escapes.length === 0, escapes.join(' '))
   }
+  // What SHIPS is dist/, not src/: a source import that the bundler resolves gets inlined, and only tree-shaking
+  //  stood between an AGPL import in use_slicer.js and an AGPL bundle. So the built output is scanned too —
+  //  skipped, not failed, when there is no build to scan.
+  const dist = join(PERMISSIVE, 'dist')
+  if (existsSync(dist)) {
+    for (const name of readdirSync(dist).filter(n => n.endsWith('.js'))) {
+      const built = readFileSync(join(dist, name), 'utf8')
+      const specs = [...built.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map(m => m[1])
+      const bad = specs.filter(isAgpl)
+      const inlined = /slicer_core|printers\.sets|loadProcesses|loadFilaments/.test(built)
+      check(`dist/${name}: no AGPL import and no inlined kernel or catalog code`, bad.length === 0 && !inlined,
+        bad.join(' ') || (inlined ? 'AGPL code was bundled in' : ''))
+    }
+  } else console.log('  skip: packages-mit/dist not built — the shipped bundle was not scanned')
+
   // The pair is published together (packages/RELICENSE.md section 3); a mismatch here would publish a
   //  combination nobody built.
   const agpl = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))

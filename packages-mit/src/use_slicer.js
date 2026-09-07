@@ -2,7 +2,7 @@ import { log } from './core/log.js'
 import { effectiveSettings, plateTechnology } from './core/plate_settings.js'
 import { statsFromKernel } from './core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer/settings'
+import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer-viewer/settings'
 
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
