@@ -10,8 +10,8 @@ DEMOS    := instant-quote printer-showcase cad-embed farm-dashboard
 
 .PHONY: dev up down logs kill pkg demos demos-install demos-clean
 
-pkg:   ## rebuild the three-slicer package dist (viewer/components bundles)
-	cd .. && npm run build -w three-slicer
+pkg:   ## rebuild both package dists — the permissive viewer first, since three-slicer/viewer wraps it at runtime
+	cd .. && npm run build -w three-slicer-viewer -w three-slicer
 
 # The demos under examples/ are standalone projects: they install three-slicer from npm, so they have
 # their own node_modules and are NOT part of this repo's workspaces. Hence the explicit install.

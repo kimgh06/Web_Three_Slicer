@@ -1,5 +1,5 @@
 {
-  "name": "three-slicer-viewer",
+  "name": "three-slicer-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -15,7 +15,8 @@
     "react-dom": "^18.3.1",
     "react-router": "^7.0.0",
     "three": "^0.160.0",
-    "three-slicer": "^0.2.0"
+    "three-slicer": "^0.2.0",
+    "three-slicer-viewer": "0.2.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
