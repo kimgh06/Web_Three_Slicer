@@ -3,10 +3,11 @@
 Web_Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The root holds three folders:
 
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
-- **`packages/`** — the published npm package `three-slicer` (a single one) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
+- **`packages/`** — the published npm package `three-slicer` (AGPL) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
+- **`packages-mit/`** — the published npm package `three-slicer-viewer` (MIT): the viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering, the catalog-free settings transforms, the toggle evaluator (unbound), `<SettingsPanel/>` and `<Viewport/>` themselves. `three-slicer/viewer` is a thin wrapper that plugs the kernel and the vendor catalog into it. The two publish as a locked pair (same version, exact pin — `packages/RELICENSE.md`).
 - **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`.
 
-The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`) — a single `npm i` at the root installs everything.
+The root `package.json` is the npm workspaces root (`packages-mit`, `packages`, `web/viewer`) — a single `npm i` at the root installs everything. `packages-mit` comes first because `packages` depends on it.
 
 ## Core rules
 
@@ -315,7 +316,9 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   x axis (`slaRasterTransform`, validated against masks a real 2.9.6 archive holds). `config.ini` is
   upstream `fill_iniconf`'s field set in `std::map` (alphabetical) order with 6-decimal floats.
   `test_sla_mt.mjs` pins the mt (pthread) kernel byte-identical to the st one over the same SLA slice.
-- Licensed AGPL-3.0-or-later (`LICENSE.txt`).
+- Licensed AGPL-3.0-or-later (`LICENSE.txt`) — except `packages-mit/`, which is MIT and must never import the
+  AGPL package (`packages/viewer/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
+  why, is `packages/PROVENANCE.md`.
 
 ## Commands
 
@@ -348,9 +351,10 @@ cd web/viewer && npm run dev
 
 # Everything `npm test` runs, in two halves:
 npm run test:kernel    # wasm-core invariants (120+), the kernel-param table, the worker-protocol wrapper
-npm run test:viewer    # every packages/viewer/test_*.mjs — the layer guard, the doc gates and the pure modules
+npm run test:core      # every packages-mit/test_*.mjs — the viewer's layer guard, wiring and doc gates, the pure modules, the toolpath contract, the version lockstep
+npm run test:viewer    # what stayed with the kernel: the G-code round trip through the kernel, the license boundary, the preset-file test that reads the vendor catalog
 
-# The viewer half, individually (each is `node packages/viewer/test_<name>.mjs`):
+# The viewer half, individually (each is `node packages-mit/test_<name>.mjs`):
 #   layers          the src/ layer boundary is real, not decorative (see Structure below)
 #   viewer_docs     README shortcuts + features + panels match the code
 #   preset_file     OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
@@ -427,8 +431,19 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
-- `packages/components/` — `three-slicer/components`: the React `<SettingsPanel/>` (zero global coupling, Shadow DOM)
-- `packages/viewer/` — `three-slicer/viewer`: the `<Viewport/>` viewer component (three.js, Shadow DOM).
+- `packages/components/` — `three-slicer/components`: a wrapper that hands upstream's data to the permissive panel — the full
+  schema (labels and tooltips are OrcaSlicer's text), the real tab tree, and `three-slicer/toggle` bound to upstream's rules.
+  The `<SettingsPanel/>` itself is `packages-mit/src/components/` (`three-slicer-viewer/components`), which takes those three
+  as props and, without them, labels every field by its key and disables nothing.
+- `packages/viewer/` — `three-slicer/viewer`: the kernel plugged into the permissive viewer. `Viewport.jsx` binds
+  `three-slicer-viewer`'s own `useSlicer` to the WASM worker factory (`makeSlicerWorker`, `three-slicer/client`) and hands
+  it plus the bundled vendor presets (`bundledCatalog`, `three-slicer/settings`) to the permissive `<Viewport/>` through
+  the `slicer` and `catalog` props; three re-export shims keep the old subpaths. Nothing else is here — the two things
+  that cannot be permissive live where they belong, beside the kernel and beside the catalog functions. The slicing hook itself
+  (the worker protocol, progress, the pool, the economy/classic ladder) is the permissive package's: its only tie to a
+  kernel is `deps.makeWorker`.
+- `packages-mit/src/` — the viewer itself (`three-slicer-viewer`). Everything the AGPL package used to hold under
+  `viewer/src/` lives here now, with the same layout; the guards (`test_layers.mjs`, `test_wiring.mjs`) moved with it.
   `src/` is laid out by ONE question — **can this run under node?** — because that is the only boundary that was
   already real here: every viewer test covers something on the pure side of it, and nothing covers the other side.
   `test_layers.mjs` enforces it, so the folders are a check rather than a convention.

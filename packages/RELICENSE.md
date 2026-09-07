@@ -207,7 +207,7 @@ required `fanNormal` / `toolColors`, so `computeColors(data, 'fan', ctx)` threw 
 
 ### G002 — the permissive package (shipped, narrowed)
 
-`packages-mit/` is `three-slicer-viewer-core@0.2.5`, MIT, 7 files, `three` an optional peer, building to
+`packages-mit/` is `three-slicer-viewer@0.2.5`, MIT, 7 files, `three` an optional peer, building to
 19 KB. `three-slicer/viewer/toolpath` and `/viewer/gcode` re-export it, so the four demos and every other
 existing consumer are untouched.
 
@@ -221,6 +221,50 @@ and is exactly what the demos consume. Two findings for whoever finishes closure
   optional with a main-thread fallback (`model_loaders.js`), so injecting the factory is the clean shape.
 - `test_gcode_parse.mjs` slices with the AGPL kernel and reads the result back with the permissive parser.
   It is a round trip ACROSS the boundary and belongs on the AGPL side, importing the parser as a package.
+
+### G003–G005 and the move to boundary C (shipped)
+
+`three-slicer-viewer` is now the whole viewer, not the toolpath island: `<Viewport/>`, the 20 UI cards, the
+actions, the scene, the four pure workers, the catalog-free settings transforms (`settings_core.js`,
+`preset_file.js`, the generated `kernel_setting_keys.js`) and the three prose-free data artifacts. What stayed
+in the AGPL package is exactly what touches the kernel or upstream's data: `use_slicer.js`, the slicer worker
+factory, the bundled vendor catalog, the full schema, and `three-slicer/viewer` itself — now a wrapper that
+passes `useSlicer` and `bundledCatalog` into the permissive `<Viewport/>` through two props, `slicer` and
+`catalog`. Without those props the viewer runs on a no-op slicer and an empty catalog: it loads, displays and
+exports, and never starts a kernel.
+
+Findings that only surfaced by doing it, for the record:
+
+- The injection is a **hook, not values**. `useSlicer` needs Viewport's own refs and callbacks as input, so
+  eight values could not be passed; the hook itself is the prop, called under the name `useSlicer` so the
+  wiring guard's call-site check keeps holding. It must be stable for the mount.
+- `settings.js` split cleanly — the two halves never referenced each other in code — but the reduced schema had
+  to keep `defined_in` and `line`: `SLA_SETTING_CONTRACT` selects the resin keys by `defined_in`. Function
+  names and line numbers are facts, not text; G004's "pointers back into upstream" rationale was too coarse.
+- `make_worker.js` split five ways, not two: one kernel factory stays, four pure worker factories move, each
+  package keeping its own `make_worker.js` so the verbatim-copy build rule applies unchanged.
+- JSON import attributes force a shape: inside the permissive package the viewer imports its own `settings`
+  and `data` by package name, externalised in its build, so the attribute survives — the same funnel rule
+  `engine/src/data.js` documents.
+- Two generators now write into both packages (`kernel_setting_keys.js`, `settings-keys.d.ts`): their only
+  or shared consumers moved. A key list may carry either licence.
+- `PrinterCard.jsx` contains a NUL byte (a vendor/model separator, present since 0.2.5) and every text tool
+  silently skipped it — including the audit that missed its catalog imports. `git grep` says "Binary file".
+- `useSlicer` itself turned out to have no upstream in it — the worker protocol, progress, the pool and the
+  downgrade ladder are ours; its one tie to a kernel was importing `makeSlicerWorker`. With the factory as
+  `deps.makeWorker`, the hook is permissive too, and the AGPL residue of the viewer is exactly two files:
+  the WASM worker factory and the bundled catalog, plus a ten-line wrapper that binds them.
+- `web/viewer`'s `/slice` page now imports `Viewport` and `useSlicer` from `three-slicer-viewer`, and takes
+  the two AGPL pieces from where they live: `makeSlicerWorker` from `three-slicer/client` (beside the kernel,
+  the same literal `new Worker(new URL(…))` createSlicerClient uses) and `bundledCatalog` from
+  `three-slicer/settings` (beside the nine lookups it bundles). `three-slicer/viewer` is left with a ten-line
+  binding and three re-export shims. The composition is one screen.
+- `<SettingsPanel/>` went the same way: the component is permissive and takes `schema`, `uiTree` and `toggle`
+  as props; `three-slicer/components` is the wrapper that passes upstream's full schema, the real tab tree and
+  the rule-bound evaluator. The reduced schema grew the form's layout flags and units (`mode`, `gui_type`,
+  `is_code`, `multiline`, `sidetext`) — facts, not text — and still carries no label, tooltip or enum label, so the
+  bare panel names every field by its key. `three-slicer/toggle` became `makeToggle(rules, schema)` in the
+  permissive package, bound on the AGPL side; unbound, it disables nothing.
 
 ## 5.1 Foundations
 

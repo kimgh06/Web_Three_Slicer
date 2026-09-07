@@ -182,7 +182,8 @@ with it untouched. Only the catalog lookups need injection — 11 sites in four 
 | Replace the two prose readers (§5) | — | 2 sites |
 | Package split, per-package `LICENSE`, boundary + lockstep tests | small | small |
 
-B is a strict subset of C, so shipping B first wastes nothing: it pays the one genuinely new cost (the 536
+**C shipped** (RELICENSE.md §5). B was shipped first as `three-slicer-viewer`'s initial surface and then grown to
+C in place, which is what made the ordering free. B is a strict subset of C, so shipping B first wastes nothing: it pays the one genuinely new cost (the 536
 lines) and produces something publishable, while the grey question in §5's middle row goes to counsel.
 
 Direction matters: the permissive package must not import the AGPL one. The AGPL package depending on the

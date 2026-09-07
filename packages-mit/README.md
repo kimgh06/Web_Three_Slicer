@@ -1,17 +1,51 @@
-# three-slicer-viewer-core
+# three-slicer-viewer
 
-G-code parsing and GPU toolpath rendering for 3D printing. **MIT licensed** — usable in closed-source
+The 3D-printing viewer without the slicer: model loading (STL/OBJ/3MF/AMF/PLY), G-code parsing, GPU toolpath
+rendering, the settings transforms, and the React `<Viewport/>` itself. **MIT licensed** — usable in closed-source
 commercial products.
 
-This is the display half of [`three-slicer`](https://www.npmjs.com/package/three-slicer), separated so it can
-be adopted without the AGPL obligation the slicing kernel carries. It draws toolpaths; it does not slice.
-If you need slicing, install `three-slicer` — and note that doing so puts your application under AGPL.
+This is [`three-slicer`](https://www.npmjs.com/package/three-slicer) with the kernel taken out. It displays and
+exports; it does not slice. Slicing is plugged in through two props — `slicer` (a hook driving a kernel) and
+`catalog` (vendor presets) — which `three-slicer/viewer` supplies. Install `three-slicer` for that, and note that
+doing so puts your application under AGPL.
 
-## What it does
+## The viewer
+
+```jsx
+import Viewport from 'three-slicer-viewer'
+
+// A display-only viewer: opens models and G-code, no kernel, no presets. Pass `slicer` and `catalog` to add them.
+<Viewport settings={settings} setSettings={setSettings} gcode={gcodeText} />
+```
+
+## Slicing, if you bring a kernel
+
+```jsx
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import { makeSlicerWorker } from 'three-slicer/client'      // AGPL — the WASM kernel's worker; this is the step that changes your licence
+import { bundledCatalog } from 'three-slicer/settings'      // AGPL — OrcaSlicer's vendor presets
+
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })   // module-level: it is a hook
+<Viewport slicer={slicer} catalog={bundledCatalog} … />
+```
+
+`useSlicer` is this package's; it only needs a worker that speaks its protocol. `three-slicer` ships one.
+
+## The settings form
+
+```jsx
+import SettingsPanel from 'three-slicer-viewer/components'
+
+// Bare: fields labelled by key, nothing disabled. Pass `schema`, `uiTree` and `toggle` for labels, tabs and
+// enable/disable rules — three-slicer/components does that with OrcaSlicer's data; a host may pass its own.
+<SettingsPanel settings={settings} setSettings={setSettings} />
+```
+
+## Rendering without React
 
 ```js
-import { parseGcode } from 'three-slicer-viewer-core/gcode'
-import { buildSegmentData, makeToolpath, computeColors } from 'three-slicer-viewer-core'
+import { parseGcode } from 'three-slicer-viewer/gcode'
+import { buildSegmentData, makeToolpath, computeColors } from 'three-slicer-viewer/toolpath'
 import * as THREE from 'three'
 
 const { layers, stats } = parseGcode(gcodeText)          // any slicer's output
@@ -25,9 +59,9 @@ handle.setColors(computeColors(data, 'speed', ctx).color) // recolour without a 
 
 - Reads G-code from OrcaSlicer, PrusaSlicer, Cura and this kernel — roles, widths, tool changes, arcs.
 - Draws one instanced call for the whole plate, with per-role, per-tool and heatmap colouring.
-- `three` is an **optional peer**: `makeToolpath` takes the THREE namespace as an argument rather than
-  importing it, so your instance is the one used — and a consumer that only parses G-code pulls in no
-  renderer at all.
+- `three`, `react` and `react-dom` are **optional peers**. The main entry is the React viewer; `/toolpath` and
+  `/gcode` import neither React nor three (`makeToolpath` takes the THREE namespace as an argument), so a
+  headless consumer pulls in no renderer at all.
 
 ## Licensing
 
