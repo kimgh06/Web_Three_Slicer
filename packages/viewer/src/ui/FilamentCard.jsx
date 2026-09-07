@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { filamentPresets } from 'three-slicer/settings'
-import { uiTree } from 'three-slicer/data'
+import { uiTreeKeys } from 'three-slicer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
 import { scopedSettings } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { resolveCatalog } from '../core/catalog.js'
 
 // What a material owns: every option upstream puts on the filament tab, not just the ten the kernel reads.
 //  Saving only the kernel keys would silently drop the rest of the user's edits from the panel below, and the
 //  dirty marker would stay clean while the form clearly changed. Verified disjoint from the printer and process
 //  key sets, so clearing these on a material switch cannot undo either of those picks.
+//  Read from the REDUCED tree — the option keys in order, without the page and group names, which are
+//  upstream's authored labels. Verified to produce the identical 83-key list the full tree did.
 const FILAMENT_PAGE_KEYS = ['TabFilament::build', 'TabFilament::add_filament_overrides_page']
-  .flatMap(builder => uiTree[builder] ?? [])
-  .flatMap(page => page.groups.flatMap(group => group.options))
+  .flatMap(builder => uiTreeKeys[builder] ?? [])
   .filter(key => !key.startsWith('<'))          // '<separator>'-style layout entries carry no value
 
 // Custom materials: a derived preset is a full copy of the values, not a diff against its parent. The system
@@ -37,6 +38,7 @@ const scalarOf = v => (Array.isArray(v) ? v[0] : v)
 // button happened to be the thing clicked — so picking T2 in the brush panel left this card editing T3's material,
 // and the two disagreed on screen with nothing saying which one the next action would use.
 export default function FilamentCard({
+  catalog: presetCatalog,
   colors, onColor, onAdd, onRemove, settings: globalSettings, setSettings: setGlobalSettings, filamentPanel,
   paintMode, onPaintExtruder, paintCounts, active = 0, onActive,
   plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null,
@@ -148,7 +150,7 @@ export default function FilamentCard({
     let live = true
     // The catalog loads regardless of the printer: without one the picker offers the whole vendor catalog
     //  (a material choice is meaningful before a machine is), just with no compatibility narrowing.
-    filamentPresets().then(loaded => {
+    resolveCatalog(presetCatalog).filamentPresets().then(loaded => {
       if (!live) return
       setApi(loaded)
       if (!printer) return
@@ -176,6 +178,8 @@ export default function FilamentCard({
   // Material type is the first choice, the preset the second: a printer offers up to 219 compatible presets but
   //  only ~34 types, so picking ABS first cuts the second list to a handful. Vendor is not a third axis — it is
   //  already spelled out in every preset name, and crossing it with type would shatter both lists.
+  // NB: a different `catalog` from the injected preset catalog above — this one is the material picker's own
+  //  type -> materials index, built from what that catalog returned.
   const catalog = useMemo(() => {
     const byType = new Map()
     if (!api) return { types: [], byType }

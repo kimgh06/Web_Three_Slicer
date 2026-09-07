@@ -8,11 +8,12 @@
 // Load accepts both, plus the `.zip` / `.orca_bundle` / `.orca_filament` forms upstream's dialog lists. A machine
 // preset in the file replaces the printer's keys; a process or filament preset in the same file is applied too,
 // because a bundle exists precisely to carry the three together.
-import { readPresetFile, writePresetFile, printerSettings, printerKeys,
+import { readPresetFile, writePresetFile,
          presetOptionKeys } from 'three-slicer/settings'
 import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../core/preset_bundle.js'
 import { download } from './export_actions.js'
 import { log } from '../core/log.js'
+import { resolveCatalog } from '../core/catalog.js'
 
 const nameOf = (settings, key, fallback) => {
   const value = settings?.[key]
@@ -28,6 +29,10 @@ const sliceFor = (settings, type) => {
 }
 
 export function makePresetActions(deps) {
+  // The vendor catalog is injected, not imported (core/catalog.js): a host with its own machines supplies
+  //  its own, and the permissive package can run with none at all. Kept whole rather than picked apart here,
+  //  because test_wiring.mjs treats the first destructuring after a factory declaration as its deps list.
+  const catalog = resolveCatalog(deps.catalog)
   const { settingsRef, setSettings, setError, setSliceNotice, onExport, fileInputRef } = deps
 
   /** Save the printer. A bundle when a process/filament preset is named too, a bare machine .json otherwise. */
@@ -66,14 +71,14 @@ export function makePresetActions(deps) {
     for (const key of presetOptionKeys(preset.type)) delete next[key]
     // The printer keys are cleared by their own list too: presetOptionKeys('machine') and printerKeys overlap but
     //  neither contains the other, and a leftover from either side is a value from the previous printer.
-    if (preset.type === 'machine') for (const key of printerKeys) delete next[key]
+    if (preset.type === 'machine') for (const key of catalog.printerKeys) delete next[key]
     const idKey = { machine: 'printer_settings_id', process: 'print_settings_id', filament: 'filament_settings_id' }[preset.type]
     return { ...next, ...preset.settings, ...(preset.name ? { [idKey]: preset.name } : {}) }
   })
 
   /** Read a preset file the user picked. Returns what was applied, for the caller's notice. */
   async function loadPresetFile(file) {
-    const resolveParent = (name) => printerSettings(name)
+    const resolveParent = (name) => catalog.printerSettings(name)
     const applied = []
     const warnings = []
     try {

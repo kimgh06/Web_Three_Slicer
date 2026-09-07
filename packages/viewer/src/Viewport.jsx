@@ -71,7 +71,7 @@ export default function Viewport({
   settings = {}, setSettings = () => {}, plateSettings = {}, setPlateSettings = () => {},
   processPanel = null, motionPanel = null, filamentPanel = null,
   panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
-  sliceRequest = null, onEvent = null, onSliced = null, onSliceRun = null, onExport = null,
+  sliceRequest = null, onEvent = null, onSliced = null, onSliceRun = null, onExport = null, catalog: catalogProp,
 }) {
   // Two frames, one derivation (core/plate_settings.js plateContext): `globalFrame` is the GLOBAL map's own —
   //  what is laid out once (the uniform grid cell, a project import's fallback bed, the 3mf stride, the global
@@ -245,7 +245,7 @@ export default function Viewport({
   //  the same key — a spread would make that a silent ordering question), and anything produced by a factory
   //  further down, which cannot exist yet.
   const wiring = {
-    settings, setSettings, plateSettings, setPlateSettings,
+    catalog: catalogProp, settings, setSettings, plateSettings, setPlateSettings,
     apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef,
     layersDataRef, toolpathRef, segDataRef, plateTpRef, lineWidthRef, plateResultsRef, plateOffsetsRef,
     selectedPlateRef, plateCountRef, placeXRef, canvasModeRef, selectorGeomRef, registerSelectorRef,
@@ -803,7 +803,7 @@ export default function Viewport({
 
               {showPanel('filamentCard') && (
                 <Panel panels={panels} name="filamentCard">
-                  <FilamentCard colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
+                  <FilamentCard catalog={catalogProp} colors={extruderColors} onColor={setExtColor} onAdd={addFilament} onRemove={removeFilament}
                     active={activeFilament} onActive={selectFilament}
                     settings={settings} setSettings={setSettings} filamentPanel={filamentPanel} {...scopeProps}
                     paintMode={paintMode} onPaintExtruder={startMaterialPaint} paintCounts={materialPaintCounts} />
@@ -813,7 +813,7 @@ export default function Viewport({
               {/* The resin card stands where the filament card stood — showPanel routes the two by technology. */}
               {showPanel('resinCard') && (
                 <Panel panels={panels} name="resinCard">
-                  <ResinCard settings={settings} setSettings={setSettings} stats={statsWithTools} {...scopeProps} />
+                  <ResinCard catalog={catalogProp} settings={settings} setSettings={setSettings} stats={statsWithTools} {...scopeProps} />
                 </Panel>
               )}
 
