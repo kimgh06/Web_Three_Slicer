@@ -18,6 +18,12 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const permissive = JSON.parse(readFileSync(join(here, 'package.json'), 'utf8'))
 const agplPath = join(here, '..', 'packages', 'package.json')
+// The pair is checked where the pair exists. A standalone checkout (the MIT mirror) has no AGPL half to
+//  compare against; the monorepo is where lockstep is enforced, so this is a skip there, not a pass.
+if (!existsSync(agplPath)) {
+  console.log('skip: standalone checkout — version lockstep is enforced in the monorepo')
+  process.exit(0)
+}
 const agpl = JSON.parse(readFileSync(agplPath, 'utf8'))
 
 let failures = 0

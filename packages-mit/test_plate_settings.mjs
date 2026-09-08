@@ -5,7 +5,7 @@
 // plateSettings absent, empty, and holding another plate's override. Identical params into a deterministic
 // kernel is identical output, and comparing here keeps the invariant runnable without the WASM build.
 //   run: node packages/viewer/test_plate_settings.mjs
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { effectiveSettings, truncatePlateSettings, overriddenPlateKeys, writePlateOverride, revertPlateKey,
   plateTechnology, plateBedBounds, plateDimsList, uniformPlateDims, plateContext,
@@ -253,10 +253,15 @@ check('the outgoing preset\'s keys are cleared, the machine\'s are not', (() => 
 console.log('\n[doc gate: the blocked-key list in AGENTS.md is the exported one]')
 // The code is the source of truth (PLATE_SETTING_BLOCKED_KEYS above); AGENTS.md must name every key so the
 // documented contract cannot drift from the enforced one — same direction as test_kernel_params.mjs for PARAMS.md.
-const agentsMd = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
-for (const key of PLATE_SETTING_BLOCKED_KEYS)
-  check(`AGENTS.md names blocked plate key ${key}`, agentsMd.includes(key))
-check('AGENTS.md mentions the per-plate settings contract', agentsMd.includes('plateSettings'))
+// AGENTS.md is the monorepo's; a standalone checkout of this package has none, and the gate is about the
+//  monorepo's prose staying honest, so it is skipped rather than failed there.
+const agentsMdUrl = new URL('../AGENTS.md', import.meta.url)
+if (existsSync(agentsMdUrl)) {
+  const agentsMd = readFileSync(agentsMdUrl, 'utf8')
+  for (const key of PLATE_SETTING_BLOCKED_KEYS)
+    check(`AGENTS.md names blocked plate key ${key}`, agentsMd.includes(key))
+  check('AGENTS.md mentions the per-plate settings contract', agentsMd.includes('plateSettings'))
+} else console.log('  skip: standalone checkout — AGENTS.md gate runs in the monorepo')
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nALL PLATE-SETTINGS CHECKS PASSED\n')
 process.exit(failures ? 1 : 0)
