@@ -2,8 +2,11 @@
 //  slice a cube with the kernel, parse its own G-code back, compare layers/z/extruded length against r.layers.
 //   Run: node packages/viewer/test_gcode_parse.mjs
 import assert from 'node:assert'
+// This is a ROUND TRIP across the license boundary — slice with the AGPL kernel, read the result
+//  back with the permissive parser — so it stays on the AGPL side. The permissive package must not
+//  depend on the kernel, in tests either.
 import createSlicer from '../engine/src/slicer_core.js'
-import { parseGcode } from './src/core/gcode_parse.js'
+import { parseGcode } from 'three-slicer-viewer/gcode'
 
 const ROLE_OF = (v) => v & 15, TOOL_OF = (v) => v >>> 4
 

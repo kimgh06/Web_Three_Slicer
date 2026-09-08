@@ -10,6 +10,6 @@ export default defineConfig({
   build: {
     lib: { entry: { SettingsPanel: 'SettingsPanel.jsx' }, formats: ['es'] },
     outDir: 'dist',
-    rollupOptions: { external: [/^react(-dom)?($|\/)/, /^three-slicer($|\/)/] },
+    rollupOptions: { external: [/^react(-dom)?($|\/)/, /^three-slicer($|\/)/, /^three-slicer-viewer($|\/)/] },
   },
 })

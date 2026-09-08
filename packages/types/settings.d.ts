@@ -201,3 +201,6 @@ export interface FilamentPresetsApi {
   settingsFor(presetName: string): SlicerSettings | null
 }
 export function filamentPresets(): Promise<FilamentPresetsApi>
+
+/** The nine catalog lookups above as one object — what `three-slicer-viewer`'s `<Viewport catalog>` takes. */
+export const bundledCatalog: import('three-slicer-viewer').Catalog

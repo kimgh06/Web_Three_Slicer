@@ -3,10 +3,11 @@
 Web_Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The root holds three folders:
 
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
-- **`packages/`** — the published npm package `three-slicer` (a single one) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
+- **`packages/`** — the published npm package `three-slicer` (AGPL) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
+- **`packages-mit/`** — the published npm package `three-slicer-viewer` (MIT): the viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering, the catalog-free settings transforms, the toggle evaluator (unbound), `<SettingsPanel/>` and `<Viewport/>` themselves. `three-slicer/viewer` is a thin wrapper that plugs the kernel and the vendor catalog into it. The two publish as a locked pair (same version, exact pin — `packages/RELICENSE.md`).
 - **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`.
 
-The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`) — a single `npm i` at the root installs everything.
+The root `package.json` is the npm workspaces root (`packages-mit`, `packages`, `web/viewer`) — a single `npm i` at the root installs everything. `packages-mit` comes first because `packages` depends on it.
 
 ## Core rules
 
@@ -157,7 +158,7 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   effect that re-lays the plates afterwards then slides the grid out from under everything just placed (measured:
   56mm per column, so plate 2 ended up 112mm off).
 - 3mf facet indices are per OBJECT, the selector's are per MERGED MESH. The rebasing happens in `buildMergedSTL`
-  (`viewer/src/core/model_geometry.js`) and nowhere else — that function is what decides which objects are merged and in what
+  (`packages-mit/src/core/model_geometry.js`) and nowhere else — that function is what decides which objects are merged and in what
   order (visibility, plate, the extruder sort), so any other place would be guessing. It survives `bakeLocal` and
   the STL weld because both preserve triangle ORDER.
 - One facet holds one integer (see the EnforcerBlockerType note above), but a 3mf keeps material and support paint
@@ -194,7 +195,7 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   Record at the ACTION layer, never on the buttons: delete alone is reachable from four entry points.
 - **Per-plate settings are a sparse override, and absence means "follow the global map".** `plateSettings`
   (`{[plateIndex]: sparse map}`, a host prop beside `settings`) merges over the global map for that plate's
-  slice only (`viewer/src/core/plate_settings.js` -> `use_slicer.js buildParams`) — upstream's
+  slice only (`packages-mit/src/core/plate_settings.js` -> `packages-mit/src/use_slicer.js buildParams`) — upstream's
   PartPlate::m_config applied over full_config, in this package's omission discipline. With no override the
   merge returns the global map BY IDENTITY, which is what keeps the no-override path byte-identical to the
   pre-feature output. `PLATE_SETTING_BLOCKED_KEYS` is EMPTY since the heterogeneous-bed stage (the exported
@@ -309,13 +310,15 @@ The root `package.json` is the npm workspaces root (`packages/*` + `web/viewer`)
   same input -> same bytes (pinned in `test_sl1_gpu.mjs`), but cross-vendor f32 rasterization may
   move boundary pixels within the tolerance that test asserts — a byte-diff between two machines'
   archives is expected, not a bug. GPU checks skip (not fail) without a device; run them under
-  node via `SL1_GPU_WEBGPU_PATH=<dawn index.js> node packages/viewer/test_sl1_gpu.mjs`.
+  node via `SL1_GPU_WEBGPU_PATH=<dawn index.js> node packages-mit/test_sl1_gpu.mjs`.
 - **The SL1 export is PORTRAIT by default**, like every Prusa SL1-family profile: the mask canvas is
   `pixels_y` wide by `pixels_x` tall, columns run along the display's y axis and rows along the X-mirrored
   x axis (`slaRasterTransform`, validated against masks a real 2.9.6 archive holds). `config.ini` is
   upstream `fill_iniconf`'s field set in `std::map` (alphabetical) order with 6-decimal floats.
   `test_sla_mt.mjs` pins the mt (pthread) kernel byte-identical to the st one over the same SLA slice.
-- Licensed AGPL-3.0-or-later (`LICENSE.txt`).
+- Licensed AGPL-3.0-or-later (`LICENSE.txt`) — except `packages-mit/`, which is MIT and must never import the
+  AGPL package (`packages/viewer/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
+  why, is `packages/PROVENANCE.md`.
 
 ## Commands
 
@@ -348,9 +351,10 @@ cd web/viewer && npm run dev
 
 # Everything `npm test` runs, in two halves:
 npm run test:kernel    # wasm-core invariants (120+), the kernel-param table, the worker-protocol wrapper
-npm run test:viewer    # every packages/viewer/test_*.mjs — the layer guard, the doc gates and the pure modules
+npm run test:core      # every packages-mit/test_*.mjs — the viewer's layer guard, wiring and doc gates, the pure modules, the toolpath contract, the version lockstep
+npm run test:viewer    # what stayed with the kernel: the G-code round trip through the kernel, the license boundary, the preset-file test that reads the vendor catalog
 
-# The viewer half, individually (each is `node packages/viewer/test_<name>.mjs`):
+# The viewer half, individually (each is `node packages-mit/test_<name>.mjs`):
 #   layers          the src/ layer boundary is real, not decorative (see Structure below)
 #   viewer_docs     README shortcuts + features + panels match the code
 #   preset_file     OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
@@ -371,21 +375,21 @@ node packages/wasm-core/test_paint_brush.mjs
 
 # 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
 node packages/wasm-core/test_paint_import.mjs
-node packages/viewer/test_3mf_project.mjs
+node packages-mit/test_3mf_project.mjs
 
 # 3mf project export — the reverse codec (kernel) and the writer, read back through the importer (JS)
 node packages/wasm-core/test_paint_export.mjs
-node packages/viewer/test_3mf_export.mjs
+node packages-mit/test_3mf_export.mjs
 
 # Uniform-scale drag ratio, the scale clamp, and layout-independent shortcut matching
-node packages/viewer/test_scale_box.mjs
+node packages-mit/test_scale_box.mjs
 
 # Undo/redo stack semantics (branch discard, coalescing, limit) + the Ctrl+Z/Y binding
-node packages/viewer/test_history.mjs
+node packages-mit/test_history.mjs
 
 # Per-plate settings: the override merge, the blocked-key gate, isolation, and the two-scope staleness
-node packages/viewer/test_plate_settings.mjs
-node packages/viewer/test_stale_slice.mjs
+node packages-mit/test_plate_settings.mjs
+node packages-mit/test_stale_slice.mjs
 
 # SLA: the kernel invariants + pad + mt parity + the hollowing gate run inside test:kernel; the rest standalone
 node packages/wasm-core/test_sla_kernel.mjs        # slice_sla end to end: contours, supports, lift frame
@@ -393,8 +397,8 @@ node packages/wasm-core/test_sla_support_points.mjs # the ported SupportPointGen
 node packages/wasm-core/test_sla_support_slicer.mjs # the winding-true fallback slicer's loop contract
 node packages/wasm-core/test_sla_source_manifest.mjs # slasupport_port files match their upstream hashes
 node packages/engine/test_sla_request.mjs          # the typed SLA job protocol (capability codes)
-node packages/viewer/test_sl1.mjs                  # SL1 raster transform (portrait), config.ini, archive
-node packages/viewer/test_sla_3mf.mjs              # SLA 3mf records (points/drain holes) round-trip
+node packages-mit/test_sl1.mjs                  # SL1 raster transform (portrait), config.ini, archive
+node packages-mit/test_sla_3mf.mjs              # SLA 3mf records (points/drain holes) round-trip
 
 # Rebuild the kernel (needs emscripten + brew boost/eigen + brew cgal for the SLA group)
 bash packages/wasm-core/build.sh
@@ -427,8 +431,19 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
-- `packages/components/` — `three-slicer/components`: the React `<SettingsPanel/>` (zero global coupling, Shadow DOM)
-- `packages/viewer/` — `three-slicer/viewer`: the `<Viewport/>` viewer component (three.js, Shadow DOM).
+- `packages/components/` — `three-slicer/components`: a wrapper that hands upstream's data to the permissive panel — the full
+  schema (labels and tooltips are OrcaSlicer's text), the real tab tree, and `three-slicer/toggle` bound to upstream's rules.
+  The `<SettingsPanel/>` itself is `packages-mit/src/components/` (`three-slicer-viewer/components`), which takes those three
+  as props and, without them, labels every field by its key and disables nothing.
+- `packages/viewer/` — `three-slicer/viewer`: the kernel plugged into the permissive viewer. `Viewport.jsx` binds
+  `three-slicer-viewer`'s own `useSlicer` to the WASM worker factory (`makeSlicerWorker`, `three-slicer/client`) and hands
+  it plus the bundled vendor presets (`bundledCatalog`, `three-slicer/settings`) to the permissive `<Viewport/>` through
+  the `slicer` and `catalog` props; three re-export shims keep the old subpaths. Nothing else is here — the two things
+  that cannot be permissive live where they belong, beside the kernel and beside the catalog functions. The slicing hook itself
+  (the worker protocol, progress, the pool, the economy/classic ladder) is the permissive package's: its only tie to a
+  kernel is `deps.makeWorker`.
+- `packages-mit/src/` — the viewer itself (`three-slicer-viewer`). Everything the AGPL package used to hold under
+  `viewer/src/` lives here now, with the same layout; the guards (`test_layers.mjs`, `test_wiring.mjs`) moved with it.
   `src/` is laid out by ONE question — **can this run under node?** — because that is the only boundary that was
   already real here: every viewer test covers something on the pure side of it, and nothing covers the other side.
   `test_layers.mjs` enforces it, so the folders are a check rather than a convention.

@@ -7,6 +7,12 @@
 // "inconsistent import attributes". Only this file holds the JSON; everything else imports this module
 // as external -> no JSON import survives in the bundle, so the mismatch cannot arise.
 export { default as schema } from 'three-slicer/data/config-schema.json' with { type: 'json' }
+// The reduced pair: `type`/`default`/`enum_values`/bounds only, and the ui tree's option keys without
+//  its page and group names. Everything they drop is upstream's authored text (packages/PROVENANCE.md
+//  section 5) and nothing that only needs to KNOW a key reads it — 402KB -> 87KB and 34KB -> 15KB.
+//  A settings form still needs the full artifacts; a consumer that just derives params does not.
+export { default as leanSchema } from 'three-slicer/data/config-schema-lean.json' with { type: 'json' }
+export { default as uiTreeKeys } from 'three-slicer/data/ui-tree-keys.json' with { type: 'json' }
 export { default as uiTree } from 'three-slicer/data/ui-tree.json' with { type: 'json' }
 export { default as toggleRules } from 'three-slicer/data/toggle-rules.json' with { type: 'json' }
 export { default as invalidationMap } from 'three-slicer/data/invalidation-map.json' with { type: 'json' }

@@ -39,6 +39,15 @@ const slaTransferables = (job) => job.objects.flatMap(object => [object, ...(obj
 //  plain-asset rule instead and was copied verbatim, still importing an unhashed `./slicer_core.js` that dist
 //  did not contain — a 404 on the first message, visible only in a production build. Same reason the viewer
 //  keeps make_worker.js out of its own bundle. Do not factor this expression out.
+/**
+ * The WASM kernel's worker, as a factory. This is the one thing a slicing viewer needs that the permissive
+ * package cannot ship: `three-slicer-viewer`'s `useSlicer` takes it as `deps.makeWorker`, and
+ * `three-slicer/viewer` binds it. Written as the full literal expression for the same reason as below.
+ */
+export function makeSlicerWorker() {
+  return new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })
+}
+
 export function createSlicerClient(worker = new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })) {
   const pending = []          // FIFO of {expect, resolve, reject, onProgress, onLayer, chunks, layers}
   let cancelFlag = null       // Uint32Array over the worker's SharedArrayBuffer — mt kernel only

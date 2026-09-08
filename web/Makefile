@@ -8,10 +8,10 @@ UP_PORT  ?= 8080
 EXAMPLES := ../examples
 DEMOS    := instant-quote printer-showcase cad-embed farm-dashboard
 
-.PHONY: dev up down logs kill pkg demos demos-install demos-clean
+.PHONY: dev up down logs kill pkg demos demos-install demos-clean sync-viewer
 
-pkg:   ## rebuild the three-slicer package dist (viewer/components bundles)
-	cd .. && npm run build -w three-slicer
+pkg:   ## rebuild both package dists — the permissive viewer first, since three-slicer/viewer wraps it at runtime
+	cd .. && npm run build -w three-slicer-viewer -w three-slicer
 
 # The demos under examples/ are standalone projects: they install three-slicer from npm, so they have
 # their own node_modules and are NOT part of this repo's workspaces. Hence the explicit install.
@@ -51,3 +51,10 @@ logs:
 kill:  ## kill the process holding PORT=n
 	@pids=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
 	if [ -n "$$pids" ]; then echo "port $(PORT) in use -> kill $$pids"; kill -9 $$pids; fi
+
+# The MIT package has a public mirror repo whose history is packages-mit/'s alone (git subtree). The monorepo
+# stays the source of truth; this pushes the folder's commits there. Run it right after `npm publish` of
+# three-slicer-viewer so the mirror shows the code that was published. VIEWER_REMOTE is a git URL.
+VIEWER_REMOTE ?= https://github.com/kimgh06/three-slicer-viewer.git
+sync-viewer:  ## push packages-mit/ history to the mirror repo (VIEWER_REMOTE)
+	cd .. && git subtree push --prefix=packages-mit $(VIEWER_REMOTE) main

@@ -39,15 +39,15 @@
     },
     "./viewer/toolpath": {
       "types": "./types/viewer-toolpath.d.ts",
-      "default": "./viewer/dist/toolpath_gpu.js"
+      "default": "./viewer/dist/toolpath_reexport.js"
     },
     "./viewer/loaders": {
       "types": "./types/viewer-loaders.d.ts",
-      "default": "./viewer/dist/model_loaders.js"
+      "default": "./viewer/dist/loaders_reexport.js"
     },
     "./viewer/gcode": {
       "types": "./types/viewer-gcode.d.ts",
-      "default": "./viewer/dist/gcode_parse.js"
+      "default": "./viewer/dist/gcode_reexport.js"
     },
     "./components": {
       "types": "./types/components.d.ts",
@@ -65,7 +65,7 @@
   },
   "sideEffects": false,
   "scripts": {
-    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js && cp viewer/src/make_worker.js viewer/dist/make_worker.js",
+    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js",
     "check": "bash pack_check.sh"
   },
   "peerDependencies": {
@@ -74,9 +74,15 @@
     "three": "^0.160.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true },
-    "three": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "typescript": "^5.6.0",
@@ -93,6 +99,8 @@
     "viewer/styles.css",
     "components/styles.css",
     "data",
+    "data/ui-tree-keys.json",
+    "data/config-schema-lean.json",
     "!data/config-schema-builddump.json",
     "!data/**/.omc",
     "README.md",
@@ -127,6 +135,8 @@
     "3d",
     "mesh",
     "clipping"
-  ]
+  ],
+  "dependencies": {
+    "three-slicer-viewer": "0.2.5"
+  }
 }
-

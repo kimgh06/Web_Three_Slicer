@@ -978,10 +978,46 @@ if __name__ == '__main__':
         print("sla: PrusaSlicer checkout absent — SLA pass skipped, committed entries kept")
 
     json.dump(ui, open(os.path.join(OUT, 'ui-tree.json'), 'w'), ensure_ascii=False, indent=1)
+
+    # A reduced ui-tree: per builder, just the option keys in order. The page and group NAMES are upstream's
+    #  authored labels and the `line` fields point back into its sources; a consumer that only needs "which
+    #  options belong to the filament tab" needs neither. Anything that RENDERS the tabs keeps the full tree.
+    lean_ui = {builder: [key for page in pages for group in page['groups'] for key in group['options']]
+               for builder, pages in ui.items()}
+    json.dump(lean_ui, open(os.path.join(OUT, 'ui-tree-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
+    # The permissive package ships its own copies of the three prose-free artifacts.
+    import shutil
+    MIT_DATA = os.path.join(REPO, 'packages-mit', 'data'); os.makedirs(MIT_DATA, exist_ok=True)
+    for name in ('config-schema-lean.json', 'ui-tree-keys.json', 'preset-keys.json'):
+        if os.path.exists(os.path.join(OUT, name)): shutil.copy(os.path.join(OUT, name), os.path.join(MIT_DATA, name))
     npages = sum(len(v) for v in ui.values())
     nopts = sum(len(g['options']) for v in ui.values() for p in v for g in p['groups'])
 
     json.dump(sch, open(os.path.join(OUT, 'config-schema.json'), 'w'), ensure_ascii=False, indent=1)
+
+    # A second, REDUCED schema carrying only the fields code reads: type, default, enum_values and the numeric
+    #  bounds. Everything dropped here is upstream's authored text — `label`, `tooltip`, `full_label` — plus the
+    #  pointers back into its sources (`defined_in`, `line`), which together are ~45% of the file and are the
+    #  part that cannot be relicensed (packages/PROVENANCE.md section 5).
+    #
+    #  Measured: engine/src/settings.js reads exactly `.type`, `.default` and `enum_values` out of 976 keys and
+    #  never touches a label or a tooltip, so dropping the prose changes no behaviour. What is left is a
+    #  key -> type map: facts about an option set rather than expression. Anything that RENDERS a settings form
+    #  still needs the full schema and keeps using it.
+    # `defined_in` and `line` stay: settings.js selects the SLA keys by `defined_in` (`'sla_'` in the upstream
+    #  init function's name) and cites both in SLA_SETTING_CONTRACT. They are a function name and a line
+    #  number — facts about where an option is declared, not authored text — so they cost nothing to keep.
+    #  `mode`, `gui_type`, `is_code`, `multiline` are layout flags and `sidetext` is the unit ("mm", "%"): the
+    #  settings form needs them to lay a field out, and none of them is authored text. label/tooltip/enum_labels
+    #  stay out — those are the prose, and the form falls back to the key name without them.
+    KEEP = ('type', 'default', 'enum_values', 'min', 'max', 'default_type', 'defined_in', 'line',
+            'mode', 'gui_type', 'is_code', 'multiline', 'sidetext')
+    lean = {key: {f: opt[f] for f in KEEP if f in opt} for key, opt in sch.items()}
+    json.dump(lean, open(os.path.join(OUT, 'config-schema-lean.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
+    full_bytes = os.path.getsize(os.path.join(OUT, 'config-schema.json'))
+    lean_bytes = os.path.getsize(os.path.join(OUT, 'config-schema-lean.json'))
+    print(f"schema: {len(sch)} keys - full {full_bytes//1024}KB, lean {lean_bytes//1024}KB "
+          f"({100 - lean_bytes * 100 // full_bytes}% dropped as prose)")
 
     inv = extract_invalidation()
     json.dump(inv, open(os.path.join(OUT, 'invalidation-map.json'), 'w'), ensure_ascii=False, indent=1)
