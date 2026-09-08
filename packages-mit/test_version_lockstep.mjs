@@ -47,6 +47,18 @@ if (typeof declared === 'string') {
     `${declared} vs ${permissive.version}`)
 }
 
+console.log('\n[lockstep: the demo app pins the workspace versions]')
+// web/viewer is a workspace member, but a range it declares is still a RANGE: when the pair moved to 0.3.0
+//  and the app still said ^0.2.0, npm quietly fetched 0.2.5 from the registry into web/viewer/node_modules
+//  and the docker build failed on an export that 0.2.5 does not have. An exact pin cannot drift that way.
+const webPath = join(here, '..', 'web', 'viewer', 'package.json')
+if (existsSync(webPath)) {
+  const web = JSON.parse(readFileSync(webPath, 'utf8'))
+  for (const name of [agpl.name, permissive.name])
+    check(`web/viewer pins ${name} at ${permissive.version}`, web.dependencies?.[name] === permissive.version,
+      String(web.dependencies?.[name]))
+}
+
 console.log('\n[lockstep: the licenses are what the split assumed]')
 check(`${permissive.name} is permissively licensed`, permissive.license === 'MIT', permissive.license)
 check(`${agpl.name} is still AGPL`, /^AGPL-3\.0/.test(agpl.license || ''), agpl.license)

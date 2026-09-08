@@ -3,7 +3,7 @@
 # three-slicer-viewer exactly, so the viewer must reach the registry first or three-slicer@x.y.z cannot be
 # installed at all, and the MIT mirror must be pushed after so it shows the code that was published.
 #
-#   make bump V=0.3.0        set both packages and the pin, then check the lockstep
+#   make bump V=0.3.0        set both packages, the pin and the demo app's pins, then check the lockstep
 #   make publish             preflight (clean tree on a pushed main, tests, tarball check) -> publish
 #                            viewer -> publish three-slicer -> sync the mirror -> tag vX.Y.Z and push it
 #   make publish DRY=1       the same with `npm publish --dry-run`, no git checks, no tag, no mirror push
@@ -14,13 +14,14 @@ NPM_PUBLISH   := npm publish $(if $(filter 1,$(DRY)),--dry-run,)
 
 .PHONY: bump preflight publish
 
-bump:  ## set three-slicer, three-slicer-viewer and the pin to V=x.y.z
+bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins to V=x.y.z
 	@test -n "$(V)" || { echo "usage: make bump V=0.3.0"; exit 1; }
 	@node -e ' \
 	  const fs = require("fs"); \
 	  const edit = (path, fn) => { const pkg = JSON.parse(fs.readFileSync(path, "utf8")); fn(pkg); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n") }; \
 	  edit("packages-mit/package.json", p => { p.version = "$(V)" }); \
 	  edit("packages/package.json", p => { p.version = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
+	  edit("web/viewer/package.json", p => { p.dependencies["three-slicer"] = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
 	  console.log("bumped both packages and the pin to $(V)")'
 	@npm i --package-lock-only --no-audit --no-fund >/dev/null
 	@node packages-mit/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
