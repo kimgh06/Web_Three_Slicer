@@ -331,6 +331,13 @@ compose targets free the port first (`kill PORT=n`) instead of failing on a stal
 directly is what silently serves the previous build. The port comes from `web/.env` (copy `.env.example`),
 defaulting to 5173 / 8080.
 
+A release goes through the ROOT `Makefile`, for the same reason: `three-slicer` pins `three-slicer-viewer`
+exactly, so the viewer must be published first or `three-slicer@x.y.z` cannot be installed, and the MIT mirror
+repo (`github.com/kimgh06/three-slicer-viewer`, a `git subtree split` of `packages-mit/`) must be pushed after
+so it shows what was published. `make bump V=x.y.z` sets both versions and the pin; `make publish` gates on a
+clean, pushed `main`, a `## x.y.z` entry in `packages/CHANGELOG.md`, `npm test`, the build and `pack_check.sh`,
+then publishes in order, syncs the mirror and tags. `DRY=1` rehearses it with `npm publish --dry-run`.
+
 ```bash
 cd web
 make dev            # pkg + demos, then vite on DEV_PORT with /demos ready
@@ -340,6 +347,13 @@ make pkg            # rebuild the three-slicer dist alone
 make demos          # rebuild examples/* into viewer/public/demos (FORCE=1 for all)
 make demos-clean
 make kill PORT=n
+make sync-viewer    # push packages-mit/ history to the MIT mirror repo (make publish does this)
+```
+
+```bash
+# Release (root): bump both packages + the pin, then publish viewer -> three-slicer -> mirror -> tag
+make bump V=0.3.0
+make publish        # DRY=1 to rehearse
 ```
 
 ```bash

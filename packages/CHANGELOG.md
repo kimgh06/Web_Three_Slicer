@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.3.0 — 2026-09-08
+
+The viewer is its own package. Everything that displays — model loading, G-code parsing, the GPU toolpath
+renderer, the settings transforms, `<Viewport/>` and `<SettingsPanel/>` — now ships as
+[`three-slicer-viewer`](https://www.npmjs.com/package/three-slicer-viewer) under **MIT**, so it can go into
+closed-source products. `three-slicer` stays AGPL and keeps every entry point it had: `three-slicer/viewer` and
+`three-slicer/components` are now thin wrappers that plug the WASM kernel and the vendor catalog into the
+permissive package. Which files could carry which license, and why, is `packages/PROVENANCE.md`; the plan the
+split followed is `packages/RELICENSE.md`.
+
+### Added
+
+- `three-slicer-viewer` (MIT): `<Viewport/>` with `slicer` and `catalog` props (defaults: a no-op slicer and an
+  empty catalog), `useSlicer({ makeWorker })` — the slicing hook with the kernel injected —, `/toolpath`,
+  `/gcode`, `/loaders`, `/settings`, `/data`, `/toggle`, `/components`, and the `.d.ts` for each.
+- `makeSlicerWorker` in `three-slicer/client` and `bundledCatalog` in `three-slicer/settings`: the two things
+  that cannot be permissive, exported from where they live so a host can compose the viewer with the kernel
+  by hand (`web/viewer/src/Prepare.jsx` does).
+- `three-slicer-viewer/toggle`: `makeToggle(rules, schema)` — the field enable/disable evaluator, unbound;
+  `three-slicer/toggle` is the same bound to upstream's rules.
+- The `/slice` page opens and drops a `.gcode` file, parsed by the permissive parser.
+- Third-party notices for both packages (`THIRD-PARTY-NOTICES.md`).
+
+### Changed
+
+- The toolpath renderer is a rewrite from `TOOLPATH_SPEC.md`, not a port. Two behaviours changed with it:
+  `rangeColorAt` no longer extrapolates below the range's low end, and the `ColorContext` type matches what
+  the renderer actually reads (a `NaN` in the context is coerced instead of propagating).
+- `<SettingsPanel/>` takes `schema`, `uiTree` and `toggle` as props. Without them it labels every field by its
+  key and disables nothing — the upstream labels and tooltips are AGPL prose and stay in `three-slicer/data`.
+- The two packages publish as a **locked pair**: same version, and `three-slicer` pins `three-slicer-viewer`
+  exactly (`test_version_lockstep.mjs`). A release goes through the root `Makefile` (`make publish`), which
+  publishes the viewer first — the pin means `three-slicer@0.3.0` cannot be installed before it exists.
+- `packages-mit/` is mirrored to `github.com/kimgh06/three-slicer-viewer` (a `git subtree split`); the monorepo
+  stays the source of truth.
+
+### Fixed
+
+- A `three-slicer/settings` import that survived the split inside the slicing hook, which only tree-shaking
+  kept out of the MIT bundle. The license boundary test now scans raw specifiers in `.js/.jsx/.mjs/.d.ts/.css/
+  .json` (it used to strip string literals first — and an import path is one) and the built `dist/` too.
+
+## 0.2.5 — 2026-09-06
+
+The per-plate release. A plate is a printer now, not just a position.
+
+### Added
+
+- Per-plate settings: `plateSettings` (`{[plateIndex]: sparse map}`) beside `settings` — one plate, one printer,
+  one bed, one technology. A plate override is additive over the global map; with no override the global map
+  is used by identity, which is what keeps the pre-feature output byte-identical. A bed override resizes that
+  plate's grid cell (`plateLayoutHetero`), and a `printer_technology` override routes that plate to SLA beside
+  FFF neighbours. What a 3mf cannot represent is refused typed at export: `UNSUPPORTED_MIXED_TECH_3MF`,
+  `UNSUPPORTED_MIXED_BED_3MF`.
+- `plateContext(settings, plateSettings, plate, dims)`: the one derivation of what a plate prints with —
+  effective map, technology, derived params, enforced frame. Everything that used to read the global `kp`
+  reads this.
+- Slice every plate through a worker pool the viewer orchestrates (`slice_pool.js`): the selected plate first
+  on the selector worker, the rest on K pool workers; a pool worker that dies re-queues its plate to run alone
+  after the pool drains. K is capped by the largest plate's STL size — measured, not designed (README tables).
+- Every resin plate keeps a preview in the scene, not only the focused one.
+- SL1 masks are rasterized in-house (`raster_mask.js`, gray8 PNG) with an opt-in GPU anti-aliasing path
+  (`sla_antialias: 1|2|4`) and a slice-by-rendering parity path when the merged STL is still at hand.
+- The SLA kernel reports progress from inside its contour phase, so an SLA plate no longer looks idle beside
+  FFF plates.
+- The settings panel marks a plate's overridden keys.
+
+### Fixed
+
+- A plate-scope profile pick is written whole and describes its own machine — a diff left keys shared with the
+  global printer off the override, and the next global printer change moved them.
+- A model load drops only the plate it lands on, not every plate's cached result.
+
+## 0.2.4 — 2026-09-03
+
+The painting release: the brush behaves like upstream's.
+
+### Added
+
+- The brush draws itself (a ring for the circle cursor, a translucent ball for the sphere), and a stroke is a
+  capsule between samples rather than a row of spheres — a fast drag no longer leaves gaps.
+- The brush's own tools and modifiers: fill, the section plane, the overhang limit, `Ctrl`+wheel for the
+  radius, `Alt`+wheel for the plane, `Shift`+drag to erase — upstream's bindings. The bare wheel is the camera
+  zoom again.
+- Four kernel-side brush behaviours the bridge never exposed (`selector_paint_stroke`, the fill preview, the
+  clip plane, the overhang gate), each feature-detected so an older kernel keeps working.
+
+### Fixed
+
+- The paint overlay no longer draws through the model.
+- The filament colour and the filament selection are one thing: `extruderColors` and the `filament_colour`
+  settings key are written together (`actions/filament_colors.js`), so a project saved after recolouring comes
+  back in the new colours.
+
 ## 0.2.3 — 2026-08-29
 
 A developer-experience release: everything here comes from a log of what integrating the package actually
