@@ -63,8 +63,33 @@
           ],
           "sameAs": [
             "https://github.com/kimgh06/Web_Three_Slicer",
-            "https://www.npmjs.com/package/three-slicer"
+            "https://www.npmjs.com/package/three-slicer",
+            "https://www.npmjs.com/package/three-slicer-viewer"
           ]
+        },
+        {
+          "@type": "SoftwareSourceCode",
+          "@id": "https://www.npmjs.com/package/three-slicer#package",
+          "name": "three-slicer",
+          "url": "https://www.npmjs.com/package/three-slicer",
+          "codeRepository": "https://github.com/kimgh06/Web_Three_Slicer",
+          "programmingLanguage": ["JavaScript", "C++"],
+          "runtimePlatform": ["Node.js", "Web browser (WebAssembly)"],
+          "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+          "description": "The slicing kernel as an npm package: FFF and SLA slicing in Node or the browser, a worker protocol, OrcaSlicer settings mapping and preset catalogs.",
+          "targetProduct": { "@id": "https://slicer.kimgh06.com/#app" }
+        },
+        {
+          "@type": "SoftwareSourceCode",
+          "@id": "https://www.npmjs.com/package/three-slicer-viewer#package",
+          "name": "three-slicer-viewer",
+          "url": "https://www.npmjs.com/package/three-slicer-viewer",
+          "codeRepository": "https://github.com/kimgh06/three-slicer-viewer",
+          "programmingLanguage": "JavaScript",
+          "runtimePlatform": "Web browser",
+          "license": "https://opensource.org/license/mit",
+          "description": "MIT React + three.js viewer for 3D printing: STL, OBJ, 3MF, AMF and PLY loading, G-code parsing, GPU toolpath preview and a schema-driven settings panel. No slicer and no AGPL code; slicing is plugged in through a prop.",
+          "targetProduct": { "@id": "https://slicer.kimgh06.com/#app" }
         },
         {
           "@type": "TechArticle",
@@ -97,7 +122,7 @@
             {
               "@type": "Question",
               "name": "Can I use the slicer in my own site or app?",
-              "acceptedAnswer": { "@type": "Answer", "text": "Yes. The same engine is published to npm as three-slicer under AGPL-3.0-or-later: a headless slicing kernel for Node or the browser, plus an optional React viewer and settings panel." }
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes, as two npm packages. three-slicer (AGPL-3.0-or-later) is the slicing kernel for Node or the browser. three-slicer-viewer (MIT) is the React viewer and settings panel on their own — model and G-code preview with no slicing and no AGPL code, usable in closed-source products. Installing three-slicer gives you both." }
             }
           ]
         }
@@ -162,10 +187,13 @@
       </p>
       <h3>Can I use the slicer in my own site or app?</h3>
       <p>
-        Yes. The same engine is published to npm as
-        <a href="https://www.npmjs.com/package/three-slicer">three-slicer</a> under
-        AGPL-3.0-or-later — a headless slicing kernel for Node or the browser, plus an optional React
-        viewer and settings panel. The <a href="/demos">integration demos</a> show it embedded in an
+        Yes, as two npm packages.
+        <a href="https://www.npmjs.com/package/three-slicer">three-slicer</a> (AGPL-3.0-or-later) is the
+        slicing kernel for Node or the browser.
+        <a href="https://www.npmjs.com/package/three-slicer-viewer">three-slicer-viewer</a> (MIT) is the React
+        viewer and settings panel on their own — model and G-code preview with no slicing and no AGPL code,
+        usable in closed-source products. Installing three-slicer gives you both. The
+        <a href="/demos">integration demos</a> show it embedded in an
         instant-quote form, a printer showcase and a CAD page, and the source is on
         <a href="https://github.com/kimgh06/Web_Three_Slicer">GitHub</a>.
       </p>

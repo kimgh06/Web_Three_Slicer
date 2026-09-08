@@ -83,7 +83,7 @@
         <li><b>WebAssembly</b><small>the OrcaSlicer kernel, compiled</small></li>
         <li><b>No upload</b><small>slicing runs in your tab</small></li>
         <li><b>976</b><small>OrcaSlicer options</small></li>
-        <li><b>AGPL-3.0</b><small>or later</small></li>
+        <li><b>AGPL + MIT</b><small>slicer · viewer</small></li>
       </ul>
 
       <h2>Why it exists</h2>
@@ -167,6 +167,16 @@
         the same license. If the AGPL is a problem for your product, it is a problem before you start
         rather than after, so it is worth reading first.
       </p>
+      <p>
+        The viewer is the exception. Since 0.3.0 the display half — model loading, G-code parsing, the
+        GPU toolpath preview and the settings panel — is published on its own as
+        <a href="https://www.npmjs.com/package/three-slicer-viewer" rel="noopener">three-slicer-viewer</a>
+        under <strong>MIT</strong>. It contains no OrcaSlicer or PrusaSlicer code (the provenance of every
+        file is recorded in the repository), so it can go into a closed-source product; only slicing itself,
+        and the vendor presets, stay AGPL. Which files may carry which license, and why, is
+        <a href="https://github.com/kimgh06/Web_Three_Slicer/blob/main/packages/PROVENANCE.md" rel="noopener">PROVENANCE.md</a>,
+        and a license-boundary test enforces the split on every build.
+      </p>
 
       <h2>Who maintains it</h2>
       <p>
@@ -189,7 +199,7 @@
       </p>
 
       <footer>
-        <span>Three Slicer · AGPL-3.0-or-later</span>
+        <span>Three Slicer · AGPL-3.0-or-later · viewer MIT</span>
         <a href="/">Home</a>
         <a href="/slice">Slicer</a>
         <a href="/demos">Demos</a>

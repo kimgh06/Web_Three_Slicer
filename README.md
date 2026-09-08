@@ -9,21 +9,24 @@ Resin printing is a second technology in the same kernel, routed by `printer_tec
 ## Links
 
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
-- npm package: [three-slicer](https://www.npmjs.com/package/three-slicer)
-- Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer)
+- npm packages: [three-slicer](https://www.npmjs.com/package/three-slicer) (AGPL, slicing) · [three-slicer-viewer](https://www.npmjs.com/package/three-slicer-viewer) (MIT, viewer)
+- Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer) · viewer mirror [kimgh06/three-slicer-viewer](https://github.com/kimgh06/three-slicer-viewer)
 - Integration example specs: [examples/DEMOS.md](examples/DEMOS.md)
 - Community: [questions, ideas, or a print you sliced with it](https://github.com/kimgh06/Web_Three_Slicer/discussions) — bug reports go to [Issues](https://github.com/kimgh06/Web_Three_Slicer/issues)
 
-## Package (`packages/`, npm workspace)
+## Packages (npm workspace)
 
-| Package | What it is |
-|---|---|
-| `three-slicer` | WASM slicing kernel SDK — FFF batch/streaming slice, SLA slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
-| `three-slicer/data` | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament/resin preset catalogs |
-| `three-slicer/components` | React `<SettingsPanel/>` — schema-driven settings form, props-only, Shadow DOM isolated |
-| `three-slicer/viewer` | React `<Viewport/>` — three.js scene, model import, worker slicing, GPU volumetric toolpath preview, SLA support/pad preview and `.sl1` import/export, Shadow DOM isolated |
+Two packages, released as a locked pair (same version; `three-slicer` pins `three-slicer-viewer` exactly).
 
-Quick taste:
+| Package | License | What it is |
+|---|---|---|
+| `three-slicer` | AGPL | WASM slicing kernel SDK — FFF batch/streaming slice, SLA slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
+| `three-slicer/data` | AGPL | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament/resin preset catalogs |
+| `three-slicer/viewer`, `three-slicer/components` | AGPL | The viewer and settings panel below with the kernel and the vendor presets plugged in — thin wrappers over `three-slicer-viewer` |
+| `three-slicer-viewer` | MIT | React `<Viewport/>` — three.js scene, model import, GPU volumetric toolpath preview, G-code parsing, SLA preview and `.sl1` import/export, Shadow DOM isolated. Displays and exports; slicing is a prop |
+| `three-slicer-viewer/components` | MIT | React `<SettingsPanel/>` — schema-driven settings form, props-only, Shadow DOM isolated |
+
+Quick taste (slicer included — AGPL):
 
 ```jsx
 import { useState } from 'react'
@@ -39,11 +42,19 @@ function App() {
 }
 ```
 
+Viewer only (MIT — model and G-code preview, no slicing, no AGPL in the tree):
+
+```jsx
+import Viewport from 'three-slicer-viewer'
+<Viewport files={files} settings={settings} setSettings={setSettings} />
+```
+
 Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)`, or `s.sliceSla(stl, slaParams)` for resin — see [`packages/README.md`](packages/README.md).
 
 ## Repository layout
 
-- **`packages/`** — published npm package `three-slicer`, extracted data, React components/viewer, and WASM kernel sources. Self-contained: builds, tests, and runs without `slicers/`.
+- **`packages/`** — the npm package `three-slicer` (AGPL): kernel SDK, extracted data, WASM kernel sources, and the wrappers that plug the kernel into the viewer. Self-contained: builds, tests, and runs without `slicers/`.
+- **`packages-mit/`** — the npm package `three-slicer-viewer` (MIT): the viewer, the settings panel, G-code parsing and the toolpath renderer. Mirrored to its own repository on every release.
 - **`web/`** — demo viewer app that consumes `three-slicer` through the workspace package name.
 - **`slicers/`** — untracked reference clones (each its own git remote): upstream OrcaSlicer at `slicers/slicer` (the extraction/porting source) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 
@@ -54,16 +65,21 @@ cd web && make dev
 # full gate: kernel invariants (FFF + SLA), the generated param table, the viewer's pure modules
 npm test
 
-# tarball independence gate (packs three-slicer, builds Vite+Next consumers outside the repo)
+# tarball independence gate (packs both packages, builds Node/Vite/Next consumers and a viewer-only one outside the repo)
 bash packages/pack_check.sh
+
+# release both packages in order (viewer first), sync the mirror, tag — DRY=1 to rehearse
+make bump V=x.y.z && make publish
 ```
 
 Development docs (demo app, stage-by-stage log, reverse-engineering guide, format specs): [`web/README.md`](web/README.md), [`web/HISTORY.md`](web/HISTORY.md), [`web/GUIDE.md`](web/GUIDE.md), [`web/SPECS.md`](web/SPECS.md).
 
 ## License
 
-`three-slicer` is AGPL-3.0-or-later (see [`LICENSE.txt`](LICENSE.txt)) — derived from OrcaSlicer. The viewer, the settings
-form, G-code parsing and toolpath rendering are published separately as [`three-slicer-viewer`](packages-mit/) under MIT,
-which contains no upstream code (`packages/PROVENANCE.md`); only slicing itself, and the vendor presets, are AGPL.
+`three-slicer` is AGPL-3.0-or-later ([`LICENSE.txt`](LICENSE.txt)) — derived from OrcaSlicer. AGPL extends to network
+use: a web service embedding it must offer its source to its users.
 
-AGPL-3.0-or-later — derived from OrcaSlicer. Note that AGPL extends to network use: a web service embedding these packages must offer its source to its users.
+`three-slicer-viewer` ([`packages-mit/`](packages-mit/)) is MIT: the viewer, the settings form, G-code parsing and
+toolpath rendering contain no upstream code ([`packages/PROVENANCE.md`](packages/PROVENANCE.md)) and can go into
+closed-source products. Only slicing itself, and the vendor presets, are AGPL. Which files may carry which license,
+and why, is [`packages/PROVENANCE.md`](packages/PROVENANCE.md); a license-boundary test enforces the split.
