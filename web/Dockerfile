@@ -5,4 +5,4 @@ WORKDIR /app
 COPY . .
 RUN npm ci && npm run build
 EXPOSE 4173
-CMD ["npm", "run", "preview", "-w", "three-slicer-viewer", "--", "--host", "0.0.0.0", "--port", "4173"]
+CMD ["npm", "run", "preview", "-w", "three-slicer-web", "--", "--host", "0.0.0.0", "--port", "4173"]
