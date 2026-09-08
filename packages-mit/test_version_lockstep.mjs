@@ -59,6 +59,18 @@ if (existsSync(webPath)) {
       String(web.dependencies?.[name]))
 }
 
+// The image runs one workspace by NAME, and this package took that name in the split: the web app used to be
+//  `three-slicer-viewer` and is `three-slicer-web` now, so the unchanged CMD started resolving to packages-mit
+//  and the container restart-looped on a missing `preview` script. The name is not checked by anything npm runs.
+const dockerfile = join(here, '..', 'web', 'Dockerfile')
+if (existsSync(dockerfile) && existsSync(webPath)) {
+  const cmd = readFileSync(dockerfile, 'utf8').match(/CMD \[\s*"npm",\s*"run",\s*"([^"]+)",\s*"-w",\s*"([^"]+)"/)
+  const [script, workspace] = cmd ? [cmd[1], cmd[2]] : ['', '']
+  const web = JSON.parse(readFileSync(webPath, 'utf8'))
+  check(`the Dockerfile runs the web app's workspace`, workspace === web.name, `${workspace} vs ${web.name}`)
+  check(`the web app has the '${script}' script the Dockerfile runs`, Boolean(web.scripts?.[script]))
+}
+
 console.log('\n[lockstep: the licenses are what the split assumed]')
 check(`${permissive.name} is permissively licensed`, permissive.license === 'MIT', permissive.license)
 check(`${agpl.name} is still AGPL`, /^AGPL-3\.0/.test(agpl.license || ''), agpl.license)
