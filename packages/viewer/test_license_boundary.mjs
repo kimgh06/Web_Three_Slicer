@@ -19,8 +19,9 @@
 // holds the files that already pass that bar, and grows as the inversion lands.
 import assert from 'node:assert'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // The viewer's source lives in the permissive package now; what is left beside this test is the AGPL residue
@@ -134,62 +135,17 @@ for (const path of MIT_CLEAN) {
 }
 
 console.log('\n[license: the permissive package carries no AGPL]')
-// The split only means something if this holds. A single import of the AGPL package from here would make the
-//  permissive tarball a combined work, and the MIT grant on it would be one nobody had the right to give.
+// The permissive side proves its own boundary — packages-mit/test_license_boundary.mjs scans its sources, types,
+//  data, styles and dist for any AGPL specifier — so the mirror repo carries the proof with it. Here it is run,
+//  and what only the monorepo can see is added: the pair is published together (packages/RELICENSE.md section
+//  3), and a mismatch would publish a combination nobody built.
 if (!existsSync(PERMISSIVE)) {
   check('packages-mit exists', false, 'the permissive package is missing')
 } else {
+  const own = spawnSync(process.execPath, [join(PERMISSIVE, 'test_license_boundary.mjs')], { encoding: 'utf8' })
+  process.stdout.write(own.stdout.replace(/^/gm, '    '))
+  check('the permissive package passes its own boundary test', own.status === 0, own.stderr.trim().split('\n').pop())
   const manifest = JSON.parse(readFileSync(join(PERMISSIVE, 'package.json'), 'utf8'))
-  check('declares a permissive license', manifest.license === 'MIT', manifest.license)
-  const deps = { ...manifest.dependencies, ...manifest.peerDependencies }
-  const agplDeps = Object.keys(deps).filter(name => name === 'three-slicer' || name.startsWith('three-slicer/'))
-  check('depends on nothing AGPL', agplDeps.length === 0, agplDeps.join(' '))
-
-  // Every surface a reverse dependency could ride in on, not only .js/.jsx: type-only imports in .d.ts, CSS
-  //  @import/url(), string values in JSON, and worker URLs. The reviewer of the split named each of these as a
-  //  gap; the negative tests below plant one of each.
-  const permissiveSources = []
-  const walkPermissive = (dir, prefix) => {
-    for (const entry of readdirSync(join(PERMISSIVE, dir), { withFileTypes: true })) {
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory()) { if (entry.name !== 'node_modules' && entry.name !== 'dist') walkPermissive(join(dir, entry.name), rel) }
-      else if (/\.(jsx?|mjs|ts|css|json)$/.test(entry.name))
-        permissiveSources.push([rel, readFileSync(join(PERMISSIVE, dir, entry.name), 'utf8')])
-    }
-  }
-  for (const top of ['src', 'types', 'data']) if (existsSync(join(PERMISSIVE, top))) walkPermissive(top, top)
-  permissiveSources.push(['styles.css', readFileSync(join(PERMISSIVE, 'styles.css'), 'utf8')])
-  check('has sources', permissiveSources.length > 0, `${permissiveSources.length}`)
-  // A `// from 'three-slicer/x'` in prose cannot trip this (comments dropped); the negative test pins both directions.
-  for (const [rel, text] of permissiveSources) {
-    const code = dropComments(text)
-    // import/export … from, dynamic import(), require(), type-only imports (same syntax), worker URLs, and
-    //  CSS @import / url(). JSON has no comments, so every string value is a candidate.
-    const specs = rel.endsWith('.json')
-      ? [...code.matchAll(/"((?:three-slicer)[^"]*)"/g)].map(m => m[1])
-      : [...code.matchAll(/(?:from|import|require|new\s+URL|@import|url)\s*\(?\s*['"]([^'"]+)['"]/g)].map(m => m[1])
-    const bad = specs.filter(isAgpl)
-    check(`${rel}: imports no AGPL package`, bad.length === 0, bad.join(' '))
-    const escapes = specs.filter(spec => spec.startsWith('.') && !resolve(join(PERMISSIVE, dirname(rel)), spec).startsWith(PERMISSIVE + sep))
-    check(`${rel}: reaches nothing outside the package`, escapes.length === 0, escapes.join(' '))
-  }
-  // What SHIPS is dist/, not src/: a source import that the bundler resolves gets inlined, and only tree-shaking
-  //  stood between an AGPL import in use_slicer.js and an AGPL bundle. So the built output is scanned too —
-  //  skipped, not failed, when there is no build to scan.
-  const dist = join(PERMISSIVE, 'dist')
-  if (existsSync(dist)) {
-    for (const name of readdirSync(dist).filter(n => n.endsWith('.js'))) {
-      const built = readFileSync(join(dist, name), 'utf8')
-      const specs = [...built.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map(m => m[1])
-      const bad = specs.filter(isAgpl)
-      const inlined = /slicer_core|printers\.sets|loadProcesses|loadFilaments/.test(built)
-      check(`dist/${name}: no AGPL import and no inlined kernel or catalog code`, bad.length === 0 && !inlined,
-        bad.join(' ') || (inlined ? 'AGPL code was bundled in' : ''))
-    }
-  } else console.log('  skip: packages-mit/dist not built — the shipped bundle was not scanned')
-
-  // The pair is published together (packages/RELICENSE.md section 3); a mismatch here would publish a
-  //  combination nobody built.
   const agpl = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
   check('versions are a locked pair', agpl.version === manifest.version, `${agpl.version} vs ${manifest.version}`)
   check('the AGPL package pins it exactly', agpl.dependencies?.[manifest.name] === manifest.version,
