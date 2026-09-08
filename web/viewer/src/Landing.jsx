@@ -55,14 +55,15 @@ const FAQ = [
   ['Is it based on a real slicer?',
    'Yes. The kernel is a port of OrcaSlicer, which is itself a PrusaSlicer/Slic3r descendant. Arachne wall generation, tree supports, multi-material segmentation and the prime tower are ported from that source rather than reimplemented, and the resin support-point generator, support tree and pad are ported from PrusaSlicer 2.9.6.'],
   ['Can I use the slicer in my own site or app?',
-   'Yes. The same engine is published to npm as three-slicer under AGPL-3.0-or-later: a headless slicing kernel for Node or the browser, plus an optional React viewer and settings panel.'],
+   'Yes, as two npm packages. three-slicer (AGPL-3.0-or-later) is the slicing kernel for Node or the browser. three-slicer-viewer (MIT) is the React viewer and settings panel on their own — model and G-code preview with no slicing and no AGPL code, usable in closed-source products. Installing three-slicer gives you both.'],
 ]
 
 const ROUTES = [
   ['Engine', 'three-slicer', 'Slice a binary STL into G-code, or into SLA layer masks, in Node or the browser'],
   ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
-  ['Viewer', 'three-slicer/viewer', 'React 3D viewer: model loading, worker slicing, toolpath preview'],
+  ['Viewer', 'three-slicer/viewer', 'React 3D viewer with the kernel plugged in: model loading, worker slicing, toolpath preview'],
   ['Components', 'three-slicer/components', `React SettingsPanel driven by the ${OPTION_COUNT}-option schema`],
+  ['Viewer (MIT)', 'three-slicer-viewer', 'The same viewer and settings panel without the slicer — model and G-code preview, no AGPL'],
   ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, printer / process / filament catalogs'],
   ['Worker', 'three-slicer/worker', 'Layer streaming off the browser main thread'],
 ]
@@ -251,11 +252,12 @@ export default function Landing() {
         <section className="lp-section" aria-labelledby="install-title">
           <div className="lp-section-head">
             <h2 id="install-title">Install</h2>
-            <p>Use the headless engine on its own, or add the React viewer and settings UI on top.</p>
+            <p>Slicing included (AGPL), or the viewer alone (MIT). The React viewer needs <code>react</code>,
+              <code>react-dom</code> and <code>three</code> as peers; the headless engine needs nothing.</p>
           </div>
           <div className="lp-code-grid">
             <pre><code>npm i three-slicer</code></pre>
-            <pre><code>npm i three-slicer react react-dom three</code></pre>
+            <pre><code>npm i three-slicer-viewer</code></pre>
           </div>
         </section>
 
@@ -325,7 +327,7 @@ export default function Landing() {
         </section>
 
         <section className="lp-section lp-license" aria-label="License">
-          <p>AGPL-3.0-or-later · based on OrcaSlicer · runs in the browser or Node with no server</p>
+          <p>three-slicer AGPL-3.0-or-later · three-slicer-viewer MIT · based on OrcaSlicer · runs in the browser or Node with no server</p>
           <Link to="/slice">Start slicing</Link>
           <Link to="/demos">See the demos</Link>
           <a href="/docs/orcaslicer-webassembly-port">How the port works</a>
