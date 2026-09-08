@@ -1,7 +1,7 @@
 {
   "name": "three-slicer-viewer",
   "version": "0.3.0",
-  "description": "The three-slicer viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering and the settings transforms, under MIT. Plug a slicer in through the `slicer` prop.",
+  "description": "The three-slicer viewer without the slicer \u2014 model loading, G-code parsing, GPU toolpath rendering and the settings transforms, under MIT. Plug a slicer in through the `slicer` prop.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -55,11 +55,35 @@
   ],
   "keywords": [
     "3d-printing",
+    "3d-printer",
+    "viewer",
     "gcode",
+    "gcode-viewer",
     "toolpath",
+    "stl",
+    "obj",
+    "3mf",
+    "amf",
+    "ply",
+    "sl1",
+    "sla",
+    "resin",
     "three",
-    "viewer"
+    "three.js",
+    "threejs",
+    "react",
+    "webgl",
+    "model-viewer",
+    "three-slicer"
   ],
+  "homepage": "https://slicer.kimgh06.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimgh06/three-slicer-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kimgh06/three-slicer-viewer/issues"
+  },
   "peerDependencies": {
     "three": "^0.160.0",
     "react": ">=18",
